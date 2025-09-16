@@ -1,0 +1,22 @@
+local skynet = require "skynet"
+local os_date = os.date
+
+local M = {}
+
+function M.now()
+    return skynet.time() // 1
+end
+
+function M.time()
+    return skynet.time()
+end
+
+function M.now_ms()
+    return (skynet.time() * 1000) // 1
+end
+
+function M.format(sec)
+    return os_date("%Y-%m-%d %H:%M:%S", sec)
+end
+
+return M

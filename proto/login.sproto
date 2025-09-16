@@ -1,0 +1,25 @@
+# 网关向游戏报告连接信息
+report_remote_addr 100 {
+    request {
+        remote_addr 0 : string # 客户端ip
+        local_addr 1 : string
+    }
+}
+
+# 角色登录
+login 101 {
+    request {
+        token 0 : string # jwt token {account}
+        rid 1 : integer # role id 直接登录角色
+        proto_checksum 2 : string # 协议文件 checksum
+        server 3 : string # 区服ID
+    }
+    response {
+        code 0 : integer
+        rid 1 : integer
+        rolenode 2 : string # 需要连的游戏节点
+    }
+}
+
+# 角色登出
+logout 102 {}

@@ -1,0 +1,74 @@
+local skynet = require "skynet"
+
+local M = {}
+local conf = {}
+
+function M.get(key)
+    if conf[key] ~= nil then
+        return conf[key]
+    end
+
+    local value = skynet.getenv(key)
+    if value == nil then
+        return
+    end
+
+    conf[key] = value
+    return conf[key]
+end
+
+function M.get_boolean(key)
+    if conf[key] ~= nil then
+        return conf[key]
+    end
+
+    local value = skynet.getenv(key)
+    if value == nil then
+        return
+    end
+
+    if value == "true" then
+        value = true
+    else
+        value = false
+    end
+
+    conf[key] = value
+    return conf[key]
+end
+
+function M.get_number(key)
+    if conf[key] ~= nil then
+        return conf[key]
+    end
+
+    local value = skynet.getenv(key)
+    if value == nil then
+        return
+    end
+
+    value = tonumber(value)
+    conf[key] = value
+    return conf[key]
+end
+
+function M.get_table(key)
+    local s = M.get(key)
+    if type(s) == "string" then
+        local f,err1 = load("return " .. s, "@"..key)
+        if not f then
+            error("load config failed:" .. err1)
+        end
+
+        local ok, err2 = pcall(f)
+        if not ok then
+            error("exec config failed:" .. err2)
+        end
+
+        s = err2
+        conf[key] = s
+    end
+    return s
+end
+
+return M

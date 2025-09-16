@@ -1,0 +1,18 @@
+[submodule "skynet"]
+	path = skynet
+	url = https://github.com/cloudwu/skynet.git
+[submodule "3rd/sproto-orm"]
+	path = 3rd/sproto-orm
+	url = git@github.com:hanxi/sproto-orm.git
+[submodule "3rd/lua-cjson"]
+	path = 3rd/lua-cjson
+	url = https://github.com/cloudwu/lua-cjson.git
+[submodule "3rd/binaryheap.lua"]
+	path = 3rd/binaryheap.lua
+	url = https://github.com/Tieske/binaryheap.lua.git
+[submodule "3rd/luafilesystem"]
+	path = 3rd/luafilesystem
+	url = https://github.com/lunarmodules/luafilesystem.git
+[submodule "3rd/libsodium"]
+	path = 3rd/libsodium
+	url = https://github.com/jedisct1/libsodium.git
