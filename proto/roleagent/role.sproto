@@ -1,0 +1,12 @@
+.role {
+    rid 0 : integer
+    name 1 : string
+}
+
+# 角色登录信息
+login_info 200 {
+    request {}
+    response {
+        info 0 : role
+    }
+}

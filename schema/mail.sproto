@@ -1,0 +1,36 @@
+# 存放玩家邮件
+.role_mail {
+    _version 0 : integer
+    mails 1 : *mail(mail_id) # 邮件列表
+}
+
+# 一封邮件
+.mail {
+    mail_id 0 : integer # 邮件id
+    cfg_id 1 : integer # 邮件配置id
+    title 2 : *str2str() # 邮件标题
+    detail 3 : *str2str() # 邮件内容
+    send_time 4 : integer # 发送时间
+    send_role 5 : mail_role # 发送人
+    attach 6 : mail_attach # 附件
+}
+
+# format 参数
+.str2str {
+    key 0 : string
+    value 1 : string
+}
+
+.mail_role {
+    rid 0 : integer # 玩家id
+    name 1 : string # 玩家名字
+}
+
+# 资源
+.mail_attach {
+    res_type 0 : integer # 资源分类 : 区分不同类型的道具和资源
+    res_id 1 : integer # 资源id
+    res_size 2 : integer # 资源数量
+}
+
+## TODO: 全局邮件存储 另外定义？

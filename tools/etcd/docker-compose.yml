@@ -1,0 +1,60 @@
+networks:
+  etcd-net:
+    driver: bridge
+
+x-common-settings: &common-settings
+  image: bitnami/etcd:latest
+  restart: always
+  user: "1000:1000"
+  networks:
+    - etcd-net
+
+x-common-environment: &common-environment
+  ALLOW_NONE_AUTHENTICATION: no
+  ETCD_INITIAL_CLUSTER_TOKEN: my-etcd-cluster-token
+  ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+  ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+  ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+  ETCD_INITIAL_CLUSTER_STATE: new
+  ETCD_ROOT_PASSWORD: 123456
+  ETCD_LOG_LEVEL: info
+
+services:
+  etcd1:
+    <<: *common-settings
+    container_name: etcd1
+    ports:
+      - "2379:2379"
+    environment:
+      <<: *common-environment
+      ETCD_NAME: etcd1
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+    volumes:
+      - ./etcd1_data:/bitnami/etcd/data
+
+  etcd2:
+    <<: *common-settings
+    container_name: etcd2
+    ports:
+      - "2378:2379"
+    environment:
+      <<: *common-environment
+      ETCD_NAME: etcd2
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+    volumes:
+      - ./etcd2_data:/bitnami/etcd/data
+
+  etcd3:
+    <<: *common-settings
+    container_name: etcd3
+    ports:
+      - "2377:2379"
+    environment:
+      <<: *common-environment
+      ETCD_NAME: etcd3
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+    volumes:
+      - ./etcd3_data:/bitnami/etcd/data

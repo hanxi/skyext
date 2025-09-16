@@ -1,0 +1,15 @@
+# 存放玩家道具和资源
+.role_bag {
+    bags 0 : *bag(res_type) # 背包列表
+}
+
+.bag {
+    res_type 0 : integer # 资源分类 : 区分不同类型的道具和资源
+    res 1 : *resource(res_id) # 资源列表
+}
+
+# 资源
+.resource {
+    res_id 0 : integer # 资源id
+    res_size 1 : integer # 资源数量
+}

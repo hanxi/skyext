@@ -1,0 +1,21 @@
+.role {
+    _version 0 : integer
+    rid 1 : integer
+    name 2 : string
+    account 3 : string
+    create_time 4 : integer
+    last_login_time 5 : integer
+    modules 6 : role_modules # 模块列表
+}
+
+.role_modules {
+    bag 0 : role_bag # 资源列表
+    mail 1 : role_mail # 邮件列表
+}
+
+# TODO: lazy load 模块
+
+# TODO: 版本检查工具:
+# - 不允许删字段
+# - 不允许改字段类型
+# - 不允许改字段名字
