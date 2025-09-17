@@ -169,6 +169,8 @@ if __name__ == "__main__":
     copy_files(
         [
             source / "README.md",
+            source / "lualib/time.lua",
+            source / "lualib/timer.lua",
         ],
         source,
         target,

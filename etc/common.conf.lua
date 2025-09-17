@@ -116,3 +116,5 @@ user_db_coll = "user"
 
 role_db_name = "game"
 role_db_coll = "role"
+
+db_save_interval = 3*60 -- 数据入库间隔秒
