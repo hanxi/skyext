@@ -1,4 +1,4 @@
-# skynet 服务器
+# skynet 游戏服务器 skyext
 
 🎮 [WIP] 基于 Skynet 实现的一个游戏服务器 🚀 欢迎 Star & Fork！
 
@@ -38,3 +38,8 @@ docker compose up -d
 - [skynet 的游戏工程目录结构](https://blog.hanxi.cc/p/99/)
 - [Skynet 定时器模块的封装：从简单实现到高性能设计](https://blog.hanxi.cc/p/100/)
 - [skynet 相关文章](https://github.com/hanxi/blog/issues?q=is%3Aissue%20state%3Aopen%20label%3ASkynet)
+
+
+## 讨论区
+
+- QQ群: `677839887`
