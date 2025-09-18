@@ -113,6 +113,19 @@ def copy_dirs(dir_names, dist_root="./dist", exclude_paths=None):
             print(f"   ❌ 复制失败 {dir_name}: {e}")
 
 
+def filter_paths(source, pattern, excluded_root_dirs, excluded_current_dirs):
+    return [
+        path
+        for path in source.rglob(pattern)
+        if not (
+            excluded_root_dirs.intersection(path.parts)  # 完全排除的目录
+            or (
+                len(path.parts) > 1 and path.parts[0] in excluded_current_dirs
+            )  # 当前目录下的
+        )
+    ]
+
+
 if __name__ == "__main__":
     start_time = time.time()
 
@@ -122,17 +135,11 @@ if __name__ == "__main__":
         shutil.rmtree(target)  # 清空目标目录
         print("🗑️  已清空 dist 目录")
 
-    excluded_dirs = {"3rd", "etc"}
-    so_files = [
-        path
-        for path in source.rglob("*.so")
-        if not excluded_dirs.intersection(path.parts)
-    ]
-    lua_files = [
-        path
-        for path in source.rglob("*.lua")
-        if not excluded_dirs.intersection(path.parts)
-    ]
+    excluded_root_dirs = {"3rd"}  # 完全排除的目录
+    excluded_current_dirs = {"etc", "skyext"}  # 只排除当前目录下的
+
+    so_files = filter_paths(source, "*.so", excluded_root_dirs, excluded_current_dirs)
+    lua_files = filter_paths(source, "*.lua", excluded_root_dirs, excluded_current_dirs)
 
     print("📂 复制 so 文件 ...")
     copy_files(so_files, source, target)
@@ -156,6 +163,7 @@ if __name__ == "__main__":
             "build",
             "service/game/roleagent",
             "service/robot",
+            "lualib/orm",
         ],
         exclude_paths=[
             "./tools/mongodb/db",
@@ -171,6 +179,10 @@ if __name__ == "__main__":
             source / "README.md",
             source / "lualib/time.lua",
             source / "lualib/timer.lua",
+            source / "lualib/user_db_api.lua",
+            source / "lualib/dbmgr.lua",
+            source / "lualib/cmd_api.lua",
+            source / "lualib/config.lua",
         ],
         source,
         target,

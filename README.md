@@ -37,8 +37,8 @@ docker compose up -d
 - [skynet service 的 lua 消息处理接口封装](https://blog.hanxi.cc/p/97/)
 - [skynet 的游戏工程目录结构](https://blog.hanxi.cc/p/99/)
 - [Skynet 定时器模块的封装：从简单实现到高性能设计](https://blog.hanxi.cc/p/100/)
+- [Skynet 中 MongoDB 数据库操作接口的封装设计](https://blog.hanxi.cc/p/101/)
 - [skynet 相关文章](https://github.com/hanxi/blog/issues?q=is%3Aissue%20state%3Aopen%20label%3ASkynet)
-
 
 ## 讨论区
 
