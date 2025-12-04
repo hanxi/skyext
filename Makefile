@@ -55,7 +55,7 @@ SODIUM_LIB = $(SODIUM_DIR)/src/libsodium/.libs/libsodium.a
 SODIUM_INC = $(SODIUM_DIR)/src/libsodium/include
 $(SODIUM_LIB):
 	cd $(SODIUM_DIR) && \
-	./autogen.sh -s && \
+	./autogen.sh && \
 	./configure --disable-shared --enable-static --with-pic && \
 	make
 $(LUA_CLIB_PATH)/crypto.so : lualib-src/crypto.c $(SODIUM_LIB) | $(LUA_CLIB_PATH)
