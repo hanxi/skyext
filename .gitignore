@@ -17,3 +17,4 @@ skyext/
 luaclib/
 
 .DS_Store
+.aone_copilot/

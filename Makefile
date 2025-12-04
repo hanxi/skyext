@@ -55,7 +55,7 @@ SODIUM_LIB = $(SODIUM_DIR)/src/libsodium/.libs/libsodium.a
 SODIUM_INC = $(SODIUM_DIR)/src/libsodium/include
 $(SODIUM_LIB):
 	cd $(SODIUM_DIR) && \
-	./autogen.sh && \
+	./autogen.sh -s && \
 	./configure --disable-shared --enable-static --with-pic && \
 	make
 $(LUA_CLIB_PATH)/crypto.so : lualib-src/crypto.c $(SODIUM_LIB) | $(LUA_CLIB_PATH)
@@ -67,7 +67,7 @@ LUA_CLIB = jchash cjson traceback lfs crypto
 init:
 	git submodule update --init --recursive
 
-skynet:
+skynet: $(BIN_PATH)
 	cd skynet && $(MAKE) $(PLAT)
 	cp skynet/skynet $(BIN_PATH)/
 	cp skynet/3rd/lua/lua $(BIN_PATH)/

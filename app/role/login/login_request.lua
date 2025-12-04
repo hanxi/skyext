@@ -9,7 +9,7 @@ local config = require "config"
 local log = require "log"
 local jwt = require "jwt"
 local sproto_api = require "sproto_api"
-local id = require "id"
+local id = require "id_generator"
 
 local M = {}
 
