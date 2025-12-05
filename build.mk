@@ -99,5 +99,5 @@ clean:
 cleanall: clean
 	cd skynet && $(MAKE) cleanall
 	rm -rf dist skyext.zip
-	cd $(SODIUM_DIR) && $(MAKE) distclean
+	cd $(SODIUM_DIR) && $(MAKE) distclean || true
 
