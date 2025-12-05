@@ -80,7 +80,9 @@ skynet: $(BIN_PATH)
 	cp -f skynet/skynet$(EXE_SUFFIX) $(BIN_PATH)/
 	cp skynet/3rd/lua/lua$(EXE_SUFFIX) $(BIN_PATH)/
 	cp skynet/3rd/lua/luac$(EXE_SUFFIX) $(BIN_PATH)/
+ifeq ($(PLAT), mingw)
 	cp -f skynet/*.dll $(BIN_PATH)/
+endif
 
 # 编译 skynet 和 C 库
 build: skynet \
