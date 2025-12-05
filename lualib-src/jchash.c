@@ -5,6 +5,7 @@
 
 #define LUA_LIB
 
+#include <stdint.h>
 #include <lua.h>
 #include <lauxlib.h>
 
