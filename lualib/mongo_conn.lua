@@ -21,8 +21,13 @@ end
 local conn_mt = {}
 conn_mt.__index = conn_mt
 
+-- fuck tail call
+local function call_ret(...)
+    return ...
+end
+
 function conn_mt:call(cmd, ...)
-    return skynet.call(self.addr, "lua", cmd, ...)
+    return call_ret(skynet.call(self.addr, "lua", cmd, ...))
 end
 
 local conn = {}
@@ -56,8 +61,7 @@ function coll_mt:safe_insert(doc)
     local conn_obj = self.db:_route()
     log.debug("safe_insert doc:", "doc", doc)
     local bson_obj = bson_encode(doc)
-    local ok, err, r = conn_obj:call("raw_safe_insert", self.coll, to_lightuserdata(bson_obj))
-    return ok, err, r
+    return conn_obj:call("raw_safe_insert", self.coll, to_lightuserdata(bson_obj))
 end
 
 function coll_mt:safe_update(query, update, upsert, multi)
@@ -69,8 +73,7 @@ function coll_mt:safe_update(query, update, upsert, multi)
         upsert = upsert,
         multi = multi,
     })
-    local ok, err, r = skynet.call(conn_obj.addr, "lua", "raw_safe_update", self.coll, to_lightuserdata(bson_obj))
-    return ok, err, r
+    return conn_obj:call("raw_safe_update", self.coll, to_lightuserdata(bson_obj))
 end
 
 local db_mt = {}
