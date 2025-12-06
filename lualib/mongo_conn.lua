@@ -38,17 +38,17 @@ coll_mt.__index = coll_mt
 
 function coll_mt:find_and_modify(doc)
     local conn_obj = self.db:_route()
-    return skynet.call(conn_obj.addr, "lua", "find_and_modify", self.coll, doc)
+    return conn_obj:call("find_and_modify", self.coll, doc)
 end
 
 function coll_mt:find(doc, projection)
     local conn_obj = self.db:_route()
-    return skynet.call(conn_obj.addr, "lua", "find", self.coll, doc, projection)
+    return conn_obj:call("find", self.coll, doc, projection)
 end
 
 function coll_mt:find_one(doc, projection)
     local conn_obj = self.db:_route()
-    return skynet.call(conn_obj.addr, "lua", "find_one", self.coll, doc, projection)
+    return conn_obj:call("find_one", self.coll, doc, projection)
 end
 
 -- 兼容 orm 数据打包,必须在调用者服务执行 bson_encode
@@ -56,7 +56,8 @@ function coll_mt:safe_insert(doc)
     local conn_obj = self.db:_route()
     log.debug("safe_insert doc:", "doc", doc)
     local bson_obj = bson_encode(doc)
-    return skynet.call(conn_obj.addr, "lua", "raw_safe_insert", self.coll, to_lightuserdata(bson_obj))
+    local ok, err, r = conn_obj:call("raw_safe_insert", self.coll, to_lightuserdata(bson_obj))
+    return ok, err, r
 end
 
 function coll_mt:safe_update(query, update, upsert, multi)
@@ -68,7 +69,8 @@ function coll_mt:safe_update(query, update, upsert, multi)
         upsert = upsert,
         multi = multi,
     })
-    return skynet.call(conn_obj.addr, "lua", "raw_safe_update", self.coll, to_lightuserdata(bson_obj))
+    local ok, err, r = skynet.call(conn_obj.addr, "lua", "raw_safe_update", self.coll, to_lightuserdata(bson_obj))
+    return ok, err, r
 end
 
 local db_mt = {}
