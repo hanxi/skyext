@@ -2,9 +2,7 @@ local next = next
 local setmetatable = setmetatable
 local getmetatable = getmetatable
 local type = type
-local rawset = rawset
 local table = table
-local sformat = string.format
 
 local orm = {}
 local _new_doc = nil
@@ -64,7 +62,7 @@ local function doc_change_value(doc, k, v)
         local lv = doc.__stage[k]
         if v == nil then
             if getmetatable(lv) == ormdoc_type then
-                lv.__parent = false
+                lv.__parent = false -- remove old value's parent
             end
         end
         doc.__stage[k] = v -- current value
@@ -74,7 +72,7 @@ end
 
 local function doc_change_recursively(doc, k, v)
     local schema = doc.__schema[k]
-    local lv = doc.__stage[k]
+    local lv
     if getmetatable(v) == ormdoc_type then
         assert(not v.__parent, "non-root nodes cannot be assigned to other objects")
         lv = v
@@ -195,7 +193,7 @@ bson_next = function(doc, k)
         k = doc.__schema:_parse_k(k)
     end
 
-    k1, v1 = skip_default_next(doc, k)
+    local k1, v1 = skip_default_next(doc, k)
     if k1 == nil then
         return k1, v1
     end
@@ -286,7 +284,6 @@ _new_doc = function(schema, init)
             if getmetatable(v) == ormdoc_type then
                 if v.__parent then
                     v = _clone_doc(v)
-                else
                 end
             else
                 v = _new_doc(schema[k], v)

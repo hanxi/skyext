@@ -37,7 +37,7 @@ format:
 	@stylua .
 
 # 检查 lua 代码
-luacheck:
+lint:
 	@echo "Checking Lua files with luacheck..."
 	@luacheck .
 
