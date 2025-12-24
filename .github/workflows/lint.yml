@@ -1,0 +1,32 @@
+name: Lua Lint and Format Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lua Code Quality Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 1
+
+    - name: Luacheck linter
+      uses: lunarmodules/luacheck@v1
+
+    - name: StyLua format check
+      uses: JohnnyMorganz/stylua-action@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        version: latest
+        args: --check .
