@@ -7,4 +7,4 @@ start = "monitor"  -- main script
 -- 负责管理role节点数量，使用etcd同步节点信息，使用jhash决定role应该在哪个节点上
 
 
-include "common.conf.lua"
+include "common.app.lua"

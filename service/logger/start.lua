@@ -1,12 +1,11 @@
-print("fuck", package.path)
 local skynet = require "skynet"
 local c = require "skynet.core"
+local config = require "config"
 local cmd_api = require "cmd_api"
 local cmd = require "cmd"
 local global = require "global"
 local bucket = require "bucket"
 local logger = require "log.logger"
-local config = require "config"
 local ptype = require "ptype"
 require "checker"
 

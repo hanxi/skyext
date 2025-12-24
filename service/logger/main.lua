@@ -7,7 +7,7 @@ if not ok then
     print(err_msg)
 
     local skynet = require "skynet"
-    local bootfaillogpath = skynet.getenv("bootfaillogpath")
+    local bootfaillogpath = skynet.getenv("bootfaillogpath") or "logs/bootfail.log"
     local file <close> = io.open(bootfaillogpath, "w+")
     if file then
         file:write(err_msg, "\n")

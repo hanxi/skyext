@@ -38,18 +38,20 @@ function M.sys_error(...)
     return default_logger:sys_error(...)
 end
 
-local config = require "config"
-xpcall(default_logger.config, default_logger.error, {
-    level = config.get_number("log_level"),
-    log_src = config.get_boolean("log_src"),
-    log_table = config.get_boolean("log_print_table"),
-})
+function M.init()
+    local config = require "config"
+    xpcall(default_logger.config, default_logger.error, {
+        level = config.get_number("log_level"),
+        log_src = config.get_boolean("log_src"),
+        log_table = config.get_boolean("log_print_table"),
+    })
 
-_G.raw_assert = assert
-_G.raw_error = error
-assert = M.sys_assert
-error = M.sys_error
-pcall = logger.safe_pcall
-xpcall = logger.safe_xpcall
+    _G.raw_assert = assert
+    _G.raw_error = error
+    assert = M.sys_assert
+    error = M.sys_error
+    pcall = logger.safe_pcall
+    xpcall = logger.safe_xpcall
+end
 
 return M

@@ -20,6 +20,7 @@ copy:
 
 # 编译协议
 proto:
+	@mkdir -p build/proto
 	./tools/gen_proto.sh
 
 # 编译 ORM 模式文件

@@ -1,25 +1,3 @@
-account_http_port = 8080
-account_agent_count = 1
-
+app_config_path = "etc/app/account1.app.lua"
 start = "account" -- main script account/main.lua
-
-debug_console_port = 6003
-
-log_config = [[
-{
-    {
-        name = "file",
-        filename = "logs/account.log",
-        split = "size", -- size/line/day/hour
-        maxsize = "100M", -- 每个文件最大尺寸 size split 有效
-    },
-    {
-        name = "console",
-    }
-}
-]]
-
-
-
-include "common.conf.lua"
-snowflake_machine_id = 2
+include "core.conf.lua" -- include core config

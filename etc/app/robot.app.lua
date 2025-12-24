@@ -5,21 +5,18 @@ robot_count = 1
 account_host = "http://127.0.0.1:8080"
 
 -- TODO: 从 platform 中获取
-gate_nodes = [[
-{
-  rolenode1 = {
-    ip = "127.0.0.1",
-    port = 7012,
-  },
-  rolenode2 = {
-    ip = "127.0.0.1",
-    port = 7022,
-  },
+gate_nodes = {
+    rolenode1 = {
+        ip = "127.0.0.1",
+        port = 7012,
+    },
+    rolenode2 = {
+        ip = "127.0.0.1",
+        port = 7022,
+    },
 }
-]]
 
-log_config = [[
-{
+log_config = {
     {
         name = "file",
         filename = "logs/robot.log",
@@ -28,8 +25,7 @@ log_config = [[
     },
     {
         name = "console",
-    }
+    },
 }
-]]
 
-include "common.conf.lua"
+include "common.app.lua"

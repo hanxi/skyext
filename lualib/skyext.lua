@@ -1,5 +1,5 @@
 -- 扩展skynet功能
-require "skynet.manager"
+local skynet = require "skynet.manager"
 
 -- 提前 require sharetable 是为了保证 next 不用下面的next
 require "skynet.sharetable"
@@ -56,5 +56,23 @@ table.rmove = function(t, i)
     return old_table_remove(t, i)
 end
 
--- 覆盖 assert error
-require "log"
+skynet.init(function()
+    local ok, config = pcall(require, "config")
+    if not ok then
+        error("load config module failed" .. config)
+    end
+    local ok, err = pcall(config.init)
+    if not ok then
+        error("init config module failed" .. err)
+    end
+
+    -- 覆盖 assert error
+    local ok, log = pcall(require, "log")
+    if not ok then
+        error("load log module failed" .. log)
+    end
+    local ok, err = pcall(log.init)
+    if not ok then
+        error("init log module failed" .. err)
+    end
+end)
