@@ -1,3 +1,5 @@
+-- luacheck: globals = table.unpack table.concat table.insert table.remove
+
 -- 扩展skynet功能
 local skynet = require "skynet.manager"
 
@@ -48,7 +50,7 @@ table.insert = function(t, i, v)
 end
 
 local old_table_remove = table.remove
-table.rmove = function(t, i)
+table.remove = function(t, i)
     local mt = getmetatable(t)
     if mt and mt.__remove then
         return mt.__remove(t, i)

@@ -1,7 +1,5 @@
 local skynet = require "skynet"
 local socket = require "skynet.socket"
-local sproto = require "sproto"
-local sprotoloader = require "sprotoloader"
 local netpack = require "skynet.netpack"
 local event_channel_api = require "event_channel_api"
 local config = require "config"
@@ -40,14 +38,6 @@ function M.register_module(mod_name, module, cmds)
             MIDDLEWARE_CBS[request_name] = module.middleware_cbs
         end
     end
-end
-
-local function new_context(fd, request, obj)
-    return {
-        fd = fd,
-        request = request,
-        obj = obj,
-    }
 end
 
 -- request 消息处理接口:
@@ -89,7 +79,7 @@ local function dispatch_request(fd, request_name, request, response_cb)
 end
 
 local function send_package(fd, pack)
-    local data, sz = netpack.pack(pack, sz)
+    local data, sz = netpack.pack(pack)
     socket.write(fd, data, sz)
 end
 
@@ -105,7 +95,7 @@ local function wakeup_call(pending, response, sz)
     return true
 end
 
-function M.raw_dispatch(fd, type, request_name, request, response_cb)
+function M.raw_dispatch(fd, sz, type, request_name, request, response_cb)
     if type == "REQUEST" then
         local ok, result = xpcall(dispatch_request, debug.traceback, fd, request_name, request, response_cb)
         if ok then
@@ -130,11 +120,11 @@ local function register_protocol()
         name = "client",
         id = skynet.PTYPE_CLIENT,
         unpack = function(msg, sz)
-            return g_host:dispatch(msg, sz)
+            return sz, g_host:dispatch(msg, sz)
         end,
-        dispatch = function(fd, _, type, request_name, request, response_cb)
+        dispatch = function(fd, _, sz, type, request_name, request, response_cb)
             skynet.ignoreret() -- session is fd, don't call skynet.ret
-            return M.raw_dispatch(fd, type, request_name, request, response_cb)
+            return M.raw_dispatch(fd, sz, type, request_name, request, response_cb)
         end,
     })
 end

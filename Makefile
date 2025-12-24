@@ -1,6 +1,6 @@
 all : help
 
-.PHONY: proto copy schema autocode dist
+.PHONY: proto copy schema autocode dist format luacheck
 
 help:
 	@echo "支持下面命令:"
@@ -35,6 +35,11 @@ autocode:
 format:
 	@echo "Formatting Lua files with stylua..."
 	@stylua .
+
+# 检查 lua 代码
+luacheck:
+	@echo "Checking Lua files with luacheck..."
+	@luacheck .
 
 # 打包
 dist: build

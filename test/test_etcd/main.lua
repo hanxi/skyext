@@ -11,15 +11,14 @@ local function test_etcd_service1()
 
     skynet.start(function()
         local etcd_config = config.get_table("etcd_config")
-        g_etcd_client = etcd.new(etcd_config)
+        local etcd_client = etcd.new(etcd_config)
         timer.repeat_immediately("test1", 100, function()
-            local NODE_PREFIX = "/skynet/node/"
             local LEASE_TTL = 30 -- 秒
 
-            local r = g_etcd_client:get("/test/a")
+            local r = etcd_client:get("/test/a")
             log.info("etcd get /test/a", "r", r)
             skynet.fork(function()
-                local ret, err = g_etcd_client:grant(LEASE_TTL)
+                local ret, err = etcd_client:grant(LEASE_TTL)
                 log.info("etcd grant", "ret", ret, "err", err)
             end)
             skynet.call(".test-etcd2", "lua", "get")
@@ -36,10 +35,10 @@ local function test_etcd_service2()
 
     skynet.start(function()
         local etcd_config = config.get_table("etcd_config")
-        g_etcd_client = etcd.new(etcd_config)
+        local etcd_client = etcd.new(etcd_config)
         local CMD = {}
         function CMD.get()
-            local r = g_etcd_client:get("/test/a")
+            local r = etcd_client:get("/test/a")
             log.info("etcd get /test/a", "r", r)
         end
         cmd_api.dispatch(CMD)

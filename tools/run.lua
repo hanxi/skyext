@@ -1,3 +1,4 @@
+-- luacheck: globals SCRIPT_DIRECTORY
 -- lua 脚本工具执行入口文件
 
 -- 获取当前 run.lua 的所在目录

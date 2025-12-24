@@ -2,11 +2,7 @@ local skynet = require("skynet")
 local cmd_api = require("cmd_api")
 local config = require("config")
 local mongo = require("skynet.db.mongo")
-local util_table = require("util.table")
-local bson = require("bson")
 local log = require("log")
-
-local bson_meta = bson.meta
 
 local g_name, g_index = ...
 g_index = tonumber(g_index)

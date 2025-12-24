@@ -1,3 +1,4 @@
+-- luacheck: globals SCRIPT_DIRECTORY
 local lfs = require "lfs"
 
 local function fetch_modules()

@@ -143,7 +143,6 @@ end
 
 --- 弹出时间节点前触发的定时器并执行
 local function minheap_pop_exec()
-    local id, next_exec_time
     local timer_ids = {}
     local ms_now = millisecond()
     while true do

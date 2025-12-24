@@ -40,7 +40,6 @@ local g_heartbeat_timer
 local g_map_service = {} -- service -> { map_node = { [node] = node_revision } }
 local g_map_node = {} -- node -> { address, node_revision }
 local g_etcd_node_revision
-local g_watch_node_co
 local g_node_name = config.get("cluster_node_name")
 local g_cluster_listened
 
@@ -157,7 +156,7 @@ end
 
 local function etcd_update_node(node_info, node_revision)
     assert(node_info)
-    assert(mod_revision)
+    assert(node_revision)
     if not g_leaseid then
         return nil
     end
@@ -536,7 +535,7 @@ function service_mt:update_node(node, info)
 
     local node_info = g_map_node[node]
     if not node_info then
-        log.debug("service update_node failed node not found", "service", service, "node", node)
+        log.debug("service update_node failed node not found", "service", self.service, "node", node)
         return false
     end
 
@@ -630,7 +629,7 @@ function CMD.register(services)
     g_heartbeat_timer:wakeup()
 end
 
-function CMD.unregister()
+function CMD.unregister(services)
     for _, service in ipairs(services) do
         g_service_local[service] = nil
         log.info("unregister service", "service", service)
@@ -662,7 +661,7 @@ skynet.start(function()
     log.info("Cluster discovery service started with heartbeat", "timerid", g_heartbeat_timer)
 
     first_query_nodes()
-    g_watch_node_co = skynet.fork(ensure_watch_node)
+    skynet.fork(ensure_watch_node)
 
     event_channel_api.init(CMD)
     cmd_api.dispatch(CMD)
