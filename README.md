@@ -131,19 +131,74 @@ skyext/
 
 ## ⚙️ 配置说明
 
-### 主要配置文件
+### 配置文件结构
 
-- `etc/common.conf.lua`: 通用配置（日志、数据库、etcd 等）
-- `etc/account*.conf.lua`: Account 节点配置
-- `etc/role*.conf.lua`: Role 节点配置
-- `etc/robot.conf.lua`: 机器人客户端配置
+项目采用分层配置设计，配置文件分为两个层级：
 
-###  config 配置模块
+1. **节点配置文件**：位于 `etc/` 目录下，定义节点启动参数
+   - `etc/account*.conf.lua`: Account 节点配置文件
+   - `etc/role*.conf.lua`: Role 节点配置文件
+   - `etc/core.conf.lua`: 核心配置文件，包含 skynet 框架基础配置
 
-- 支持 string, number, boolean, table 类型的配置
-- table 类型的配置需要用 `[[` 和 `]]` 包裹起来
-- 配置语法见 [skynet 官方文档 Config](https://github.com/cloudwu/skynet/wiki/Config)
-- 详见 [config 模块](lualib/config.lua)
+2. **应用配置文件**：位于 `etc/app/` 目录下，定义具体业务配置
+   - `etc/app/common.app.lua`: 通用业务配置（日志、数据库、etcd 等）
+   - `etc/app/account*.app.lua`: Account 节点业务配置
+   - `etc/app/role*.app.lua`: Role 节点业务配置
+   - `etc/app/robot.app.lua`: 机器人客户端业务配置
+
+### 节点配置文件
+
+节点配置文件是 skynet 启动时加载的配置，主要定义：
+
+- 启动脚本路径
+- Lua 搜索路径
+- 线程数等基础参数
+- 应用配置文件路径
+
+示例 (`etc/account1.conf.lua`)：
+```lua
+app_config_path = "etc/app/account1.app.lua"
+start = "account" -- 主脚本 account/main.lua
+include "core.conf.lua" -- 包含核心配置
+```
+
+### 应用配置文件
+
+应用配置文件定义具体的业务参数，支持以下数据类型：
+- string: 字符串类型
+- number: 数值类型
+- boolean: 布尔类型
+- table: 表类型（复杂配置结构）
+
+示例 (`etc/app/common.app.lua`)：
+```lua
+-- 日志配置
+log_level = 4 -- 日志等级 DEBUG = 4, INFO = 3, WARN = 2, ERROR = 1, FATAL = 0
+
+-- 数据库配置
+mongo_config = {
+    center = {
+        connections = 4, -- 连接数
+        cfg = {
+            host = "127.0.0.1",
+            port = 27017,
+        },
+    },
+}
+
+-- 其他配置
+max_role_count = 5 -- 最大角色数量
+```
+
+### config 配置模块
+
+配置模块 (`lualib/config.lua`) 提供统一的配置读取接口：
+- `config.get(key)`: 获取字符串类型配置
+- `config.get_boolean(key)`: 获取布尔类型配置
+- `config.get_number(key)`: 获取数值类型配置
+- `config.get_table(key)`: 获取表类型配置
+
+配置语法遵循 [skynet 官方文档 Config](https://github.com/cloudwu/skynet/wiki/Config) 规范。应用配置文件支持 table 类型配置，支持嵌套结构。
 
 ## 🔧 开发工具
 
