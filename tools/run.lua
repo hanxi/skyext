@@ -7,7 +7,7 @@ local function get_script_directory()
     if script_path:match(".+%.lua") then
         -- 如果 arg[0] 是相对/绝对路径，尝试用 debug 获取真实路径
         local info = debug.getinfo(1, "S")
-        script_path = info.source:sub(2)  -- 去掉 '@'
+        script_path = info.source:sub(2) -- 去掉 '@'
     end
 
     -- 提取目录部分
@@ -59,7 +59,7 @@ local env = {
     arg = new_arg,
     dofile = dofile,
     package = package,
-    _G = _G
+    _G = _G,
 }
 setmetatable(env, { __index = _G })
 
@@ -76,4 +76,3 @@ if not success then
     print("Error running script: " .. result)
     os.exit(1)
 end
-

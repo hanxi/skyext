@@ -9,7 +9,7 @@ function M.launcher_node()
 
     local debug_console_port = config.get_number("debug_console_port")
     log.info("debug console listen", "debug_console_port", debug_console_port)
-	skynet.newservice("debug_console", debug_console_port)
+    skynet.newservice("debug_console", debug_console_port)
 
     -- 创建 mongodb 索引
     local mongo_index = skynet.newservice("mongo_index")

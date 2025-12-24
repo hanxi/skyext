@@ -118,7 +118,7 @@ local function load_config(config_name)
 end
 
 function M.init()
-	local app_config_loaded = skynet.getenv("app_config_loaded")
+    local app_config_loaded = skynet.getenv("app_config_loaded")
     if app_config_loaded then
         return
     end

@@ -59,45 +59,48 @@ local M = {}
 -- that implement the sorting algorithm and two fields; `heap.values` and
 -- `heap.payloads` being lists, holding the values and payloads respectively.
 M.binaryHeap = function(swap, erase, lt)
-
-  local heap = {
-      values = {},  -- list containing values
-      erase = erase,
-      swap = swap,
-      lt = lt,
+    local heap = {
+        values = {}, -- list containing values
+        erase = erase,
+        swap = swap,
+        lt = lt,
     }
 
-  function heap:bubbleUp(pos)
-    local values = self.values
-    while pos>1 do
-      local parent = floor(pos/2)
-      if not lt(values[pos], values[parent]) then
-          break
-      end
-      swap(self, parent, pos)
-      pos = parent
+    function heap:bubbleUp(pos)
+        local values = self.values
+        while pos > 1 do
+            local parent = floor(pos / 2)
+            if not lt(values[pos], values[parent]) then
+                break
+            end
+            swap(self, parent, pos)
+            pos = parent
+        end
     end
-  end
 
-  function heap:sinkDown(pos)
-    local values = self.values
-    local last = #values
-    while true do
-      local min = pos
-      local child = 2 * pos
+    function heap:sinkDown(pos)
+        local values = self.values
+        local last = #values
+        while true do
+            local min = pos
+            local child = 2 * pos
 
-      for c = child, child + 1 do
-        if c <= last and lt(values[c], values[min]) then min = c end
-      end
+            for c = child, child + 1 do
+                if c <= last and lt(values[c], values[min]) then
+                    min = c
+                end
+            end
 
-      if min == pos then break end
+            if min == pos then
+                break
+            end
 
-      swap(self, pos, min)
-      pos = min
+            swap(self, pos, min)
+            pos = min
+        end
     end
-  end
 
-  return heap
+    return heap
 end
 
 --================================================================
@@ -109,7 +112,8 @@ end
 -- any type (except `nil`), as long as the comparison function used to create
 -- the heap can handle it.
 -- @section plainheap
-do end -- luacheck: ignore
+do
+end -- luacheck: ignore
 -- the above is to trick ldoc (otherwise `update` below disappears)
 
 local update
@@ -118,11 +122,15 @@ local update
 -- @param pos the position which value to update
 -- @param newValue the new value to use for this payload
 update = function(self, pos, newValue)
-  assert(newValue ~= nil, "cannot add 'nil' as value")
-  assert(pos >= 1 and pos <= #self.values, "illegal position")
-  self.values[pos] = newValue
-  if pos > 1 then self:bubbleUp(pos) end
-  if pos < #self.values then self:sinkDown(pos) end
+    assert(newValue ~= nil, "cannot add 'nil' as value")
+    assert(pos >= 1 and pos <= #self.values, "illegal position")
+    self.values[pos] = newValue
+    if pos > 1 then
+        self:bubbleUp(pos)
+    end
+    if pos < #self.values then
+        self:sinkDown(pos)
+    end
 end
 
 local remove
@@ -131,26 +139,23 @@ local remove
 -- @param pos the position to remove
 -- @return value, or nil if a bad `pos` value was provided
 remove = function(self, pos)
-  local last = #self.values
-  if pos < 1 then
-    return  -- bad pos
-
-  elseif pos < last then
-    local v = self.values[pos]
-    self:swap(pos, last)
-    self:erase(last)
-    self:bubbleUp(pos)
-    self:sinkDown(pos)
-    return v
-
-  elseif pos == last then
-    local v = self.values[pos]
-    self:erase(last)
-    return v
-
-  else
-    return  -- bad pos: pos > last
-  end
+    local last = #self.values
+    if pos < 1 then
+        return -- bad pos
+    elseif pos < last then
+        local v = self.values[pos]
+        self:swap(pos, last)
+        self:erase(last)
+        self:bubbleUp(pos)
+        self:sinkDown(pos)
+        return v
+    elseif pos == last then
+        local v = self.values[pos]
+        self:erase(last)
+        return v
+    else
+        return -- bad pos: pos > last
+    end
 end
 
 local insert
@@ -159,10 +164,10 @@ local insert
 -- @param value the value used for sorting this element
 -- @return nothing, or throws an error on bad input
 insert = function(self, value)
-  assert(value ~= nil, "cannot add 'nil' as value")
-  local pos = #self.values + 1
-  self.values[pos] = value
-  self:bubbleUp(pos)
+    assert(value ~= nil, "cannot add 'nil' as value")
+    local pos = #self.values + 1
+    self.values[pos] = value
+    self:bubbleUp(pos)
 end
 
 local pop
@@ -170,9 +175,9 @@ local pop
 -- @function heap:pop
 -- @return value at the top, or `nil` if there is none
 pop = function(self)
-  if self.values[1] ~= nil then
-    return remove(self, 1)
-  end
+    if self.values[1] ~= nil then
+        return remove(self, 1)
+    end
 end
 
 local peek
@@ -180,7 +185,7 @@ local peek
 -- @function heap:peek
 -- @return value at the top, or `nil` if there is none
 peek = function(self)
-  return self.values[1]
+    return self.values[1]
 end
 
 local size
@@ -188,15 +193,15 @@ local size
 -- @function heap:size
 -- @return number of elements
 size = function(self)
-  return #self.values
+    return #self.values
 end
 
 local function swap(heap, a, b)
-  heap.values[a], heap.values[b] = heap.values[b], heap.values[a]
+    heap.values[a], heap.values[b] = heap.values[b], heap.values[a]
 end
 
 local function erase(heap, pos)
-  heap.values[pos] = nil
+    heap.values[pos] = nil
 end
 
 --================================================================
@@ -204,34 +209,38 @@ end
 --================================================================
 
 local function plainHeap(lt)
-  local h = M.binaryHeap(swap, erase, lt)
-  h.peek = peek
-  h.pop = pop
-  h.size = size
-  h.remove = remove
-  h.insert = insert
-  h.update = update
-  return h
+    local h = M.binaryHeap(swap, erase, lt)
+    h.peek = peek
+    h.pop = pop
+    h.size = size
+    h.remove = remove
+    h.insert = insert
+    h.update = update
+    return h
 end
 
 --- Creates a new min-heap, where the smallest value is at the top.
 -- @param lt (optional) comparison function (less-than), see `binaryHeap`.
 -- @return the new heap
 M.minHeap = function(lt)
-  if not lt then
-    lt = function(a,b) return (a < b) end
-  end
-  return plainHeap(lt)
+    if not lt then
+        lt = function(a, b)
+            return (a < b)
+        end
+    end
+    return plainHeap(lt)
 end
 
 --- Creates a new max-heap, where the largest value is at the top.
 -- @param gt (optional) comparison function (greater-than), see `binaryHeap`.
 -- @return the new heap
 M.maxHeap = function(gt)
-  if not gt then
-    gt = function(a,b) return (a > b) end
-  end
-  return plainHeap(gt)
+    if not gt then
+        gt = function(a, b)
+            return (a > b)
+        end
+    end
+    return plainHeap(gt)
 end
 
 --================================================================
@@ -248,7 +257,8 @@ end
 --
 -- With the 'unique heap' it is easier to remove elements from the heap.
 -- @section uniqueheap
-do end -- luacheck: ignore
+do
+end -- luacheck: ignore
 -- the above is to trick ldoc (otherwise `update` below disappears)
 
 local updateU
@@ -258,7 +268,7 @@ local updateU
 -- @param newValue the new value to use for this payload
 -- @return nothing, or throws an error on bad input
 function updateU(self, payload, newValue)
-  return update(self, self.reverse[payload], newValue)
+    return update(self, self.reverse[payload], newValue)
 end
 
 local insertU
@@ -268,11 +278,11 @@ local insertU
 -- @param payload the payload attached to this element
 -- @return nothing, or throws an error on bad input
 function insertU(self, value, payload)
-  assert(self.reverse[payload] == nil, "duplicate payload")
-  local pos = #self.values + 1
-  self.reverse[payload] = pos
-  self.payloads[pos] = payload
-  return insert(self, value)
+    assert(self.reverse[payload] == nil, "duplicate payload")
+    local pos = #self.values + 1
+    self.reverse[payload] = pos
+    self.payloads[pos] = payload
+    return insert(self, value)
 end
 
 local removeU
@@ -281,10 +291,10 @@ local removeU
 -- @param payload the payload to remove
 -- @return value, payload or nil if not found
 function removeU(self, payload)
-  local pos = self.reverse[payload]
-  if pos ~= nil then
-    return remove(self, pos), payload
-  end
+    local pos = self.reverse[payload]
+    if pos ~= nil then
+        return remove(self, pos), payload
+    end
 end
 
 local popU
@@ -296,11 +306,11 @@ local popU
 -- @function unique:pop
 -- @return payload, value, or `nil` if there is none
 function popU(self)
-  if self.values[1] then
-    local payload = self.payloads[1]
-    local value = remove(self, 1)
-    return payload, value
-  end
+    if self.values[1] then
+        local payload = self.payloads[1]
+        local value = remove(self, 1)
+        return payload, value
+    end
 end
 
 local peekU
@@ -308,7 +318,7 @@ local peekU
 -- @function unique:peek
 -- @return payload, value, or `nil` if there is none
 peekU = function(self)
-  return self.payloads[1], self.values[1]
+    return self.payloads[1], self.values[1]
 end
 
 local peekValueU
@@ -322,7 +332,7 @@ local peekValueU
 --                                        -- double parens to drop extra return value
 -- end
 peekValueU = function(self)
-  return self.values[1]
+    return self.values[1]
 end
 
 local valueByPayload
@@ -331,7 +341,7 @@ local valueByPayload
 -- @param payload the payload to lookup
 -- @return value or nil if no such payload exists
 valueByPayload = function(self, payload)
-  return self.values[self.reverse[payload]]
+    return self.values[self.reverse[payload]]
 end
 
 local sizeU
@@ -339,21 +349,21 @@ local sizeU
 -- @function heap:size
 -- @return number of elements
 sizeU = function(self)
-  return #self.values
+    return #self.values
 end
 
 local function swapU(heap, a, b)
-  local pla, plb = heap.payloads[a], heap.payloads[b]
-  heap.reverse[pla], heap.reverse[plb] = b, a
-  heap.payloads[a], heap.payloads[b] = plb, pla
-  swap(heap, a, b)
+    local pla, plb = heap.payloads[a], heap.payloads[b]
+    heap.reverse[pla], heap.reverse[plb] = b, a
+    heap.payloads[a], heap.payloads[b] = plb, pla
+    swap(heap, a, b)
 end
 
 local function eraseU(heap, pos)
-  local payload = heap.payloads[pos]
-  heap.reverse[payload] = nil
-  heap.payloads[pos] = nil
-  erase(heap, pos)
+    local payload = heap.payloads[pos]
+    heap.reverse[payload] = nil
+    heap.payloads[pos] = nil
+    erase(heap, pos)
 end
 
 --================================================================
@@ -361,18 +371,18 @@ end
 --================================================================
 
 local function uniqueHeap(lt)
-  local h = M.binaryHeap(swapU, eraseU, lt)
-  h.payloads = {}  -- list contains payloads
-  h.reverse = {}  -- reverse of the payloads list
-  h.peek = peekU
-  h.peekValue = peekValueU
-  h.valueByPayload = valueByPayload
-  h.pop = popU
-  h.size = sizeU
-  h.remove = removeU
-  h.insert = insertU
-  h.update = updateU
-  return h
+    local h = M.binaryHeap(swapU, eraseU, lt)
+    h.payloads = {} -- list contains payloads
+    h.reverse = {} -- reverse of the payloads list
+    h.peek = peekU
+    h.peekValue = peekValueU
+    h.valueByPayload = valueByPayload
+    h.pop = popU
+    h.size = sizeU
+    h.remove = removeU
+    h.insert = insertU
+    h.update = updateU
+    return h
 end
 
 --- Creates a new min-heap with unique payloads.
@@ -383,10 +393,12 @@ end
 -- @param lt (optional) comparison function (less-than), see `binaryHeap`.
 -- @return the new heap
 M.minUnique = function(lt)
-  if not lt then
-    lt = function(a,b) return (a < b) end
-  end
-  return uniqueHeap(lt)
+    if not lt then
+        lt = function(a, b)
+            return (a < b)
+        end
+    end
+    return uniqueHeap(lt)
 end
 
 --- Creates a new max-heap with unique payloads.
@@ -397,10 +409,12 @@ end
 -- @param gt (optional) comparison function (greater-than), see `binaryHeap`.
 -- @return the new heap
 M.maxUnique = function(gt)
-  if not gt then
-    gt = function(a,b) return (a > b) end
-  end
-  return uniqueHeap(gt)
+    if not gt then
+        gt = function(a, b)
+            return (a > b)
+        end
+    end
+    return uniqueHeap(gt)
 end
 
 return M

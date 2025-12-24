@@ -14,8 +14,10 @@ end
 
 function M.split(s, delim)
     local sp = {}
-    local pattern = "[^" .. delim .. ']+'
-    string.gsub(s, pattern, function(v) table.insert(sp, v) end)
+    local pattern = "[^" .. delim .. "]+"
+    string.gsub(s, pattern, function(v)
+        table.insert(sp, v)
+    end)
     return sp
 end
 

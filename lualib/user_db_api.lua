@@ -29,7 +29,7 @@ function M.add_rid(account, rid)
             rids = rid,
         },
     }
-    return g_coll_obj:safe_update({account = account}, update)
+    return g_coll_obj:safe_update({ account = account }, update)
 end
 
 function M.remove_rid(account, rid)
@@ -38,7 +38,7 @@ function M.remove_rid(account, rid)
             rids = rid,
         },
     }
-    return g_coll_obj:safe_update({account = account}, update)
+    return g_coll_obj:safe_update({ account = account }, update)
 end
 
 function M.create(account)

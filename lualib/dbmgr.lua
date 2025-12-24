@@ -12,7 +12,7 @@ local g_collection_obj = {} -- 数据库链接
 local g_cache_collection = {} -- 缓存数据对象
 local g_default_projection = { _id = false }
 local mongo_config = config.get_table("mongo_config")
-local db_save_interval = config.get_number("db_save_interval") or 3*60
+local db_save_interval = config.get_number("db_save_interval") or 3 * 60
 
 local function check_collection(dbname, dbcoll)
     local db_config = mongo_config[dbname]

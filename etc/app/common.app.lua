@@ -4,18 +4,19 @@ log_overload_mqlen = 1000000 -- 日志过载队列长度
 log_src = true -- 日志是否打印代码位置
 log_print_table = true -- 日志是否打印table内容
 log_level = 4 -- 日志等级 DEBUG = 4, INFO = 3, WARN = 2, ERROR = 1, FATAL = 0
-log_config = log_config or {
-    {
-        name = "file",
-        filename = "logs/skyext.log",
-        split = "size", -- size/line/day/hour
-        maxline = 10000, -- 每个文件最大行数 line split 有效
-        maxsize = "100M", -- 每个文件最大尺寸 size split 有效
-    },
-    {
-        name = "console",
-    },
-}
+log_config = log_config
+    or {
+        {
+            name = "file",
+            filename = "logs/skyext.log",
+            split = "size", -- size/line/day/hour
+            maxline = 10000, -- 每个文件最大行数 line split 有效
+            maxsize = "100M", -- 每个文件最大尺寸 size split 有效
+        },
+        {
+            name = "console",
+        },
+    }
 
 etcd_config = {
     http_host = {

@@ -161,7 +161,7 @@ end
 local function etcd_grant()
     local ret, err = g_etcd_client:grant(LEASE_TTL)
     if not ret then
-        log.error("distributed_lock grant leaseid failed",  "err", err)
+        log.error("distributed_lock grant leaseid failed", "err", err)
         return
     elseif (not ret.body) or not ret.body.ID then
         log.error("distributed_lock grant leaseid failed", "ret", ret)
@@ -205,7 +205,7 @@ local function on_recreate_lease()
             -- 锁重建失败，通知业务
             notify_lock_expired(key, lock_info)
         else
-           log.info("Successfully re-acquired lock", "key", key)
+            log.info("Successfully re-acquired lock", "key", key)
         end
     end
 end

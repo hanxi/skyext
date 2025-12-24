@@ -40,7 +40,12 @@ end
 function time_mt:need_split()
     local t = os_date("*t", time.now())
     if self.split == "hour" then
-        if t.year ~= self.last.year or t.month ~= self.last.month or t.day ~= self.last.day or t.hour ~= self.last.hour then
+        if
+            t.year ~= self.last.year
+            or t.month ~= self.last.month
+            or t.day ~= self.last.day
+            or t.hour ~= self.last.hour
+        then
             self.last.year = t.year
             self.last.month = t.month
             self.last.day = t.day
@@ -203,7 +208,6 @@ local function new_split_mgr(params)
         return setmetatable(mgr, time_mt)
     end
 end
-
 
 -- 日志轮转生成名字格式:
 -- filename.count

@@ -31,6 +31,11 @@ schema:
 autocode:
 	./bin/lua tools/run.lua tools/gen_roleagent_modules.lua
 
+# 格式化 lua 代码
+format:
+	@echo "Formatting Lua files with stylua..."
+	@stylua .
+
 # 打包
 dist: build
 	./tools/dist.sh

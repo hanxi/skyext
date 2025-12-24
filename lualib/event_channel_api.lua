@@ -40,7 +40,7 @@ end
 -- service api
 function M.init(CMD)
     g_server_channel = mc.new()
-    CMD.GET_EVENT_CHANNEL = function ()
+    CMD.GET_EVENT_CHANNEL = function()
         log.info("GET_EVENT_CHANNEL called", "channel", g_server_channel.channel)
         return g_server_channel.channel
     end

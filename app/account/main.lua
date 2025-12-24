@@ -22,4 +22,3 @@ skynet.start(function()
     log.info("account start finished")
     skynet.exit()
 end)
-

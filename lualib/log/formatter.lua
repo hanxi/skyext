@@ -86,7 +86,7 @@ local function default_logmt(record)
     local msg = record.msg
     local events_tbl = {}
     for _, event in pairs(record.events) do
-        events_tbl[#events_tbl+1] = event[1] .. ":" .. event[2]
+        events_tbl[#events_tbl + 1] = event[1] .. ":" .. event[2]
     end
     local events_str = tconcat(events_tbl, " ")
     return sformat("[%s %s] %s%s: msg:%s %s", date, short_log_level, mod, line, msg, events_str)
