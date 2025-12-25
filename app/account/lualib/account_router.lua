@@ -2,7 +2,7 @@ local log = require "log"
 local config = require "config"
 local jwt = require "jwt"
 local role_db_api = require "role_db_api"
-local id = require "id_generator"
+local id_generator = require "id_generator"
 local errcode = require "errcode"
 local time = require "time"
 local rolenode_api = require "rolenode_api"
@@ -23,10 +23,10 @@ end
 M.GET["/roles"] = function(req, res)
     log.debug("begin get roles", req, res)
     local q = req.parse_query()
-
-    local data, err = jwt.verify(q.token, login_jwt_secret)
+    local token = q.token
+    local data, err = jwt.verify(token, login_jwt_secret)
     if not data then
-        log.warn("jwt failed", "err", err, "token", q.token)
+        log.warn("jwt failed", "err", err, "token", token)
         return res.write_json({
             code = errcode.TOKEN_ERROR,
         })
@@ -60,9 +60,10 @@ end
 M.POST["/create_role"] = function(req, res)
     log.debug("begin get roles", req, res)
     local b = req.read_json()
-    local data, err = jwt.verify(b.token, login_jwt_secret)
+    local token = b.token
+    local data, err = jwt.verify(token, login_jwt_secret)
     if not data then
-        log.warn("jwt failed", "err", err, "token", b.token)
+        log.warn("jwt failed", "err", err, "token", token)
         return res.write_json({
             code = errcode.TOKEN_ERROR,
         })
@@ -100,7 +101,7 @@ M.POST["/create_role"] = function(req, res)
         name = name,
         create_time = time.now_ms(),
     }
-    local rid = id.newid() -- 分配唯一id
+    local rid = id_generator.newid() -- 分配唯一id
     local ret = role_db_api.create(rid, account, data)
     if not ret then
         log.error("create_role role_db_api.create failed", "account", account, "name", name)

@@ -84,22 +84,18 @@ end
 -- define local refresh function variable
 local refresh_jwt_token
 
-local function _request_pre(self, uri, opts, timeout, ignore_auth)
+local function _request_pre(self, uri, opts)
     local body
     if opts and opts.body and table_exist_keys(opts.body) then
         body = encode_json(opts.body)
     end
 
-    if opts and opts.query and table_exist_keys(opts.query) then
-        uri = uri .. "?" .. encode_args(opts.query)
-    end
-
     local headers = {}
     local keepalive = true
     if self.is_auth then
-        if not ignore_auth then
+        if not opts.ignore_auth then
             -- authentication request not need auth request
-            local _, err = refresh_jwt_token(self, timeout)
+            local _, err = refresh_jwt_token(self, opts.timeout)
             if err then
                 return nil, err
             end
@@ -110,30 +106,16 @@ local function _request_pre(self, uri, opts, timeout, ignore_auth)
         end
     end
     -- TODO: keepalive not support in skynet
-    return { uri = uri, headers = headers, body = body }
+    return { uri = uri, headers = headers, body = body, keepalive = keepalive }
 end
 
-local function _request_uri(self, host, method, uri, opts, timeout, ignore_auth)
-    local ret, err = _request_pre(self, uri, opts, timeout, ignore_auth)
+local function _request_uri(self, host, method, uri, opts)
+    local ret, err = _request_pre(self, uri, opts)
     if err then
         return nil, err
     end
 
-    log.debug(
-        "request_uri begin",
-        "uri",
-        uri,
-        "timeout",
-        timeout,
-        "ignore_auth",
-        ignore_auth,
-        "host",
-        host,
-        "headers",
-        ret.headers,
-        "body",
-        ret.body
-    )
+    log.debug("request_uri begin", "uri", uri, "host", host, "headers", ret.headers, "body", ret.body)
     local recvheader = {}
     -- TODO: httpc.request 中的 internal.request 需要支持超时
     local status, body = httpc.request(method, host, ret.uri, recvheader, ret.headers, ret.body)
@@ -155,10 +137,10 @@ local function _request_uri(self, host, method, uri, opts, timeout, ignore_auth)
     return { status = status, headers = recvheader, body = decode_json(body) }
 end
 
-local function _request_uri_stream(self, host, method, uri, opts, timeout, ignore_auth)
-    log.debug("request_uri_stream begin", "uri", uri, "timeout", timeout, "ignore_auth", ignore_auth)
+local function _request_uri_stream(self, host, method, uri, opts)
+    log.debug("request_uri_stream begin", "uri", uri)
 
-    local ret, err = _request_pre(self, uri, opts, timeout, ignore_auth)
+    local ret, err = _request_pre(self, uri, opts)
     if err then
         log.warn("request_uri_stream request_pre failed", "err", err)
         return nil, err
@@ -229,9 +211,12 @@ end
 local function _post(self, uri, body, timeout, ignore_auth)
     local endpoint = get_working_endpoint(self)
 
-    timeout = timeout or 5
-    local ok, ret, err =
-        xpcall(_request_uri, xpcall_msgh, self, endpoint.http_host, "POST", uri, { body = body }, timeout, ignore_auth)
+    local opts = {
+        body = body,
+        timeout = timeout or 5,
+        ignore_auth = ignore_auth,
+    }
+    local ok, ret, err = xpcall(_request_uri, xpcall_msgh, self, endpoint.http_host, "POST", uri, opts)
     if not ok then
         report_failure(self, endpoint.http_host)
         return nil, ret
@@ -243,9 +228,11 @@ end
 local function _post_stream(self, uri, body, timeout)
     local endpoint = get_working_endpoint(self)
 
-    timeout = timeout or 5
-    local ok, err =
-        xpcall(_request_uri_stream, xpcall_msgh, self, endpoint.http_host, "POST", uri, { body = body }, timeout)
+    local opts = {
+        body = body,
+        timeout = timeout or 5,
+    }
+    local ok, err = xpcall(_request_uri_stream, xpcall_msgh, self, endpoint.http_host, "POST", uri, opts)
     if not ok then
         report_failure(self, endpoint.http_host)
         return nil, err
@@ -518,6 +505,20 @@ local function get(self, key, attr)
     return res, err
 end
 
+local function get_range_end(key)
+    if #key == 0 then
+        return string_char(0)
+    end
+
+    local last = string_sub(key, -1)
+    key = string_sub(key, 1, #key - 1)
+
+    local ascii = string_byte(last) + 1
+    local str = string_char(ascii)
+
+    return key .. str
+end
+
 local function delete(self, key, attr)
     local _, err = verify_key(key)
     if err then
@@ -528,9 +529,7 @@ local function delete(self, key, attr)
 
     local range_end
     if attr.range_end then
-        range_end = encode_base64(attr.range_end)
-    else
-        range_end = encode_base64(default_key_range_end(key))
+        range_end = encode_base64(get_range_end(key))
     end
 
     local prev_kv
@@ -538,10 +537,8 @@ local function delete(self, key, attr)
         prev_kv = true
     end
 
-    key = encode_base64(key)
-
     local body = {
-        key = key,
+        key = encode_base64(key),
         range_end = range_end,
         prev_kv = prev_kv,
     }
@@ -566,20 +563,6 @@ local function txn(self, opts_arg, compare, success, failure)
     }
 
     return _post(self, URL_TXN, body, timeout or self.timeout)
-end
-
-local function get_range_end(key)
-    if #key == 0 then
-        return string_char(0)
-    end
-
-    local last = string_sub(key, -1)
-    key = string_sub(key, 1, #key - 1)
-
-    local ascii = string_byte(last) + 1
-    local str = string_char(ascii)
-
-    return key .. str
 end
 
 do
@@ -842,8 +825,7 @@ function _M.timetolive(self, id, keys)
         keys = keys,
     }
 
-    local res
-    res, err = _post(self, URL_TIMETOLIVE, body, self.timeout)
+    local res, err = _post(self, URL_TIMETOLIVE, body, self.timeout)
     if res and res.status == 200 then
         if res.body.keys and next(res.body.keys) then
             for i, key in ipairs(res.body.keys) do
@@ -945,7 +927,7 @@ local function watch(self, key, attr)
     end
 
     if #key == 0 then
-        key = str_char(0)
+        key = string_char(0)
     end
 
     key = encode_base64(key)
@@ -983,11 +965,6 @@ local function watch(self, key, attr)
     local filters
     if attr.filters then
         filters = attr.filters and attr.filters or 0
-    end
-
-    local need_cancel
-    if attr.need_cancel then
-        need_cancel = attr.need_cancel and true or false
     end
 
     local body = {

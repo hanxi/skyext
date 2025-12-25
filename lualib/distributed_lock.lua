@@ -1,13 +1,10 @@
 local skynet = require "skynet"
 local etcd = require "etcd"
 local timer = require "timer"
-local util_string = require "util.string"
 local config = require "config"
 local log = require "log"
-local crypt = require "skynet.crypt"
 
 local sformat = string.format
-local encode_base64 = crypt.base64encode
 
 local M = {}
 
@@ -26,10 +23,6 @@ local function make_lock_info(key, value)
         my_key = pfx .. g_leaseid,
         value = value,
     }
-end
-
-local function make_my_key(key)
-    return sformat("%s%s/%s", LOCK_PREFIX, key, g_leaseid)
 end
 
 -- 在锁失效时通知业务
@@ -213,7 +206,7 @@ end
 skynet.init(function()
     local etcd_config = config.get_table("etcd_config")
     g_etcd_client = etcd.new(etcd_config)
-    g_keepalive_timer = timer.repeat_immediately("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
+    timer.repeat_immediately("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
         if g_leaseid and etcd_keepalive() then
             -- 续约成功，一切正常
             return

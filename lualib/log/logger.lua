@@ -12,11 +12,7 @@ local select = select
 local tostring = tostring
 local setmetatable = setmetatable
 
-local sgsub = string.gsub
-local smatch = string.match
 local sformat = string.format
-local tconcat = table.concat
-local tunpack = table.unpack
 
 local DEBUG = log_level.DEBUG
 local INFO = log_level.INFO
@@ -185,7 +181,7 @@ end
 local origin_pcall = pcall
 function M.safe_pcall(func, ...)
     pcall_counter = pcall_counter + 1
-    local guard <close> = create_restore_guard()
+    local _ <close> = create_restore_guard()
     return origin_pcall(func, ...)
 end
 
@@ -193,7 +189,7 @@ end
 local origin_xpcall = xpcall
 function M.safe_xpcall(func, msgh, ...)
     xpcall_counter = xpcall_counter + 1
-    local guard <close> = create_restore_guard()
+    local _ <close> = create_restore_guard()
     return origin_xpcall(func, msgh, ...)
 end
 

@@ -1,7 +1,6 @@
 local skynet = require "skynet"
 local cmd_api = require "cmd_api"
 local cluster_discovery = require "cluster_discovery"
-local errcode = require "errcode"
 local config = require "config"
 local log = require "log"
 local roleagent_api = require "roleagent_api"
@@ -11,7 +10,7 @@ log.config {
 }
 
 local CMD = {}
-local g_agents = {}
+local g_agents = {} -- luacheck: ignore
 local g_watchdog_service
 
 function CMD.start(conf)

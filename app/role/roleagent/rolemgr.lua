@@ -1,4 +1,3 @@
-local skynet = require "skynet"
 local role = require "modules.role"
 local client = require "client"
 local dbmgr = require "dbmgr"

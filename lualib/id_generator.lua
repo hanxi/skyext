@@ -60,20 +60,21 @@ end
 -- 从缓存中获取一个ID
 local function get_cached_id()
     -- 获取任意一个ID
-    for id in pairs(id_cache) do
-        id_cache[id] = nil
-        cache_size = cache_size - 1
-
-        -- 检查是否需要补充缓存
-        if should_refill() then
-            refill_cache()
-        end
-
-        return id
+    local id = next(id_cache)
+    if not id then
+        -- 缓存为空，直接从原始接口获取
+        return M.raw_newid()
     end
 
-    -- 缓存为空，直接从原始接口获取
-    return M.raw_newid()
+    id_cache[id] = nil
+    cache_size = cache_size - 1
+
+    -- 检查是否需要补充缓存
+    if should_refill() then
+        refill_cache()
+    end
+
+    return id
 end
 
 -- 从缓存中获取多个ID

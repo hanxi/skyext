@@ -5,7 +5,7 @@ local log = require "log"
 skynet.start(function()
     log.info("robot start")
     if not config.get("daemon") then
-        local console = skynet.newservice("console")
+        skynet.newservice("console")
     end
 
     local robot_count = config.get_number("robot_count") or 1

@@ -1,4 +1,3 @@
-local skynet = require "skynet"
 local log = require "log"
 local time = require "time"
 

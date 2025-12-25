@@ -7,6 +7,10 @@ globals = {
     "skynet",
     "SERVICE_NAME",
     "SERVICE_PATH",
+    "SERVICE_ARGS",
+    "LUA_SERVICE",
+    "LUA_PATH",
+    "LUA_CPATH",
 }
 
 ignore = {

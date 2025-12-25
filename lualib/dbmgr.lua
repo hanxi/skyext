@@ -1,4 +1,3 @@
-local skynet = require "skynet"
 local config = require "config"
 local log = require "log"
 local mongo_conn = require "mongo_conn"
@@ -66,7 +65,7 @@ end
 
 local function save_doc(coll_obj, key, unique_id, doc)
     if not orm.is_dirty(doc) then
-        log.debug("doc not dirty", "dbname", dbname, "dbcoll", dbcoll, "key", key, "unique_id", unique_id)
+        log.debug("doc not dirty", "key", key, "unique_id", unique_id)
         return true
     end
 
@@ -87,7 +86,7 @@ local function save_doc(coll_obj, key, unique_id, doc)
         doc._version = doc._version - 1
     end
 
-    log.info("save success", "query", query, "doc", doc, "ret", ret)
+    log.info("save success", "query", query, "doc", doc)
     return true
 end
 
@@ -187,6 +186,7 @@ function M.unload(dbname, dbcoll, key, unique_id)
     local ok = save_doc(coll_obj, key, unique_id, doc)
     if not ok then
         -- TODO: 把数据完整写入到其他地方
+        log.error("unload failed", "dbname", dbname, "dbcoll", dbcoll, "key", key, "unique_id", unique_id)
     end
 
     cache.unloading = nil

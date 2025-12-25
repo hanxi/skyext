@@ -3,7 +3,7 @@ local lfs = require "lfs"
 
 local function fetch_modules()
     local modules = {}
-    local modules_path = SCRIPT_DIRECTORY .. "../service/game/roleagent/modules"
+    local modules_path = SCRIPT_DIRECTORY .. "../app/role/roleagent/modules"
     for file in lfs.dir(modules_path) do
         if file ~= "." and file ~= ".." then
             local f = modules_path .. "/" .. file
@@ -86,7 +86,6 @@ local head = sformat(
 -- Code generated from tools/gen_roleagent_modules.lua
 -- DO NOT EDIT!
 
-local schema = require "orm.schema"
 local sproto_api = require "sproto_api"
 %s
 
@@ -125,6 +124,6 @@ local foot = [[
 return M
 ]]
 
-local output_filename = SCRIPT_DIRECTORY .. "../service/game/roleagent/modules/init.lua"
+local output_filename = SCRIPT_DIRECTORY .. "../app/role/roleagent/modules/init.lua"
 local content = head .. body .. load_mod .. foot
 write_file(output_filename, content, "w")

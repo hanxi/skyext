@@ -71,17 +71,17 @@ function M.get_table(key)
     return s
 end
 
-local function serialize(_t)
-    if type(_t) == "table" then
+local function serialize(t)
+    if type(t) == "table" then
         local s = "{"
-        for k, v in pairs(_t) do
+        for k, v in pairs(t) do
             s = s .. "[" .. serialize(k) .. "]=" .. serialize(v) .. ","
         end
         return s .. "}"
-    elseif type(_t) == "string" then
-        return '"' .. _t .. '"'
+    elseif type(t) == "string" then
+        return '"' .. t .. '"'
     else
-        return tostring(_t)
+        return tostring(t)
     end
 end
 

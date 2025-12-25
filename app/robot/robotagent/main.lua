@@ -130,9 +130,10 @@ skynet.start(function()
         local last = ""
         while true do
             if g_fd then
+                local v
                 v, last = recv_package(last)
                 if not v then
-                    log.error("socket read error:", sz)
+                    log.error("socket read", "err", last)
                     break
                 end
                 local type, request_name, request, response_cb = host:dispatch(v)

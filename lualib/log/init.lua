@@ -48,10 +48,10 @@ function M.init()
 
     _G.raw_assert = assert
     _G.raw_error = error
-    assert = M.sys_assert
-    error = M.sys_error
-    pcall = logger.safe_pcall
-    xpcall = logger.safe_xpcall
+    _G.assert = M.sys_assert
+    _G.error = M.sys_error
+    _G.pcall = logger.safe_pcall
+    _G.xpcall = logger.safe_xpcall
 end
 
 return M

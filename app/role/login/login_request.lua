@@ -1,6 +1,5 @@
 local skynet = require "skynet"
 local global = require "global"
-local role_db_api = require "role_db_api"
 local user_db_api = require "user_db_api"
 local client = require "client"
 local roleagent_api = require "roleagent_api"
@@ -9,7 +8,6 @@ local config = require "config"
 local log = require "log"
 local jwt = require "jwt"
 local sproto_api = require "sproto_api"
-local id = require "id_generator"
 
 local M = {}
 
@@ -31,7 +29,7 @@ function M:report_remote_addr(fd, client_obj)
         )
         return
     end
-    cient_obj.addr = self.remote_addr
+    client_obj.addr = self.remote_addr
 end
 
 local function load_bind_rold(fd, rid)
@@ -39,7 +37,7 @@ local function load_bind_rold(fd, rid)
     local agent_addr = roleagent_api.calc_agent_addr(rid)
     local code, rolenode = skynet.call(agent_addr, "lua", "load_bind_role", rid, fd)
     if code ~= 0 then
-        log.warn("load_bind_role failed", "rid", rid, "fd", fd, "ok", ok)
+        log.warn("load_bind_role failed", "rid", rid, "fd", fd, "code", code)
         return {
             code = code,
             rolenode = rolenode,
