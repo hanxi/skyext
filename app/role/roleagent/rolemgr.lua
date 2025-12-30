@@ -51,4 +51,8 @@ function M.unload_role(rid)
     log.info("unloading role", "rid", rid)
 end
 
+function M.get_roles()
+    return g_roles
+end
+
 return M

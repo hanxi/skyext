@@ -458,6 +458,28 @@ function orm.is_orm(doc)
     return getmetatable(doc) == ormdoc_type
 end
 
+function orm.reload_schema(old_schema, new_schema)
+    assert(old_schema, "need old_schema")
+    assert(new_schema, "need new_schema")
+    for schema_name, schema_obj in pairs(old_schema) do
+        local new_schema_obj = new_schema[schema_name]
+        if new_schema_obj then
+            -- 去掉 schema 的元表
+            setmetatable(schema_obj, nil)
+            for k, v in pairs(schema_obj) do
+                schema_obj[k] = nil
+            end
+            -- 重新赋值
+            for k, v in pairs(new_schema_obj) do
+                schema_obj[k] = v
+            end
+            setmetatable(schema_obj, getmetatable(new_schema_obj))
+        else
+            old_schema[schema_name] = nil
+        end
+    end
+end
+
 orm.next = doc_next
 orm.unpack = doc_unpack
 orm.concat = doc_concat

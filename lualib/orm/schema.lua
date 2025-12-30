@@ -41,7 +41,14 @@ local function _parse_k_tp(k, need_tp)
     if need_tp == integer then
         local nk = tointeger(k)
         if tointeger(k) == nil then
-            error(sformat("not equal k type. need integer, real: %s, k: %s, need_tp: %s", type(k), tostring(k), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal k type. need integer, real: %s, k: %s, need_tp: %s",
+                    type(k),
+                    tostring(k),
+                    tostring(need_tp)
+                )
+            )
         end
         return nk
     elseif need_tp == string then
@@ -53,12 +60,26 @@ end
 local function _check_k_tp(k, need_tp)
     if need_tp == integer then
         if (type(k) ~= "number") or (tointeger(k) == nil) then
-            error(sformat("not equal k type. need integer, real: %s, k: %s, need_tp: %s", type(k), tostring(k), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal k type. need integer, real: %s, k: %s, need_tp: %s",
+                    type(k),
+                    tostring(k),
+                    tostring(need_tp)
+                )
+            )
         end
         return
     elseif need_tp == string then
         if type(k) ~= "string" then
-            error(sformat("not equal k type. need string, real: %s, k: %s, need_tp: %s", type(k), tostring(k), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal k type. need string, real: %s, k: %s, need_tp: %s",
+                    type(k),
+                    tostring(k),
+                    tostring(need_tp)
+                )
+            )
         end
         return
     end
@@ -68,22 +89,50 @@ end
 local function _check_v_tp(v, need_tp)
     if need_tp == integer then
         if (type(v) ~= "number") or (tointeger(v) == nil) then
-            error(sformat("not equal v type. need integer, real: %s, v: %s, need_tp: %s", type(v), tostring(v), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal v type. need integer, real: %s, v: %s, need_tp: %s",
+                    type(v),
+                    tostring(v),
+                    tostring(need_tp)
+                )
+            )
         end
         return
     elseif need_tp == number then
         if type(v) ~= "number" then
-            error(sformat("not equal v type. need number, real: %s, v: %s, need_tp: %s", type(v), tostring(v), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal v type. need number, real: %s, v: %s, need_tp: %s",
+                    type(v),
+                    tostring(v),
+                    tostring(need_tp)
+                )
+            )
         end
         return
     elseif need_tp == string then
         if type(v) ~= "string" then
-            error(sformat("not equal v type. need string, real: %s, v: %s, need_tp: %s", type(v), tostring(v), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal v type. need string, real: %s, v: %s, need_tp: %s",
+                    type(v),
+                    tostring(v),
+                    tostring(need_tp)
+                )
+            )
         end
         return
     elseif need_tp == boolean then
         if type(v) ~= "boolean" then
-            error(sformat("not equal v type. need boolean, real: %s, v: %s, need_tp: %s", type(v), tostring(v), tostring(need_tp)))
+            error(
+                sformat(
+                    "not equal v type. need boolean, real: %s, v: %s, need_tp: %s",
+                    type(v),
+                    tostring(v),
+                    tostring(need_tp)
+                )
+            )
         end
         return
     end
@@ -136,17 +185,17 @@ local function check_kv(self, k, v)
 end
 
 local bag = { type = "struct" }
-local map_integer_resource = { type = "map"}
+local map_integer_resource = { type = "map" }
 local mail = { type = "struct" }
-local map_string_string = { type = "map"}
+local map_string_string = { type = "map" }
 local mail_attach = { type = "struct" }
 local mail_role = { type = "struct" }
 local resource = { type = "struct" }
 local role = { type = "struct" }
 local role_bag = { type = "struct" }
-local map_integer_bag = { type = "map"}
+local map_integer_bag = { type = "map" }
 local role_mail = { type = "struct" }
-local map_integer_mail = { type = "map"}
+local map_integer_mail = { type = "map" }
 local role_modules = { type = "struct" }
 local str2str = { type = "struct" }
 
@@ -178,7 +227,7 @@ bag._check_kv = check_kv
 bag.new = function(init)
     return orm.new(bag, init)
 end
-local bag_fields = {"res","res_type"}
+local bag_fields = { "res", "res_type" }
 bag.fields = function()
     return bag_fields
 end
@@ -216,7 +265,7 @@ mail._check_kv = check_kv
 mail.new = function(init)
     return orm.new(mail, init)
 end
-local mail_fields = {"attach","cfg_id","detail","mail_id","send_role","send_time","title"}
+local mail_fields = { "attach", "cfg_id", "detail", "mail_id", "send_role", "send_time", "title" }
 mail.fields = function()
     return mail_fields
 end
@@ -235,7 +284,7 @@ mail_attach._check_kv = check_kv
 mail_attach.new = function(init)
     return orm.new(mail_attach, init)
 end
-local mail_attach_fields = {"res_id","res_size","res_type"}
+local mail_attach_fields = { "res_id", "res_size", "res_type" }
 mail_attach.fields = function()
     return mail_attach_fields
 end
@@ -253,7 +302,7 @@ mail_role._check_kv = check_kv
 mail_role.new = function(init)
     return orm.new(mail_role, init)
 end
-local mail_role_fields = {"name","rid"}
+local mail_role_fields = { "name", "rid" }
 mail_role.fields = function()
     return mail_role_fields
 end
@@ -271,7 +320,7 @@ resource._check_kv = check_kv
 resource.new = function(init)
     return orm.new(resource, init)
 end
-local resource_fields = {"res_id","res_size"}
+local resource_fields = { "res_id", "res_size" }
 resource.fields = function()
     return resource_fields
 end
@@ -296,7 +345,8 @@ role._check_kv = check_kv
 role.new = function(init)
     return orm.new(role, init)
 end
-local role_fields = {"_version","account","create_time","game","last_login_time","modules","name","rid","server"}
+local role_fields =
+    { "_version", "account", "create_time", "game", "last_login_time", "modules", "name", "rid", "server" }
 role.fields = function()
     return role_fields
 end
@@ -328,7 +378,7 @@ role_bag._check_kv = check_kv
 role_bag.new = function(init)
     return orm.new(role_bag, init)
 end
-local role_bag_fields = {"bags"}
+local role_bag_fields = { "bags" }
 role_bag.fields = function()
     return role_bag_fields
 end
@@ -361,7 +411,7 @@ role_mail._check_kv = check_kv
 role_mail.new = function(init)
     return orm.new(role_mail, init)
 end
-local role_mail_fields = {"_version","mails"}
+local role_mail_fields = { "_version", "mails" }
 role_mail.fields = function()
     return role_mail_fields
 end
@@ -379,7 +429,7 @@ role_modules._check_kv = check_kv
 role_modules.new = function(init)
     return orm.new(role_modules, init)
 end
-local role_modules_fields = {"bag","mail"}
+local role_modules_fields = { "bag", "mail" }
 role_modules.fields = function()
     return role_modules_fields
 end
@@ -397,7 +447,7 @@ str2str._check_kv = check_kv
 str2str.new = function(init)
     return orm.new(str2str, init)
 end
-local str2str_fields = {"key","value"}
+local str2str_fields = { "key", "value" }
 str2str.fields = function()
     return str2str_fields
 end

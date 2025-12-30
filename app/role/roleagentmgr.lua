@@ -28,7 +28,19 @@ function CMD.start(conf)
     end
 end
 
+local GM_CMD = {}
+GM_CMD.get_online_count = {
+    description = "获取在线玩家数量",
+    handler = function()
+        local count = 0
+        for _, agent in pairs(g_agents) do
+            count = count + skynet.call(agent, "lua", "get_online_count")
+        end
+        return count
+    end,
+}
+
 skynet.start(function()
-    cmd_api.dispatch(CMD)
+    cmd_api.dispatch(CMD, GM_CMD)
     cluster_discovery.register({ "roleagentmgr" })
 end)

@@ -3,6 +3,7 @@ cluster_listen_port = "7021"
 cluster_host = "127.0.0.1"
 
 debug_console_port = 6002
+gm_http_port = 9093 -- GM HTTP 服务端口
 
 gate_port = "7022"
 

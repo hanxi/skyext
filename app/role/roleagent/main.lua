@@ -96,6 +96,17 @@ function CMD.start(conf)
     log.info("roleagent service started", "agent", g_agent_name)
 end
 
+function CMD.get_online_count()
+    local roles = rolemgr.get_roles()
+    local count = 0
+    for _, role in pairs(roles) do
+        if role.fd then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 skynet.start(function()
     modules.init(client)
     cmd_api.dispatch(CMD)
