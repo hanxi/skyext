@@ -13,7 +13,6 @@ log_config = {
 account_http_port = 8081
 account_agent_count = 1
 
-debug_console_port = 6004
 gm_http_port = 9091 -- GM HTTP 服务端口
 
 snowflake_machine_id = 3

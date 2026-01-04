@@ -2,7 +2,6 @@ cluster_node_name = "rolenode1"
 cluster_listen_port = "7011"
 cluster_host = "127.0.0.1"
 
-debug_console_port = 6001
 gm_http_port = 9092 -- GM HTTP 服务端口
 
 gate_port = "7012"

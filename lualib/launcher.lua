@@ -6,11 +6,6 @@ local M = {}
 
 function M.launcher_node()
     log.info("launcher_node begin")
-
-    local debug_console_port = config.get_number("debug_console_port")
-    log.info("debug console listen", "debug_console_port", debug_console_port)
-    skynet.newservice("debug_console", debug_console_port)
-
     skynet.newservice("gm")
 
     -- 创建 mongodb 索引
