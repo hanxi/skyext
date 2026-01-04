@@ -2,6 +2,7 @@ local log = require "log"
 local config = require "config"
 local jwt = require "jwt"
 local role_db_api = require "role_db_api"
+local user_db_api = require "user_db_api"
 local id_generator = require "id_generator"
 local errcode = require "errcode"
 local time = require "time"
@@ -71,6 +72,15 @@ M.POST["/create_role"] = function(req, res)
 
     -- 检查 account 的角色数量
     local account = data.account
+    -- 如果是首次进来，会创建用户 user
+    local user = user_db_api.ensure_get_user(account)
+    if not user then
+        log.warn("login ensure_get_user failed", "account", account)
+        return res.write_json({
+            code = errcode.DB_ERROR,
+        })
+    end
+
     local server = b.server
     local query = {
         server = server,

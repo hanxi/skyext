@@ -1,5 +1,3 @@
-start = "robot" -- main script robot/main.lua
-
 robot_count = 1
 
 account_host = "http://127.0.0.1:8080"

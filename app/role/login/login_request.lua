@@ -1,6 +1,5 @@
 local skynet = require "skynet"
 local global = require "global"
-local user_db_api = require "user_db_api"
 local client = require "client"
 local roleagent_api = require "roleagent_api"
 local errcode = require "errcode"
@@ -86,15 +85,6 @@ function M:login(fd, client_obj)
     end
 
     log.info("login", "account", account)
-    -- 如果是首次进来，会创建用户 user
-    local user = user_db_api.ensure_get_user(account)
-    if not user then
-        log.warn("login ensure_get_user failed", "account", account)
-        return {
-            code = errcode.DB_ERROR,
-        }
-    end
-
     local rid = self.rid
     if (not rid) or (rid <= 0) then
         log.warn("login rid not exist", "account", account)

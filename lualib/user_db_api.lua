@@ -19,8 +19,10 @@ end
 function M.get_rids(account)
     local user = M.get(account, { _id = false, rids = 1 })
     log.debug("get_rids", "account", account, "user", user)
-    assert(user, account)
-    return user.rids
+    if user then
+        return user.rids
+    end
+    return nil
 end
 
 function M.add_rid(account, rid)
