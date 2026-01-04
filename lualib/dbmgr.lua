@@ -1,3 +1,4 @@
+local skynet = require "skynet"
 local config = require "config"
 local log = require "log"
 local mongo_conn = require "mongo_conn"
@@ -197,5 +198,21 @@ function M.unload(dbname, dbcoll, key, unique_id)
 end
 
 -- TODO: 关进程时 unload 所有数据:可以考虑用 bulkWrite 接口。
+
+local GM_CMD = {}
+GM_CMD.reload_orm_schema = {
+    desc = "重载 orm schema",
+    handler = function()
+        local new_schema = require "orm.schema"
+        orm.reload_schema(schema, new_schema)
+        log.info("reload schema success", "schema", tostring(schema), "new_schema", tostring(new_schema))
+        return true
+    end,
+}
+
+skynet.init(function()
+    local gm_api = require "gm_api"
+    gm_api.register(GM_CMD)
+end)
 
 return M

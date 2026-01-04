@@ -4,6 +4,7 @@ local cluster_discovery = require "cluster_discovery"
 local config = require "config"
 local log = require "log"
 local roleagent_api = require "roleagent_api"
+local gm_api = require "gm_api"
 
 log.config {
     name = "roleagentmgr",
@@ -30,17 +31,18 @@ end
 
 local GM_CMD = {}
 GM_CMD.get_online_count = {
-    description = "获取在线玩家数量",
+    desc = "获取在线玩家数量",
     handler = function()
         local count = 0
         for _, agent in pairs(g_agents) do
             count = count + skynet.call(agent, "lua", "get_online_count")
         end
-        return count
+        return true, count
     end,
 }
 
 skynet.start(function()
-    cmd_api.dispatch(CMD, GM_CMD)
+    gm_api.register(GM_CMD)
+    cmd_api.dispatch(CMD)
     cluster_discovery.register({ "roleagentmgr" })
 end)

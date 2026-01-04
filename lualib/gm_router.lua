@@ -12,7 +12,7 @@ local g_gm_service -- 缓存 GM 服务地址
 -- 获取 GM 服务地址
 local function get_gm_service()
     if not g_gm_service then
-        g_gm_service = skynet.uniqueservice("gm")
+        g_gm_service = skynet.localname(".gm")
     end
     return g_gm_service
 end

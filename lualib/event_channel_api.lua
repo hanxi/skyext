@@ -38,16 +38,20 @@ function M.subscribe(service, cmd, func)
 end
 
 -- service api
-function M.init(CMD)
-    g_server_channel = mc.new()
-    CMD.GET_EVENT_CHANNEL = function()
-        log.info("GET_EVENT_CHANNEL called", "channel", g_server_channel.channel)
-        return g_server_channel.channel
-    end
+local CMD = {}
+CMD.GET_EVENT_CHANNEL = function()
+    log.info("GET_EVENT_CHANNEL called", "channel", g_server_channel.channel)
+    return g_server_channel.channel
 end
 
 function M.publish(cmd, ...)
     g_server_channel:publish(cmd, ...)
+end
+
+function M.init()
+    g_server_channel = mc.new()
+    local cmd_api = require "cmd_api"
+    cmd_api.register(CMD)
 end
 
 return M

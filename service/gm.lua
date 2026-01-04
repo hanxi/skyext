@@ -4,46 +4,46 @@ local cmd_api = require "cmd_api"
 local config = require "config"
 local log = require "log"
 
-local CMD = {}
-local g_commands = {} -- 指令注册表：cmd_name -> { handler, desc, params, services }
+local g_commands = {} -- 指令注册表：cmd_name -> { handler_name, desc, params, services }
 local g_service_commands = {} -- 反向索引：service_address -> { cmd_name1, cmd_name2, ... }
 
+local CMD = {}
 -- 注册 GM 指令
-function CMD.register_command(cmd_name, service_address, handler_name, description, params)
+local function register_command(service_address, cmd_name, handler_name, desc, params)
     params = params or {}
 
     local cmd_info = g_commands[cmd_name]
     if not cmd_info then
         -- 新指令，创建记录
         g_commands[cmd_name] = {
-            handler = handler_name,
-            desc = description,
+            handler_name = handler_name,
+            desc = desc,
             params = params,
             services = {
                 [service_address] = true,
             },
         }
-        log.info("GM command registered", "cmd", cmd_name, "handler", handler_name, "service", service_address)
+        log.info("GM command registered", "cmd", cmd_name, "handler_name", handler_name, "service", service_address)
     else
         -- 已存在的指令，检查一致性
         local need_update = false
-        if cmd_info.handler ~= handler_name then
+        if cmd_info.handler_name ~= handler_name then
             log.warn(
-                "GM command handler updated",
+                "GM command handler_name updated",
                 "cmd",
                 cmd_name,
                 "old_handler",
-                cmd_info.handler,
+                cmd_info.handler_name,
                 "new_handler",
                 handler_name
             )
-            cmd_info.handler = handler_name
+            cmd_info.handler_name = handler_name
             need_update = true
         end
 
-        if cmd_info.desc ~= description then
-            log.warn("GM command desc updated", "cmd", cmd_name, "old_desc", cmd_info.desc, "new_desc", description)
-            cmd_info.desc = description
+        if cmd_info.desc ~= desc then
+            log.warn("GM command desc updated", "cmd", cmd_name, "old_desc", cmd_info.desc, "new_desc", desc)
+            cmd_info.desc = desc
             need_update = true
         end
 
@@ -92,33 +92,42 @@ function CMD.register_command(cmd_name, service_address, handler_name, descripti
     return true
 end
 
--- 注销 GM 指令
-function CMD.unregister_command(cmd_name, service_address)
-    local cmd_info = g_commands[cmd_name]
-    if not cmd_info then
-        log.warn("GM command not found for unregister", "cmd", cmd_name, "service", service_address)
-        return false
-    end
+-- 批量注册 GM 指令
+-- @param service_address 服务地址
+-- @param commands 指令列表，格式：{
+--   { cmd_name = "指令名", service_address = 服务地址, handler_name = "处理函数名", desc = "描述", params = {} },
+--   ...
+-- }
+function CMD.register_commands(service_address, commands)
+    local success_count = 0
+    local failed_commands = {}
 
-    cmd_info.services[service_address] = nil
-    log.info("GM command service removed", "cmd", cmd_name, "service", service_address)
-
-    -- 如果没有服务注册了，删除该指令
-    if next(cmd_info.services) == nil then
-        g_commands[cmd_name] = nil
-        log.info("GM command removed (no services)", "cmd", cmd_name)
-    end
-
-    -- 更新反向索引
-    if g_service_commands[service_address] then
-        g_service_commands[service_address][cmd_name] = nil
-        -- 如果该服务没有注册任何指令了，删除反向索引
-        if next(g_service_commands[service_address]) == nil then
-            g_service_commands[service_address] = nil
+    for _, cmd in ipairs(commands) do
+        local ok, err = pcall(register_command, service_address, cmd.cmd_name, cmd.handler_name, cmd.desc, cmd.params)
+        if ok then
+            success_count = success_count + 1
+        else
+            table.insert(failed_commands, {
+                cmd = cmd.cmd_name,
+                error = tostring(err),
+            })
         end
     end
 
-    return true
+    log.info(
+        "GM batch register completed",
+        "service",
+        service_address,
+        "success",
+        success_count,
+        "failed",
+        #failed_commands
+    )
+
+    return {
+        success_count = success_count,
+        failed_commands = failed_commands,
+    }
 end
 
 -- 批量注销服务的所有 GM 指令
@@ -164,7 +173,6 @@ function CMD.list_commands()
         table.insert(result, {
             cmd = cmd_name,
             desc = cmd_info.desc,
-            handler = cmd_info.handler,
             params = cmd_info.params,
             service_count = service_count,
         })
@@ -219,7 +227,7 @@ function CMD.execute_command(cmd_name, params, target_services)
     end
 
     local results = {}
-    local handler = cmd_info.handler
+    local handler_name = cmd_info.handler_name
 
     -- 如果指定了 target_services，则只在这些服务上执行
     local services_to_execute = {}
@@ -252,19 +260,29 @@ function CMD.execute_command(cmd_name, params, target_services)
 
     -- 遍历要执行的服务，执行指令
     for service_address, _ in pairs(services_to_execute) do
-        local ok, ret = pcall(skynet.call, service_address, "lua", handler, params)
-        if ok then
+        local ok, ret, data = pcall(skynet.call, service_address, "lua", handler_name, params)
+        if ok and ret then
             table.insert(results, {
                 service = skynet.address(service_address),
                 success = true,
-                data = ret,
+                data = data,
             })
         else
-            log.error("GM command execute failed", "cmd", cmd_name, "service", service_address, "error", ret)
+            log.error(
+                "GM command execute failed",
+                "cmd",
+                cmd_name,
+                "service",
+                service_address,
+                "ret",
+                ret,
+                "data",
+                data
+            )
             table.insert(results, {
                 service = skynet.address(service_address),
                 success = false,
-                error = tostring(ret),
+                error = tostring(ret or data),
             })
         end
     end
@@ -288,12 +306,10 @@ skynet.start(function()
     }
     http_server.start(conf)
     http_server.register_router("gm_router")
-
     log.info("GM HTTP server started", "port", port, "agent_count", agent_count)
 
-    -- 注册 CMD 消息处理
     cmd_api.dispatch(CMD)
     skynet.register(".gm")
-
+    skynet.uniqueservice("gm_sys")
     log.info("GM service started")
 end)

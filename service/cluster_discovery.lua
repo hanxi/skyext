@@ -662,7 +662,6 @@ skynet.start(function()
 
     first_query_nodes()
     skynet.fork(ensure_watch_node)
-
-    event_channel_api.init(CMD)
+    event_channel_api.init()
     cmd_api.dispatch(CMD)
 end)

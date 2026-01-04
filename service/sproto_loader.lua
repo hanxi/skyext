@@ -4,6 +4,7 @@ local event_channel_api = require "event_channel_api"
 local sprotoloader = require "sprotoloader"
 local cmd_api = require "cmd_api"
 local log = require "log"
+local gm_api = require "gm_api"
 
 local CMD = {}
 local g_sproto_loaded = {}
@@ -57,16 +58,6 @@ local function load_sproto_schema(proto, reload)
     return true, proto
 end
 
-local function reload_sproto_schema()
-    for _, proto in pairs(g_sproto_loaded) do
-        local ok, errmsg = load_sproto_schema(proto, true)
-        if not ok then
-            return false, errmsg
-        end
-    end
-    return true
-end
-
 function CMD.load_proto(schema_path, proto_index)
     return load_sproto_schema({
         schema_path = schema_path,
@@ -74,11 +65,22 @@ function CMD.load_proto(schema_path, proto_index)
     })
 end
 
-function CMD.reload_proto()
-    return reload_sproto_schema()
-end
+local GM_CMD = {}
+GM_CMD.reload_sproto_schema = {
+    desc = "重载 sproto schema",
+    handler = function()
+        for _, proto in pairs(g_sproto_loaded) do
+            local ok, errmsg = load_sproto_schema(proto, true)
+            if not ok then
+                return false, errmsg
+            end
+        end
+        return true
+    end,
+}
 
 skynet.start(function()
-    event_channel_api.init(CMD)
+    event_channel_api.init()
+    gm_api.register(GM_CMD)
     cmd_api.dispatch(CMD)
 end)

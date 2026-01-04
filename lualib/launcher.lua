@@ -11,6 +11,8 @@ function M.launcher_node()
     log.info("debug console listen", "debug_console_port", debug_console_port)
     skynet.newservice("debug_console", debug_console_port)
 
+    skynet.newservice("gm")
+
     -- 创建 mongodb 索引
     local mongo_index = skynet.newservice("mongo_index")
     local all_ok = skynet.call(mongo_index, "lua", "create_indexes")
