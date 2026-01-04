@@ -1,7 +1,6 @@
 local skynet = require "skynet"
 local gm_api = require "gm_api"
 local cmd_api = require "cmd_api"
-local codecache = require "skynet.codecache"
 local core = require "skynet.core"
 local snax = require "skynet.snax"
 local memory = require "skynet.memory"
@@ -132,7 +131,7 @@ GM_CMD.exit = {
 GM_CMD.clearcache = {
     desc = "Clear lua code cache",
     handler = function()
-        codecache.clear()
+        skynet.cache.clear()
         return true, "Code cache cleared"
     end,
 }
