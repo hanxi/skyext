@@ -1,5 +1,4 @@
 local skynet = require "skynet"
-local config = require "config"
 local log = require "log"
 
 local M = {}
