@@ -83,19 +83,19 @@ local function send_package(fd, pack)
     socket.write(fd, data, sz)
 end
 
-local function wakeup_call(pending, response, sz)
+local function wakeup_call(pending, response)
     local co = pending.co
     if not co then
         return false
     end
     pending.co = nil
     pending.response = response
-    pending.sz = sz
     skynet.wakeup(pending)
     return true
 end
 
-function M.raw_dispatch(fd, sz, type, request_name, request, response_cb)
+function M.raw_dispatch(fd, type, request_name, request, response_cb)
+    log.debug("raw_dispatch", "fd", fd, "type", type, "request_name", request_name)
     if type == "REQUEST" then
         local ok, result = xpcall(dispatch_request, debug.traceback, fd, request_name, request, response_cb)
         if ok then
@@ -110,7 +110,7 @@ function M.raw_dispatch(fd, sz, type, request_name, request, response_cb)
         local sess = request_name
         local pending = g_sessions[sess]
         if pending then
-            return wakeup_call(pending, request, sz)
+            return wakeup_call(pending, request)
         end
     end
 end
@@ -120,11 +120,11 @@ local function register_protocol()
         name = "client",
         id = skynet.PTYPE_CLIENT,
         unpack = function(msg, sz)
-            return sz, g_host:dispatch(msg, sz)
+            return g_host:dispatch(msg, sz)
         end,
-        dispatch = function(fd, _, sz, type, request_name, request, response_cb)
+        dispatch = function(fd, _, type, request_name, request, response_cb)
             skynet.ignoreret() -- session is fd, don't call skynet.ret
-            return M.raw_dispatch(fd, sz, type, request_name, request, response_cb)
+            return M.raw_dispatch(fd, type, request_name, request, response_cb)
         end,
     })
 end

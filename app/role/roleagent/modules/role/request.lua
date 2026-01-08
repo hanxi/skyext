@@ -1,5 +1,6 @@
 local log = require "log"
 local time = require "time"
+local res = require "res"
 
 local M = {}
 
@@ -16,6 +17,9 @@ function M:login_info(fd, client_obj)
         client_obj.role_obj
     )
     client_obj.role_obj.data.last_login_time = time.now_ms()
+
+    log.debug("test res", "hero", res.hero)
+
     return {
         info = {
             rid = client_obj.role_obj.rid,

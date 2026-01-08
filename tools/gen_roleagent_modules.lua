@@ -1,15 +1,15 @@
 -- luacheck: globals SCRIPT_DIRECTORY
 local lfs = require "lfs"
 
+local path_sep = package.config:sub(1, 1)
 local function fetch_modules()
     local modules = {}
     local modules_path = SCRIPT_DIRECTORY .. "../app/role/roleagent/modules"
     for file in lfs.dir(modules_path) do
         if file ~= "." and file ~= ".." then
-            local f = modules_path .. "/" .. file
+            local f = modules_path .. path_sep .. file
             local attr = lfs.attributes(f)
-            assert(type(attr) == "table")
-            if attr.mode == "directory" then
+            if attr and attr.mode == "directory" then
                 local request_file = f .. "/request.lua"
                 if lfs.attributes(request_file) then
                     modules[#modules + 1] = file

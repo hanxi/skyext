@@ -81,6 +81,10 @@ function M.register(GM_CMD)
 
     -- 批量注册到 GM 服务
     local gm_service = get_gm_service()
+    if not gm_service then
+        log.warn("GM service not initialized, skip register")
+        return false
+    end
     local service_address = skynet.self()
 
     local ok, result = pcall(
