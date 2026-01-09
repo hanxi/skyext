@@ -796,6 +796,11 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 如果只有一个结果，自动展开
+            if (result.results && result.results.length === 1) {
+                toggleResultItem(0);
+            }
         }
 
         // 切换结果项展开/收起
