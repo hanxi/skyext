@@ -143,4 +143,9 @@ M.GET["/gm/list"] = function(req, res)
     })
 end
 
+-- GET / - index.html
+M.GET["/"] = function(req, res)
+    return res.write_file("public/gm.html")
+end
+
 return M

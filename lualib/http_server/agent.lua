@@ -8,6 +8,7 @@ return function(agent_id)
     local config = require "config"
     local cjson = require "cjson.safe"
     local urllib = require "http.url"
+    local util_io = require "util.io"
 
     local xpcall_msgh = log.xpcall_msgh
     local decode_json = cjson.decode
@@ -102,6 +103,15 @@ return function(agent_id)
                 header[k] = v
             end
             response(id, interface.write, 200, encode_json(data), header)
+        end
+        res.write_file = function(filename, header)
+            header = header or {}
+            for k, v in pairs(res.header) do
+                header[k] = v
+            end
+            -- TODO: cache file by timestamp
+            local content = util_io.readfile(filename)
+            response(id, interface.write, 200, content, header)
         end
         handler(req, res)
     end
