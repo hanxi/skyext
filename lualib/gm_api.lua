@@ -113,4 +113,31 @@ function M.register(GM_CMD)
     return true
 end
 
+-- 执行 GM 指令
+-- @param cmd_name 指令名称
+-- @param params 指令参数（表）
+-- @param target_services 可选，目标服务列表
+-- @return 执行结果
+function M.execute_command(cmd_name, params, target_services)
+    local gm_service = get_gm_service()
+    if not gm_service then
+        log.error("GM service not initialized")
+        return {
+            code = 1,
+            error = "GM service not found",
+        }
+    end
+
+    local ok, result = pcall(skynet.call, gm_service, "lua", "execute_command", cmd_name, params, target_services)
+    if not ok then
+        log.error("GM execute_command failed", "cmd", cmd_name, "error", result)
+        return {
+            code = 1,
+            error = string.format("Failed to call execute_command: %s", result),
+        }
+    end
+
+    return result
+end
+
 return M

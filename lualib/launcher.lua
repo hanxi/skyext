@@ -6,6 +6,7 @@ local M = {}
 function M.launcher_node()
     log.info("launcher_node begin")
     skynet.newservice("gm")
+    skynet.newservice("hotfix")
 
     -- 创建 mongodb 索引
     local mongo_index = skynet.newservice("mongo_index")

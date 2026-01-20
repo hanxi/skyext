@@ -268,22 +268,16 @@ function CMD.execute_command(cmd_name, params, target_services)
                 data = data,
             })
         else
-            log.error(
-                "GM command execute failed",
-                "cmd",
-                cmd_name,
-                "service",
-                service_address,
-                "ret",
-                ret,
-                "data",
-                data
-            )
-            table.insert(results, {
+            log.warn("GM command execute failed", "cmd", cmd_name, "service", service_address, "ret", ret, "data", data)
+            local result = {
                 service = skynet.address(service_address),
                 success = false,
                 error = tostring(ret or data),
-            })
+            }
+            if data ~= result.error then
+                result.data = data
+            end
+            table.insert(results, result)
         end
     end
 
