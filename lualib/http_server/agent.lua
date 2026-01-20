@@ -99,6 +99,7 @@ return function(agent_id)
         end
         res.write_json = function(data, header)
             header = header or {}
+            header["content-type"] = "application/json"
             for k, v in pairs(res.header) do
                 header[k] = v
             end
