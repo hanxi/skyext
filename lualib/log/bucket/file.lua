@@ -129,23 +129,19 @@ function file_mt:put(record)
     if split_mgr and split_mgr:need_split(str) then
         self:split()
     end
-    local flush_n = self.flush_n
-    if flush_n > 0 then
-        local flush_i = self.flush_i + 1
-        self.handle:write(str, "\n")
-        if flush_i == flush_n then
-            self:flush()
-        end
-    else
-        self.handle:write(str, "\n")
+
+    self.handle:write(str, "\n")
+
+    self.flush_i = self.flush_i + 1
+    if self.flush_i >= self.flush_n then
+        self:flush()
     end
+
     return true
 end
 
 function file_mt:flush()
-    if self.flush_n > 0 then
-        self.flush_i = 0
-    end
+    self.flush_i = 0
     self.flush_ok = self.handle:flush()
 end
 
