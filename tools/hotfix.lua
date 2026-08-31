@@ -80,13 +80,15 @@ end
 
 -- 更新配置文件
 local function update_config_file(config_path, original_content, new_time, new_checksum)
-    local updated_content, time_count = original_content:gsub('(time%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_time))
+    local updated_content, time_count =
+        original_content:gsub('(time%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_time))
     if time_count ~= 1 then
         return false, string.format("Expected exactly 1 time field replacement, got %d", time_count)
     end
 
     local checksum_count
-    updated_content, checksum_count = updated_content:gsub('(checksum%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_checksum))
+    updated_content, checksum_count =
+        updated_content:gsub('(checksum%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_checksum))
     if checksum_count ~= 1 then
         return false, string.format("Expected exactly 1 checksum field replacement, got %d", checksum_count)
     end
@@ -102,7 +104,8 @@ local function update_config_file(config_path, original_content, new_time, new_c
     end
 
     if verify_config.checksum ~= new_checksum then
-        return false, string.format("Verification failed: checksum expected %s, got %s", new_checksum, verify_config.checksum)
+        return false,
+            string.format("Verification failed: checksum expected %s, got %s", new_checksum, verify_config.checksum)
     end
     if verify_config.time ~= new_time then
         return false, string.format("Verification failed: time expected %s, got %s", new_time, verify_config.time)

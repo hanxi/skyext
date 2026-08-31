@@ -249,7 +249,9 @@ end
 
 local function shallow_copy(t)
     local c = {}
-    for k, v in pairs(t) do c[k] = v end
+    for k, v in pairs(t) do
+        c[k] = v
+    end
     return c
 end
 
@@ -519,7 +521,8 @@ local function execute_hotfix(hotfix_dir)
             log.warn("Build version mismatch", "build_version", build_version, "gitsha_base", config.gitsha_base)
             version_warning = string.format(
                 "当前部署版本(%s)与热更基线(%s)不一致，请人工确认补丁适用性",
-                build_version, config.gitsha_base
+                build_version,
+                config.gitsha_base
             )
         end
 
@@ -545,25 +548,33 @@ local function execute_hotfix(hotfix_dir)
         if config.clearcache then
             local clear_ok, clear_err = clear_lua_cache()
             record_step("clear_cache", clear_ok, clear_ok and "Cache cleared" or clear_err)
-            if not clear_ok and fail_fast then return end
+            if not clear_ok and fail_fast then
+                return
+            end
         end
 
         if config.reload_res then
             local res_ok, res_err = reload_res()
             record_step("reload_res", res_ok, res_ok and "Res reloaded" or res_err)
-            if not res_ok and fail_fast then return end
+            if not res_ok and fail_fast then
+                return
+            end
         end
 
         if config.reload_sproto then
             local sproto_ok, sproto_err = reload_sproto()
             record_step("reload_sproto", sproto_ok, sproto_ok and "Sproto reloaded" or sproto_err)
-            if not sproto_ok and fail_fast then return end
+            if not sproto_ok and fail_fast then
+                return
+            end
         end
 
         if config.reload_orm_schema then
             local schema_ok, schema_err = reload_orm_schema()
             record_step("reload_orm_schema", schema_ok, schema_ok and "ORM schema reloaded" or schema_err)
-            if not schema_ok and fail_fast then return end
+            if not schema_ok and fail_fast then
+                return
+            end
         end
 
         if config.code_files and #config.code_files > 0 then
@@ -677,7 +688,10 @@ local function dry_run_hotfix(hotfix_dir)
                             found = false,
                             error = find_err,
                         })
-                        table.insert(plan.warnings, string.format("Service not found: %s (patcher %s)", service_name, filename))
+                        table.insert(
+                            plan.warnings,
+                            string.format("Service not found: %s (patcher %s)", service_name, filename)
+                        )
                     else
                         for _, a in ipairs(addrs) do
                             table.insert(target_details, {
