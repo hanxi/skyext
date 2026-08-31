@@ -464,9 +464,13 @@ function service_mt:init()
     if self.inited then
         return
     end
-    self.inited = true -- 必须置位,否则每次 ensure_init(query_service_info)都重复 fork watch 循环,每条循环持有 1 条 etcd watch 长连接不释放 
+    self.inited = true -- 必须置位,否则每次 ensure_init(query_service_info)都重复 fork watch 循环,每条循环持有 1 条 etcd watch 长连接不释放
 
-    self:first_query()
+    local ok, err = xpcall(self.first_query, debug.traceback, self)
+    if not ok then
+        self.inited = false
+        error(err)
+    end
     skynet.fork(function()
         while true do
             local ok, err = xpcall(self.watch, debug.traceback, self)
