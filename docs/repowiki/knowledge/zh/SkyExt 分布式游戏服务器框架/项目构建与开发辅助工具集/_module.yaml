@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: tools
+title: 项目构建与开发辅助工具集
+scope:
+    - tools/
+source_files: []
+depends_on: []
+related_to:
+    - path: proto_schema

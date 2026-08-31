@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: ""
+title: SkyExt 分布式游戏服务器框架
+scope:
+    - README.md
+    - .gitignore
+    - .gitmodules
+    - .luacheckrc
+    - .stylua.toml
+    - .styluaignore
+    - Makefile
+    - build.mk
+    - LICENSE
+source_files: []
+depends_on: []
+related_to: []

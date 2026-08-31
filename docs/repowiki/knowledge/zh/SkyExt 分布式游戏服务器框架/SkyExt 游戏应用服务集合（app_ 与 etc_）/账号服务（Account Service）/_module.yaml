@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: app_services/account_service
+title: 账号服务（Account Service）
+scope:
+    - app/account/
+    - etc/app/account1.app.lua
+    - etc/app/account2.app.lua
+    - etc/account1.conf.lua
+    - etc/account2.conf.lua
+source_files: []
+depends_on: []
+related_to:
+    - path: app_services/robot_service
+    - path: app_services/role_service
+    - path: lualib

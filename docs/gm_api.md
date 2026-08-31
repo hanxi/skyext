@@ -53,7 +53,7 @@ GET /gm/list
 **示例**
 
 ```bash
-curl http://localhost:9092/gm/list
+curl -H "Authorization: Bearer <token>" http://localhost:9092/gm/list
 ```
 
 ---
@@ -114,13 +114,13 @@ GET /gm/execute?cmd=<命令名>&<参数名1>=<参数值1>&<参数名2>=<参数�
 
 ```bash
 # 执行 reload_res 命令
-curl "http://localhost:9092/gm/execute?cmd=reload_res"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=reload_res"
 
 # 执行带参数的命令
-curl "http://localhost:9092/gm/execute?cmd=kill&address=:01000002"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=kill&address=:01000002"
 
 # 指定服务执行
-curl "http://localhost:9092/gm/execute?cmd=gc&services=:01000002,:01000003"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=gc&services=:01000002,:01000003"
 ```
 
 ---
@@ -164,11 +164,13 @@ Content-Type: application/json
 ```bash
 # 执行简单命令
 curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"cmd": "reload_res"}'
 
 # 执行带参数的命令
 curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "cmd": "kill",
@@ -177,6 +179,7 @@ curl -X POST http://localhost:9092/gm/execute \
 
 # 指定服务执行
 curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "cmd": "gc",
@@ -198,11 +201,12 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ## 错误码
 
-| 错误码 | 说明 |
-|--------|------|
-| 0 | 成功 |
-| 1 | 通用错误 |
-| PARAM_ERROR | 参数错误 |
+| 错误码 | 值 | 说明 |
+|--------|-----|------|
+| OK | 0 | 成功 |
+| 通用错误 | 1 | 通用错误 |
+| PARAM_ERROR | 10 | 参数错误 |
+| AUTH_FAILED | 11 | 鉴权失败 |
 
 ---
 
@@ -212,39 +216,103 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ```bash
 # 列出所有服务
-curl "http://localhost:9092/gm/execute?cmd=list"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=list"
 
 # 查看服务统计信息
-curl "http://localhost:9092/gm/execute?cmd=stat"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=stat"
 
 # 查看内存状态
-curl "http://localhost:9092/gm/execute?cmd=mem"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=mem"
 
 # 强制垃圾回收
-curl "http://localhost:9092/gm/execute?cmd=gc"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=gc"
 
 # 重载资源
-curl "http://localhost:9092/gm/execute?cmd=reload_res"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=reload_res"
 ```
 
 ### 服务控制命令
 
 ```bash
 # 杀死指定服务
-curl "http://localhost:9092/gm/execute?cmd=kill&address=:01000002"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=kill&address=:01000002"
 
 # 退出服务
-curl "http://localhost:9092/gm/execute?cmd=exit&address=:01000002"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=exit&address=:01000002"
 
 # 启动新服务
-curl "http://localhost:9092/gm/execute?cmd=start&service=test&args=arg1"
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=start&service=test&args=arg1"
 ```
+
+---
+
+## 鉴权
+
+`/gm/execute`（GET/POST）需要鉴权 token，传递方式二选一：
+
+- HTTP Header: `Authorization: Bearer <token>`
+- 请求参数（query 或 body）: `token=<token>`
+
+Token 在 `etc/app/common.app.lua` 中通过 `gm_auth_token` 配置。**未配置 token 时 `/gm/execute` 接口一律拒绝。**
+
+`/gm/list` 同样需要鉴权。
+
+---
+
+## 热更命令
+
+### hotfix — 执行热更新
+
+```bash
+# dry-run 预演
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "hotfix", "hotfix_dir": "hotfix/20260831-patch1", "mode": "dry_run"}'
+
+# 正式执行（需 confirm=true）
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "hotfix", "hotfix_dir": "hotfix/20260831-patch1", "confirm": "true"}'
+```
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| hotfix_dir | string | 是 | 热更包目录路径（相对于工程根目录） |
+| mode | string | 否 | `run`（默认）或 `dry_run`（仅预演） |
+| confirm | string | 否 | 执行模式下必须传 `"true"` |
+
+**响应（执行模式）**
+
+成功时返回 steps 数组；失败时返回 guidance 处置建议。详见 [docs/hotfix.md](hotfix.md)。
+
+**响应（dry_run 模式）**
+
+返回执行计划：steps 列表、patchers 目标服务命中情况、warnings。
+
+### hotfix_history — 查看热更历史
+
+```bash
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "hotfix_history", "limit": "10"}'
+```
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| limit | string | 否 | 返回最近 N 条记录（默认 10） |
 
 ---
 
 ## 注意事项
 
-1. **权限控制**：生产环境中应添加认证和权限控制机制
+1. **权限控制**：`/gm/execute` 已实现 token 鉴权，详见上文「鉴权」一节
 2. **服务地址**：执行命令前请确认服务地址的正确性
 3. **参数验证**：某些命令的参数有特定格式要求，请参考具体命令的文档
 4. **并发执行**：当不指定 `services` 参数时，命令会在所有注册该命令的服务上并发执行

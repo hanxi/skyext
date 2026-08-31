@@ -10,6 +10,8 @@ M.DB_ERROR = 6 -- 数据库操作错误
 M.TOKEN_ERROR = 7 -- token 错误
 M.PROTO_CHECKSUM = 8 -- proto_checksum 错误
 M.SERVER_NOT_EXIST = 9 -- 服务器不存在
+M.PARAM_ERROR = 10 -- 参数错误
+M.AUTH_FAILED = 11 -- 鉴权失败
 
 M.MONGO_DUPLICATE_KEY = 11000
 

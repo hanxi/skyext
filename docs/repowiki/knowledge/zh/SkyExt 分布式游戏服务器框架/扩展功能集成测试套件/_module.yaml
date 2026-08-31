@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: tests
+title: 扩展功能集成测试套件
+scope:
+    - test/
+source_files: []
+depends_on: []
+related_to:
+    - path: lualib

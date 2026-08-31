@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: lualib
+title: SkyExt 游戏服务 Lua 标准库与扩展
+scope:
+    - lualib/
+    - lualib-src/
+source_files: []
+depends_on: []
+related_to:
+    - path: app_services/account_service
+    - path: tests

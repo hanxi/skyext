@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: proto_schema
+title: 协议与角色数据 Schema 定义
+scope:
+    - proto/
+    - schema/
+source_files: []
+depends_on: []
+related_to:
+    - path: app_services/role_service
+    - path: tools

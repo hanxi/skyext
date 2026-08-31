@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: app_services
+title: SkyExt 游戏应用服务集合（app/ 与 etc/）
+scope:
+    - app/
+    - etc/
+source_files: []
+depends_on: []
+related_to: []

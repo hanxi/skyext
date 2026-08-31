@@ -1,6 +1,7 @@
 -- 热更新工具
 local util_io = require "util.io"
 local util_path = require "util.path"
+local hotfix_checksum = require "hotfix_checksum"
 
 -- 获取工程根目录
 local function get_root_dir()
@@ -72,95 +73,39 @@ local function load_hotfix_config(config_path)
     return config, content
 end
 
--- 使用系统命令计算 MD5
-local function calculate_md5(content)
-    -- 创建临时文件
-    local tmp_file = os.tmpname()
-    local f = io.open(tmp_file, "wb")
-    if not f then
-        return nil, "Failed to create temporary file"
-    end
-    f:write(content)
-    f:close()
-
-    -- 尝试使用 md5sum 命令（Linux）
-    local handle = io.popen("md5sum " .. tmp_file .. " 2>/dev/null")
-    local result = handle:read("*a")
-    handle:close()
-
-    if result and result ~= "" then
-        os.remove(tmp_file)
-        return result:match("^(%x+)")
-    end
-
-    -- 尝试使用 md5 命令（macOS）
-    handle = io.popen("md5 -q " .. tmp_file .. " 2>/dev/null")
-    result = handle:read("*a")
-    handle:close()
-
-    os.remove(tmp_file)
-
-    if result and result ~= "" then
-        return result:match("^(%x+)")
-    end
-
-    return nil, "MD5 command not found"
-end
-
--- 计算 checksum
+-- 计算 checksum（委托给共享模块）
 local function calculate_checksum(config, hotfix_dir, root_dir)
-    local all_content = {}
-
-    -- 读取 update_files
-    if config.update_files then
-        for _, filepath in ipairs(config.update_files) do
-            local full_path = util_path.join(root_dir, filepath)
-            if not file_exists(full_path) then
-                return nil, string.format("Update file not found: %s", filepath)
-            end
-            local content, err = util_io.readfile(full_path)
-            if not content then
-                return nil, string.format("Failed to read update file %s: %s", filepath, err or "unknown error")
-            end
-            table.insert(all_content, content)
-        end
-    end
-
-    -- 读取 code_files
-    if config.code_files then
-        for _, filename in ipairs(config.code_files) do
-            local full_path = util_path.join(root_dir, hotfix_dir, filename)
-            if not file_exists(full_path) then
-                return nil, string.format("Code file not found: %s", filename)
-            end
-            local content, err = util_io.readfile(full_path)
-            if not content then
-                return nil, string.format("Failed to read code file %s: %s", filename, err or "unknown error")
-            end
-            table.insert(all_content, content)
-        end
-    end
-
-    local combined = table.concat(all_content)
-    local checksum, err = calculate_md5(combined)
-    if not checksum then
-        return nil, err
-    end
-
-    return checksum
+    return hotfix_checksum.compute(config, hotfix_dir, root_dir)
 end
 
 -- 更新配置文件
 local function update_config_file(config_path, original_content, new_time, new_checksum)
-    -- 替换 time 字段
-    local updated_content = original_content:gsub('(time%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_time))
+    local updated_content, time_count = original_content:gsub('(time%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_time))
+    if time_count ~= 1 then
+        return false, string.format("Expected exactly 1 time field replacement, got %d", time_count)
+    end
 
-    -- 替换 checksum 字段
-    updated_content = updated_content:gsub('(checksum%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_checksum))
+    local checksum_count
+    updated_content, checksum_count = updated_content:gsub('(checksum%s*=%s*)"[^"]*"', string.format('%%1"%s"', new_checksum))
+    if checksum_count ~= 1 then
+        return false, string.format("Expected exactly 1 checksum field replacement, got %d", checksum_count)
+    end
 
     local ok = util_io.writefile(config_path, updated_content)
     if not ok then
         return false, "Failed to write config file"
+    end
+
+    local verify_config, verify_err = load_hotfix_config(config_path)
+    if not verify_config then
+        return false, "Written config failed to reload: " .. (verify_err or "unknown error")
+    end
+
+    if verify_config.checksum ~= new_checksum then
+        return false, string.format("Verification failed: checksum expected %s, got %s", new_checksum, verify_config.checksum)
+    end
+    if verify_config.time ~= new_time then
+        return false, string.format("Verification failed: time expected %s, got %s", new_time, verify_config.time)
     end
 
     return true

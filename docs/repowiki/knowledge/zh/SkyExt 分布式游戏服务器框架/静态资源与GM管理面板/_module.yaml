@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: static_resources
+title: 静态资源与GM管理面板
+scope:
+    - res/
+    - public/
+source_files: []
+depends_on: []
+related_to: []

@@ -91,6 +91,33 @@
         padding-left: 0;
       }
 
+      .token-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .token-bar label {
+        font-size: 12px;
+        color: #666;
+        white-space: nowrap;
+      }
+
+      .token-bar input {
+        flex: 1;
+        padding: 6px 10px;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        font-size: 13px;
+        outline: none;
+        transition: border-color 0.3s;
+      }
+
+      .token-bar input:focus {
+        border-color: #1890ff;
+      }
+
       .search-box {
         position: relative;
       }
@@ -627,6 +654,29 @@
       <div class="sidebar">
         <div class="sidebar-header">
           <h1>GM 命令面板</h1>
+          <div class="token-bar">
+            <label>Token:</label>
+            <input
+              type="password"
+              id="tokenInput"
+              placeholder="输入鉴权 Token"
+            />
+            <button
+              style="
+                padding: 6px 12px;
+                background: #1890ff;
+                color: #fff;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+                white-space: nowrap;
+              "
+              onclick="saveToken(); loadCommands();"
+            >
+              连接
+            </button>
+          </div>
           <div class="search-box">
             <input
               type="text"
@@ -660,8 +710,37 @@
       let allCommands = [];
       let selectedCommand = null;
 
+      // Token 管理
+      function getToken() {
+        return document.getElementById("tokenInput").value;
+      }
+
+      function saveToken() {
+        localStorage.setItem("gm_auth_token", getToken());
+      }
+
+      function loadToken() {
+        const saved = localStorage.getItem("gm_auth_token");
+        if (saved) {
+          document.getElementById("tokenInput").value = saved;
+        }
+      }
+
+      function buildHeaders() {
+        const headers = { "Content-Type": "application/json" };
+        const token = getToken();
+        if (token) {
+          headers["Authorization"] = "Bearer " + token;
+        }
+        return headers;
+      }
+
       // 初始化
       document.addEventListener("DOMContentLoaded", () => {
+        loadToken();
+        document
+          .getElementById("tokenInput")
+          .addEventListener("change", saveToken);
         loadCommands();
         setupSearchListener();
         setupResponsive();
@@ -707,11 +786,16 @@
       // 加载命令列表
       async function loadCommands() {
         try {
-          const response = await fetch("/gm/list");
+          const headers = buildHeaders();
+          const response = await fetch("/gm/list", { headers });
           const data = await response.json();
 
+          if (data.code === 11) {
+            showError("鉴权失败，请在左侧输入正确的 Token 后刷新页面");
+            return;
+          }
+
           if (data.code === 0 && data.commands) {
-            // 按命令名字排序
             allCommands = data.commands.sort((a, b) => {
               const nameA = (a.cmd || "").toLowerCase();
               const nameB = (b.cmd || "").toLowerCase();
@@ -867,9 +951,7 @@
         try {
           const response = await fetch("/gm/execute", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: buildHeaders(),
             body: JSON.stringify(params),
           });
 

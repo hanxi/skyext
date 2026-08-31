@@ -97,3 +97,6 @@ server2game = {
 }
 
 http_request_body_size = 1024 * 1024
+
+-- GM 鉴权 token，部署时替换为随机长串；未配置则 /gm/execute 接口禁用
+gm_auth_token = "CHANGE_ME_TO_RANDOM_TOKEN"

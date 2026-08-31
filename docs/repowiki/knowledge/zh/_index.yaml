@@ -1,0 +1,166 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+nodes_managed: true
+exported_at: "2026-08-31T03:46:01Z"
+modules:
+    "":
+        dir_name: SkyExt 分布式游戏服务器框架
+        title: SkyExt 分布式游戏服务器框架
+        scope:
+            - README.md
+            - .gitignore
+            - .gitmodules
+            - .luacheckrc
+            - .stylua.toml
+            - .styluaignore
+            - Makefile
+            - build.mk
+            - LICENSE
+        source_files: []
+        children:
+            - app_services
+            - lualib
+            - proto_schema
+            - static_resources
+            - system_services
+            - tests
+            - tools
+        depends_on: []
+        related_to: []
+    app_services:
+        dir_name: SkyExt 游戏应用服务集合（app_ 与 etc_）
+        title: SkyExt 游戏应用服务集合（app/ 与 etc/）
+        scope:
+            - app/
+            - etc/
+        source_files: []
+        children:
+            - app_services/account_service
+            - app_services/common_config
+            - app_services/robot_service
+            - app_services/role_service
+        depends_on: []
+        related_to: []
+    app_services/account_service:
+        dir_name: 账号服务（Account Service）
+        title: 账号服务（Account Service）
+        scope:
+            - app/account/
+            - etc/app/account1.app.lua
+            - etc/app/account2.app.lua
+            - etc/account1.conf.lua
+            - etc/account2.conf.lua
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_services/robot_service
+            - path: app_services/role_service
+            - path: lualib
+    app_services/common_config:
+        dir_name: 应用公共配置与监控节点配置
+        title: 应用公共配置与监控节点配置
+        scope:
+            - etc/app/common.app.lua
+            - etc/core.conf.lua
+            - etc/app/monitor.app.lua
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    app_services/robot_service:
+        dir_name: 机器人客户端服务（Robot Service）
+        title: 机器人客户端服务（Robot Service）
+        scope:
+            - app/robot/
+            - etc/app/robot.app.lua
+            - etc/robot.conf.lua
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_services/account_service
+            - path: app_services/role_service
+    app_services/role_service:
+        dir_name: 角色服务进程（Login_RoleAgent 网关与多实例角色管理）
+        title: 角色服务进程（Login/RoleAgent 网关与多实例角色管理）
+        scope:
+            - app/role/
+            - etc/app/role1.app.lua
+            - etc/app/role2.app.lua
+            - etc/role1.conf.lua
+            - etc/role2.conf.lua
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_services/account_service
+            - path: app_services/robot_service
+            - path: proto_schema
+            - path: system_services
+    lualib:
+        dir_name: SkyExt 游戏服务 Lua 标准库与扩展
+        title: SkyExt 游戏服务 Lua 标准库与扩展
+        scope:
+            - lualib/
+            - lualib-src/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_services/account_service
+            - path: tests
+    proto_schema:
+        dir_name: 协议与角色数据 Schema 定义
+        title: 协议与角色数据 Schema 定义
+        scope:
+            - proto/
+            - schema/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_services/role_service
+            - path: tools
+    static_resources:
+        dir_name: 静态资源与GM管理面板
+        title: 静态资源与GM管理面板
+        scope:
+            - res/
+            - public/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    system_services:
+        dir_name: Skynet 系统服务集合（日志、GM、集群发现、热更、MongoDB、sproto）
+        title: Skynet 系统服务集合（日志、GM、集群发现、热更、MongoDB、sproto）
+        scope:
+            - service/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_services/role_service
+    tests:
+        dir_name: 扩展功能集成测试套件
+        title: 扩展功能集成测试套件
+        scope:
+            - test/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: lualib
+    tools:
+        dir_name: 项目构建与开发辅助工具集
+        title: 项目构建与开发辅助工具集
+        scope:
+            - tools/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: proto_schema
