@@ -393,7 +393,6 @@ local function inject_code_files(code_files, hotfix_dir, fail_fast)
 
     local root_dir = get_root_dir()
     local results = {}
-    local aborted = false
 
     for _, filename in ipairs(code_files) do
         local code_file_path = util_path.join(root_dir, hotfix_dir, filename)
@@ -407,8 +406,7 @@ local function inject_code_files(code_files, hotfix_dir, fail_fast)
             })
             log.warn("Failed to parse patcher", "file", filename, "error", patcher_info)
             if fail_fast then
-                aborted = true
-                break
+                goto done
             end
             goto continue
         end
@@ -424,8 +422,7 @@ local function inject_code_files(code_files, hotfix_dir, fail_fast)
                 })
                 log.warn("Service not found", "service", service_name, "error", find_err)
                 if fail_fast then
-                    aborted = true
-                    break
+                    goto done
                 end
                 goto continue_service
             end
@@ -443,8 +440,7 @@ local function inject_code_files(code_files, hotfix_dir, fail_fast)
                     })
                     log.warn("Failed to inject code", "file", filename, "service", addr_str, "error", inject_result)
                     if fail_fast then
-                        aborted = true
-                        break
+                        goto done
                     end
                 else
                     table.insert(results, {
@@ -457,19 +453,12 @@ local function inject_code_files(code_files, hotfix_dir, fail_fast)
                 end
             end
 
-            if aborted then
-                break
-            end
-
             ::continue_service::
-        end
-
-        if aborted then
-            break
         end
 
         ::continue::
     end
+    ::done::
 
     local all_ok = true
     for _, r in ipairs(results) do
