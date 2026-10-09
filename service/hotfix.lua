@@ -1,11 +1,11 @@
 local skynet = require "skynet"
 local cjson = require "cjson"
-local log = require "log"
-local util_io = require "util.io"
-local util_path = require "util.path"
-local hotfix_checksum = require "hotfix_checksum"
-local gm_api = require "gm_api"
-local cmd_api = require "cmd_api"
+local log = require "skyext.log"
+local util_io = require "skyext.util.io"
+local util_path = require "skyext.util.path"
+local hotfix_checksum = require "skyext.hotfix_checksum"
+local gm_api = require "skyext.gm_api"
+local cmd_api = require "skyext.cmd_api"
 
 local g_hotfix_history = {}
 local g_hotfix_lock = nil

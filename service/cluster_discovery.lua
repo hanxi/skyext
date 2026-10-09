@@ -1,13 +1,13 @@
 local skynet = require "skynet"
-local etcd = require "etcd"
+local etcd = require "skyext.etcd"
 local cluster = require "skynet.cluster"
 local queue = require "skynet.queue"
-local timer = require "timer"
-local event_channel_api = require "event_channel_api"
-local util_table = require "util.table"
-local cmd_api = require "cmd_api"
-local config = require "config"
-local log = require "log"
+local timer = require "skyext.timer"
+local event_channel_api = require "skyext.event_channel_api"
+local util_table = require "skyext.util.table"
+local cmd_api = require "skyext.cmd_api"
+local config = require "skyext.config"
+local log = require "skyext.log"
 
 log.config {
     -- traceback = debug.traceback,

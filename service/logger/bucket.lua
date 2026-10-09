@@ -1,5 +1,5 @@
-local bucket = require "log.bucket"
-local log = require "log"
+local bucket = require "skyext.log.bucket"
+local log = require "skyext.log"
 local tinsert = table.insert
 
 local bucket_mt = {}

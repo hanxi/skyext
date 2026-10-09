@@ -1,9 +1,9 @@
 --- 通过队列长度判断日志服务过载，避免堆积日志过大造成内存 oom
 local skynet = require "skynet"
-local config = require "config"
+local config = require "skyext.config"
 local global = require "global"
-local log = require "log"
-local timer = require "timer"
+local log = require "skyext.log"
+local timer = require "skyext.timer"
 
 local xpcall_msgh = log.xpcall_msgh
 

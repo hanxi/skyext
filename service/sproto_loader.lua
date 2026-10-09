@@ -1,10 +1,10 @@
 local skynet = require "skynet"
 local md5 = require "md5"
-local event_channel_api = require "event_channel_api"
+local event_channel_api = require "skyext.event_channel_api"
 local sprotoloader = require "sprotoloader"
-local cmd_api = require "cmd_api"
-local log = require "log"
-local gm_api = require "gm_api"
+local cmd_api = require "skyext.cmd_api"
+local log = require "skyext.log"
+local gm_api = require "skyext.gm_api"
 
 local CMD = {}
 local g_sproto_loaded = {}

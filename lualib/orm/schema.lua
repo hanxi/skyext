@@ -1,4 +1,4 @@
--- Code generated from lualib/orm/schema_define.lua
+-- Code generated from ../lualib/orm/schema_define.lua
 -- DO NOT EDIT!
 
 local orm = require "orm"

@@ -1,6 +1,6 @@
 local skynet = require "skynet"
-local gm_api = require "gm_api"
-local cmd_api = require "cmd_api"
+local gm_api = require "skyext.gm_api"
+local cmd_api = require "skyext.cmd_api"
 local core = require "skynet.core"
 local snax = require "skynet.snax"
 local memory = require "skynet.memory"

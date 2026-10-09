@@ -1,9 +1,9 @@
 PLATS = freebsd linux macosx mingw
 
-.PHONY: $(PLATS) clean cleanall skynet
+.PHONY: $(PLATS) clean cleanall skynet skyext_build copy
 
 $(PLATS):
-	@$(MAKE) PLAT=$@ build
+	@$(MAKE) PLAT=$@ skyext_build
 
 ifeq ($(PLAT),)
 UNAME ?= $(shell uname -s | tr A-Z a-z)
@@ -18,11 +18,12 @@ PLAT := unknown
 endif
 endif
 
+# 由游戏 Makefile 设置
+SKYEXT_ROOT ?= ./
+
 SHARED := -fPIC --shared
-BIN_PATH ?= bin
-LUA_CLIB_PATH ?= luaclib
-LUA_LIB_PATH ?= lualib
-LUA_DIR ?= skynet/3rd/lua
+BIN_PATH ?= $(SKYEXT_ROOT)/bin
+LUA_DIR ?= $(SKYEXT_ROOT)/skynet/3rd/lua
 LUA_INC ?= $(LUA_DIR)
 CFLAGS = -g -O2 -Wall -I$(LUA_INC) $(MYCFLAGS)
 SKYNET_LIBS :=
@@ -33,7 +34,7 @@ ifeq ($(PLAT), macosx)
 	SHARED := -fPIC -dynamiclib -Wl,-undefined,dynamic_lookup
 else ifeq ($(PLAT), mingw)
 	CC := x86_64-w64-mingw32-gcc
-	COMPAT_MINGW_DIR = skynet/3rd/compat-mingw
+	COMPAT_MINGW_DIR = $(SKYEXT_ROOT)/skynet/3rd/compat-mingw
 	CFLAGS := -g -O2 -Wall -std=gnu99 -I$(LUA_INC) $(MYCFLAGS) -I$(COMPAT_MINGW_DIR)
 	CFLAGS += -include $(COMPAT_MINGW_DIR)/compat.h
 	CFLAGS += -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-pointer-sign -Wno-unused-function
@@ -43,63 +44,83 @@ else ifeq ($(PLAT), mingw)
 	PLAT_HOST := --host=x86_64-w64-mingw32
 endif
 
-$(LUA_CLIB_PATH) :
-	mkdir -p $(LUA_CLIB_PATH)
+# ---------- 引擎 C 模块（产物输出到引擎 luaclib/）----------
+
+SKYEXT_LUACLIB_PATH = $(SKYEXT_ROOT)/luaclib
+
+$(SKYEXT_LUACLIB_PATH) :
+	mkdir -p $(SKYEXT_LUACLIB_PATH)
 
 $(BIN_PATH) :
 	mkdir -p $(BIN_PATH)
 
-
-$(LUA_CLIB_PATH)/jchash.so : lualib-src/jchash.c | $(LUA_CLIB_PATH)
+$(SKYEXT_LUACLIB_PATH)/jchash.so : $(SKYEXT_ROOT)/lualib-src/jchash.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-$(LUA_CLIB_PATH)/cjson.so : 3rd/lua-cjson/lua_cjson.c 3rd/lua-cjson/strbuf.c 3rd/lua-cjson/fpconv.c | $(LUA_CLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) -I3rd/lua-cjson $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+$(SKYEXT_LUACLIB_PATH)/cjson.so : $(SKYEXT_ROOT)/3rd/lua-cjson/lua_cjson.c \
+                                   $(SKYEXT_ROOT)/3rd/lua-cjson/strbuf.c \
+                                   $(SKYEXT_ROOT)/3rd/lua-cjson/fpconv.c | $(SKYEXT_LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(SHARED) -I$(SKYEXT_ROOT)/3rd/lua-cjson $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-$(LUA_CLIB_PATH)/traceback.so : lualib-src/traceback.c | $(LUA_CLIB_PATH)
+$(SKYEXT_LUACLIB_PATH)/traceback.so : $(SKYEXT_ROOT)/lualib-src/traceback.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-$(LUA_CLIB_PATH)/lfs.so : 3rd/luafilesystem/src/lfs.c | $(LUA_CLIB_PATH)
+$(SKYEXT_LUACLIB_PATH)/lfs.so : $(SKYEXT_ROOT)/3rd/luafilesystem/src/lfs.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-SODIUM_DIR = 3rd/libsodium
-SODIUM_LIB = $(SODIUM_DIR)/src/libsodium/.libs/libsodium.a
-SODIUM_INC = $(SODIUM_DIR)/src/libsodium/include
-$(SODIUM_LIB):
-	cd $(SODIUM_DIR) && \
-	./configure --disable-shared --enable-static --with-pic $(PLAT_HOST) && \
-	$(MAKE)
-$(LUA_CLIB_PATH)/crypto.so : lualib-src/crypto.c $(SODIUM_LIB) | $(LUA_CLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) -I$(SODIUM_INC) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+$(SKYEXT_LUACLIB_PATH)/crypto.so : $(SKYEXT_ROOT)/lualib-src/crypto.c | $(SKYEXT_LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
 
+$(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(SKYEXT_LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-LUA_CLIB = jchash cjson traceback lfs crypto
+SKYEXT_LUA_CLIB = jchash cjson traceback lfs crypto profiler_c
+
+# ---------- 引擎 C 服务（产物输出到引擎 cservice/）----------
+
+SKYEXT_CSERVICE_PATH = $(SKYEXT_ROOT)/cservice
+SKYNET_SRC = $(SKYEXT_ROOT)/skynet/skynet-src
+
+$(SKYEXT_CSERVICE_PATH) :
+	mkdir -p $(SKYEXT_CSERVICE_PATH)
+
+$(SKYEXT_CSERVICE_PATH)/profiler.so : $(SKYEXT_ROOT)/service-src/service_profiler.c | $(SKYEXT_CSERVICE_PATH)
+	$(CC) $(CFLAGS) $(SHARED) -I$(SKYNET_SRC) $^ -o $@ $(SKYNET_LIBS)
+
+SKYEXT_CSERVICE = profiler
+
+# ---------- skynet 编译 ----------
 
 skynet: $(BIN_PATH)
-	cd skynet && $(MAKE) $(PLAT)
-	cp -f skynet/skynet$(EXE_SUFFIX) $(BIN_PATH)/
-	cp skynet/3rd/lua/lua$(EXE_SUFFIX) $(BIN_PATH)/
-	cp skynet/3rd/lua/luac$(EXE_SUFFIX) $(BIN_PATH)/
+	cd $(SKYEXT_ROOT)/skynet && $(MAKE) $(PLAT) TLS_MODULE=ltls
+	cp -f $(SKYEXT_ROOT)/skynet/skynet$(EXE_SUFFIX) $(BIN_PATH)/
+	cp $(SKYEXT_ROOT)/skynet/3rd/lua/lua$(EXE_SUFFIX) $(BIN_PATH)/
+	cp $(SKYEXT_ROOT)/skynet/3rd/lua/luac$(EXE_SUFFIX) $(BIN_PATH)/
 ifeq ($(PLAT), mingw)
-	cp -f skynet/*.dll $(BIN_PATH)/
+	cp -f $(SKYEXT_ROOT)/skynet/*.dll $(BIN_PATH)/
 endif
 
-# 编译 skynet 和 C 库
-build: skynet \
-	$(LUA_CLIB_PATH) \
-	$(foreach v, $(LUA_CLIB), $(LUA_CLIB_PATH)/$(v).so) copy | $(BIN_PATH)
-	mkdir -p logs
+# ---------- 拷贝第三方 Lua 库 ----------
 
-# 清理
+copy:
+	cp -rf $(SKYEXT_ROOT)/3rd/sproto-orm/orm $(SKYEXT_ROOT)/lualib/
+	cp -f $(SKYEXT_ROOT)/3rd/binaryheap.lua/src/binaryheap.lua $(SKYEXT_ROOT)/lualib/
+
+# ---------- 引擎 build target ----------
+
+skyext_build: skynet \
+	$(foreach v, $(SKYEXT_LUA_CLIB), $(SKYEXT_LUACLIB_PATH)/$(v).so) \
+	$(foreach v, $(SKYEXT_CSERVICE), $(SKYEXT_CSERVICE_PATH)/$(v).so) copy | $(BIN_PATH)
+
+# ---------- 清理 ----------
+
 clean:
-	cd skynet && $(MAKE) clean
-	rm -f $(LUA_CLIB_PATH)/*.so
-	rm -rf $(LUA_CLIB_PATH)/*.so.dSYM
+	cd $(SKYEXT_ROOT)/skynet && $(MAKE) clean
+	rm -f $(SKYEXT_LUACLIB_PATH)/*.so
+	rm -rf $(SKYEXT_LUACLIB_PATH)/*.so.dSYM
+	rm -f $(SKYEXT_CSERVICE_PATH)/*.so
+	rm -rf $(SKYEXT_CSERVICE_PATH)/*.so.dSYM
 	rm -rf $(BIN_PATH)/*
 
-# 清理所有
 cleanall: clean
-	cd skynet && $(MAKE) cleanall
-	rm -rf dist skyext.zip
-	cd $(SODIUM_DIR) && $(MAKE) distclean || true
-
+	cd $(SKYEXT_ROOT)/skynet && $(MAKE) cleanall

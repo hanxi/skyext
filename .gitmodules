@@ -13,6 +13,4 @@
 [submodule "3rd/luafilesystem"]
 	path = 3rd/luafilesystem
 	url = https://github.com/lunarmodules/luafilesystem.git
-[submodule "3rd/libsodium"]
-	path = 3rd/libsodium
-	url = https://github.com/jedisct1/libsodium.git
+

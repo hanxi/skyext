@@ -1,8 +1,8 @@
 local skynet = require "skynet"
 local mongo = require "skynet.db.mongo"
-local config = require "config"
-local cmd_api = require "cmd_api"
-local log = require "log"
+local config = require "skyext.config"
+local cmd_api = require "skyext.cmd_api"
+local log = require "skyext.log"
 
 local CMD = {}
 

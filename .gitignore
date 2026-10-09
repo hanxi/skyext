@@ -1,20 +1,23 @@
 bin/
 build/
+luaclib/
+cservice/
 
 *.so
 
-tools/etcd/etcd1_data
-tools/etcd/etcd2_data
-tools/etcd/etcd3_data
-
-tools/mongodb/db
+example/tools/etcd/etcd1_data
+example/tools/etcd/etcd2_data
+example/tools/etcd/etcd3_data
+example/tools/mongodb/db
+example/build/
+example/luaclib/
+example/cservice/
 
 logs/
 dist/
 
 skyext.zip
-skyext/
-luaclib/
+/skyext/
 
 .DS_Store
 .aone_copilot/

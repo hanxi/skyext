@@ -3,12 +3,11 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <string.h>
-#include "sodium.h"
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
 
-// Base64URL编码表，不包含填充字符=
 static const char base64url_enc[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-// 解码用的查找表，将字符映射到对应的值
 static const unsigned char base64url_dec[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -20,27 +19,22 @@ static const unsigned char base64url_dec[] = {
     0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
 };
 
-// Base64URL编码函数
 static int lb64urlencode(lua_State *L) {
     size_t input_len;
     const unsigned char *input = (const unsigned char *)luaL_checklstring(L, 1, &input_len);
 
-    // 计算输出缓冲区大小
     size_t output_len = ((input_len + 2) / 3) * 4;
-    char *output = (char *)lua_newuserdata(L, output_len + 1); // +1 用于终止符
+    char *output = (char *)lua_newuserdata(L, output_len + 1);
 
     size_t i, j;
     for (i = 0, j = 0; i < input_len; i += 3) {
-        // 读取三个字节
         unsigned long val = (input[i] << 16);
         if (i + 1 < input_len) val |= (input[i + 1] << 8);
         if (i + 2 < input_len) val |= input[i + 2];
 
-        // 拆分为四个6位值
         output[j++] = base64url_enc[(val >> 18) & 0x3F];
         output[j++] = base64url_enc[(val >> 12) & 0x3F];
 
-        // 处理剩余字节
         if (i + 1 < input_len) {
             output[j++] = base64url_enc[(val >> 6) & 0x3F];
         }
@@ -49,22 +43,19 @@ static int lb64urlencode(lua_State *L) {
         }
     }
 
-    output[j] = '\0'; // 添加终止符
-    lua_pushlstring(L, output, j); // 推送实际长度的字符串
+    output[j] = '\0';
+    lua_pushlstring(L, output, j);
     return 1;
 }
 
-// Base64URL解码函数
 static int lb64urldecode(lua_State *L) {
     size_t input_len;
     const char *input = luaL_checklstring(L, 1, &input_len);
 
-    // 移除可能存在的填充字符（虽然Base64URL通常不使用）
     while (input_len > 0 && input[input_len - 1] == '=') {
         input_len--;
     }
 
-    // 计算输出缓冲区大小
     size_t output_len = (input_len * 3) / 4;
     unsigned char *output = (unsigned char *)lua_newuserdata(L, output_len + 1);
 
@@ -83,19 +74,17 @@ static int lb64urldecode(lua_State *L) {
             return luaL_error(L, "invalid base64url character: %c", c);
         }
 
-        // 累积位值
         val = (val << 6) | dec;
         bits += 6;
 
-        // 当累积了8位或更多时，提取一个字节
         if (bits >= 8) {
             bits -= 8;
             output[j++] = (val >> bits) & 0xFF;
         }
     }
 
-    output[j] = '\0'; // 添加终止符
-    lua_pushlstring(L, (const char *)output, j); // 推送实际长度的字符串
+    output[j] = '\0';
+    lua_pushlstring(L, (const char *)output, j);
     return 1;
 }
 
@@ -107,15 +96,15 @@ lhmac_sha256(lua_State *L) {
     size_t msg_len = 0;
     const char* msg = luaL_checklstring(L, 2, &msg_len);
 
-    unsigned char out[crypto_auth_hmacsha256_BYTES];
+    unsigned char out[32];
+    unsigned int out_len = 0;
 
-    crypto_auth_hmacsha256_state state;
+    if (!HMAC(EVP_sha256(), key, (int)key_len,
+              (const unsigned char*)msg, msg_len, out, &out_len)) {
+        return luaL_error(L, "HMAC-SHA256 failed");
+    }
 
-    crypto_auth_hmacsha256_init(&state, (const unsigned char*)key, key_len);
-    crypto_auth_hmacsha256_update(&state, (const unsigned char*)msg, msg_len);
-    crypto_auth_hmacsha256_final(&state, out);
-
-    lua_pushlstring(L, (const char*)out, crypto_auth_hmacsha256_BYTES);
+    lua_pushlstring(L, (const char*)out, out_len);
     return 1;
 }
 
@@ -127,26 +116,21 @@ lhmac_sha512(lua_State *L) {
     size_t msg_len = 0;
     const char* msg = luaL_checklstring(L, 2, &msg_len);
 
-    unsigned char out[crypto_auth_hmacsha512_BYTES];
+    unsigned char out[64];
+    unsigned int out_len = 0;
 
-    crypto_auth_hmacsha512_state state;
+    if (!HMAC(EVP_sha512(), key, (int)key_len,
+              (const unsigned char*)msg, msg_len, out, &out_len)) {
+        return luaL_error(L, "HMAC-SHA512 failed");
+    }
 
-    crypto_auth_hmacsha512_init(&state, (const unsigned char*)key, key_len);
-    crypto_auth_hmacsha512_update(&state, (const unsigned char*)msg, msg_len);
-    crypto_auth_hmacsha512_final(&state, out);
-
-    lua_pushlstring(L, (const char*)out, crypto_auth_hmacsha512_BYTES);
+    lua_pushlstring(L, (const char*)out, out_len);
     return 1;
 }
 
 LUAMOD_API int
 luaopen_crypto(lua_State* L) {
     luaL_checkversion(L);
-
-    // 在模块加载时初始化 libsodium
-    if (sodium_init() < 0) {
-        return luaL_error(L, "libsodium init failed");
-    }
 
     luaL_Reg l[] = {
         {"hmac_sha256", lhmac_sha256},

@@ -1,8 +1,8 @@
 local skynet = require "skynet"
-local http_server = require "http_server"
-local cmd_api = require "cmd_api"
-local config = require "config"
-local log = require "log"
+local http_server = require "skyext.http_server"
+local cmd_api = require "skyext.cmd_api"
+local config = require "skyext.config"
+local log = require "skyext.log"
 
 local g_commands = {} -- 指令注册表：cmd_name -> { handler_name, desc, params, services }
 local g_service_commands = {} -- 反向索引：service_address -> { cmd_name1, cmd_name2, ... }
@@ -299,7 +299,7 @@ skynet.start(function()
         agent_count = agent_count,
     }
     http_server.start(conf)
-    http_server.register_router("gm_router")
+    http_server.register_router("skyext.gm_router")
     log.info("GM HTTP server started", "port", port, "agent_count", agent_count)
 
     cmd_api.dispatch(CMD)

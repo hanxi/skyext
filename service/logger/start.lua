@@ -1,12 +1,12 @@
 local skynet = require "skynet"
 local c = require "skynet.core"
-local config = require "config"
-local cmd_api = require "cmd_api"
+local config = require "skyext.config"
+local cmd_api = require "skyext.cmd_api"
 local cmd = require "cmd"
 local global = require "global"
 local bucket = require "bucket"
-local logger = require "log.logger"
-local ptype = require "ptype"
+local logger = require "skyext.log.logger"
+local ptype = require "skyext.ptype"
 require "checker"
 
 local skynet_unpack = skynet.unpack

@@ -1,8 +1,8 @@
-local skynet = require("skynet")
-local cmd_api = require("cmd_api")
-local config = require("config")
-local mongo = require("skynet.db.mongo")
-local log = require("log")
+local skynet = require "skynet"
+local cmd_api = require "skyext.cmd_api"
+local config = require "skyext.config"
+local mongo = require "skynet.db.mongo"
+local log = require "skyext.log"
 
 local g_name, g_index = ...
 g_index = tonumber(g_index)
