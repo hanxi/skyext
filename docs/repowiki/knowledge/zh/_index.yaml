@@ -33,8 +33,8 @@ modules:
         dir_name: SkyExt 游戏应用服务集合（app_ 与 etc_）
         title: SkyExt 游戏应用服务集合（app/ 与 etc/）
         scope:
-            - app/
-            - etc/
+            - example/nodes/
+            - example/etc/
         source_files: []
         children:
             - app_services/account_service
@@ -47,11 +47,11 @@ modules:
         dir_name: 账号服务（Account Service）
         title: 账号服务（Account Service）
         scope:
-            - app/account/
-            - etc/app/account1.app.lua
-            - etc/app/account2.app.lua
-            - etc/account1.conf.lua
-            - etc/account2.conf.lua
+            - example/nodes/account/
+            - example/etc/nodes/account1.app.lua
+            - example/etc/nodes/account2.app.lua
+            - example/etc/account1.conf.lua
+            - example/etc/account2.conf.lua
         source_files: []
         children: []
         depends_on: []
@@ -63,9 +63,9 @@ modules:
         dir_name: 应用公共配置与监控节点配置
         title: 应用公共配置与监控节点配置
         scope:
-            - etc/app/common.app.lua
-            - etc/core.conf.lua
-            - etc/app/monitor.app.lua
+            - example/etc/nodes/common.app.lua
+            - example/etc/core.conf.lua
+            - example/etc/nodes/monitor.app.lua
         source_files: []
         children: []
         depends_on: []
@@ -74,9 +74,9 @@ modules:
         dir_name: 机器人客户端服务（Robot Service）
         title: 机器人客户端服务（Robot Service）
         scope:
-            - app/robot/
-            - etc/app/robot.app.lua
-            - etc/robot.conf.lua
+            - example/nodes/robot/
+            - example/etc/nodes/robot.app.lua
+            - example/etc/robot.conf.lua
         source_files: []
         children: []
         depends_on: []
@@ -87,11 +87,11 @@ modules:
         dir_name: 角色服务进程（Login_RoleAgent 网关与多实例角色管理）
         title: 角色服务进程（Login/RoleAgent 网关与多实例角色管理）
         scope:
-            - app/role/
-            - etc/app/role1.app.lua
-            - etc/app/role2.app.lua
-            - etc/role1.conf.lua
-            - etc/role2.conf.lua
+            - example/nodes/role/
+            - example/etc/nodes/role1.app.lua
+            - example/etc/nodes/role2.app.lua
+            - example/etc/role1.conf.lua
+            - example/etc/role2.conf.lua
         source_files: []
         children: []
         depends_on: []

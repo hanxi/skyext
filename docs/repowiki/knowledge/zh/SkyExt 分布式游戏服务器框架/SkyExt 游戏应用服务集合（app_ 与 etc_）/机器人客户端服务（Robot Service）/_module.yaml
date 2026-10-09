@@ -2,9 +2,9 @@ schema_version: 1
 module_path: app_services/robot_service
 title: 机器人客户端服务（Robot Service）
 scope:
-    - app/robot/
-    - etc/app/robot.app.lua
-    - etc/robot.conf.lua
+    - example/nodes/robot/
+    - example/etc/nodes/robot.app.lua
+    - example/etc/robot.conf.lua
 source_files: []
 depends_on: []
 related_to:

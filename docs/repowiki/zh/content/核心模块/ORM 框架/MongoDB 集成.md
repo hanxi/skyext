@@ -3,12 +3,12 @@
 <cite>
 **本文引用的文件**
 - [lualib/orm/init.lua](file://lualib/orm/init.lua)
-- [lualib/mongo_conn.lua](file://lualib/mongo_conn.lua)
+- [lualib/skyext/mongo_conn.lua](file://lualib/skyext/mongo_conn.lua)
 - [service/mongo_conn.lua](file://service/mongo_conn.lua)
-- [lualib/dbmgr.lua](file://lualib/dbmgr.lua)
+- [lualib/skyext/dbmgr.lua](file://lualib/skyext/dbmgr.lua)
 - [service/mongo_index.lua](file://service/mongo_index.lua)
 - [lualib/orm/schema.lua](file://lualib/orm/schema.lua)
-- [etc/core.conf.lua](file://etc/core.conf.lua)
+- [example/etc/core.conf.lua](file://example/etc/core.conf.lua)
 - [tools/mongodb/docker-compose.yml](file://tools/mongodb/docker-compose.yml)
 </cite>
 
@@ -58,15 +58,15 @@ Service --> Mongo
 ```
 
 图表来源
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 - [service/mongo_conn.lua:29-65](file://service/mongo_conn.lua#L29-L65)
 
 章节来源
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
 - [lualib/orm/init.lua:1-491](file://lualib/orm/init.lua#L1-L491)
-- [lualib/mongo_conn.lua:1-151](file://lualib/mongo_conn.lua#L1-L151)
+- [lualib/skyext/mongo_conn.lua:1-151](file://lualib/skyext/mongo_conn.lua#L1-L151)
 - [service/mongo_conn.lua:1-71](file://service/mongo_conn.lua#L1-L71)
 
 ## 核心组件
@@ -81,8 +81,8 @@ Service --> Mongo
 - [lualib/orm/init.lua:40-97](file://lualib/orm/init.lua#L40-L97)
 - [lualib/orm/init.lua:170-232](file://lualib/orm/init.lua#L170-L232)
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 - [service/mongo_index.lua:11-35](file://service/mongo_index.lua#L11-L35)
 
 ## 架构总览
@@ -117,9 +117,9 @@ Conn-->>DBMgr : ok, err, ret
 ```
 
 图表来源
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 - [service/mongo_conn.lua:29-65](file://service/mongo_conn.lua#L29-L65)
 
 ## 详细组件分析
@@ -166,8 +166,8 @@ MergeUpdate --> End
 
 章节来源
 - [lualib/orm/init.lua:213-232](file://lualib/orm/init.lua#L213-L232)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
-- [lualib/mongo_conn.lua:59-77](file://lualib/mongo_conn.lua#L59-L77)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:59-77](file://lualib/skyext/mongo_conn.lua#L59-L77)
 
 ### 嵌套对象更新策略与路径计算算法
 - 路径计算：
@@ -220,13 +220,13 @@ end
 ```
 
 图表来源
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/mongo_conn.lua:67-77](file://lualib/mongo_conn.lua#L67-L77)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:67-77](file://lualib/skyext/mongo_conn.lua#L67-L77)
 - [service/mongo_conn.lua:61-65](file://service/mongo_conn.lua#L61-L65)
 
 章节来源
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/mongo_conn.lua:67-77](file://lualib/mongo_conn.lua#L67-L77)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:67-77](file://lualib/skyext/mongo_conn.lua#L67-L77)
 - [service/mongo_conn.lua:61-65](file://service/mongo_conn.lua#L61-L65)
 
 ### 连接配置与路由
@@ -235,8 +235,8 @@ end
 - 配置来源：从配置表读取 mongo_config，包含 connections 数量与客户端参数 cfg。
 
 章节来源
-- [lualib/mongo_conn.lua:94-105](file://lualib/mongo_conn.lua#L94-L105)
-- [lualib/mongo_conn.lua:119-144](file://lualib/mongo_conn.lua#L119-L144)
+- [lualib/skyext/mongo_conn.lua:94-105](file://lualib/skyext/mongo_conn.lua#L94-L105)
+- [lualib/skyext/mongo_conn.lua:119-144](file://lualib/skyext/mongo_conn.lua#L119-L144)
 - [service/mongo_conn.lua:22-27](file://service/mongo_conn.lua#L22-L27)
 
 ### 查询优化与投影
@@ -245,9 +245,9 @@ end
 - 原子加载：find_and_modify + setOnInsert 实现“首次加载即插入”的幂等语义。
 
 章节来源
-- [lualib/dbmgr.lua:13-15](file://lualib/dbmgr.lua#L13-L15)
-- [lualib/dbmgr.lua:111-119](file://lualib/dbmgr.lua#L111-L119)
-- [lualib/mongo_conn.lua:44-57](file://lualib/mongo_conn.lua#L44-L57)
+- [lualib/skyext/dbmgr.lua:13-15](file://lualib/skyext/dbmgr.lua#L13-L15)
+- [lualib/skyext/dbmgr.lua:111-119](file://lualib/skyext/dbmgr.lua#L111-L119)
+- [lualib/skyext/mongo_conn.lua:44-57](file://lualib/skyext/mongo_conn.lua#L44-L57)
 - [service/mongo_conn.lua:29-54](file://service/mongo_conn.lua#L29-L54)
 
 ### 索引设计与创建
@@ -273,14 +273,14 @@ Svc --> Mongo["MongoDB"]
 ```
 
 图表来源
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
-- [lualib/mongo_conn.lua:1-151](file://lualib/mongo_conn.lua#L1-L151)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
+- [lualib/skyext/mongo_conn.lua:1-151](file://lualib/skyext/mongo_conn.lua#L1-L151)
 - [service/mongo_conn.lua:1-71](file://service/mongo_conn.lua#L1-L71)
 - [lualib/orm/schema.lua:1-471](file://lualib/orm/schema.lua#L1-L471)
 
 章节来源
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
-- [lualib/mongo_conn.lua:1-151](file://lualib/mongo_conn.lua#L1-L151)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
+- [lualib/skyext/mongo_conn.lua:1-151](file://lualib/skyext/mongo_conn.lua#L1-L151)
 - [service/mongo_conn.lua:1-71](file://service/mongo_conn.lua#L1-L71)
 - [lualib/orm/schema.lua:1-471](file://lualib/orm/schema.lua#L1-L471)
 
@@ -308,7 +308,7 @@ Svc --> Mongo["MongoDB"]
   - 根据查询条件补充复合索引
 
 章节来源
-- [lualib/dbmgr.lua:53-92](file://lualib/dbmgr.lua#L53-L92)
+- [lualib/skyext/dbmgr.lua:53-92](file://lualib/skyext/dbmgr.lua#L53-L92)
 - [service/mongo_conn.lua:13-18](file://service/mongo_conn.lua#L13-L18)
 - [service/mongo_index.lua:11-35](file://service/mongo_index.lua#L11-L35)
 
@@ -322,7 +322,7 @@ Svc --> Mongo["MongoDB"]
 - MongoDB 本地开发：可使用提供的 docker-compose 快速拉起实例。
 
 章节来源
-- [etc/core.conf.lua:1-30](file://etc/core.conf.lua#L1-L30)
+- [example/etc/core.conf.lua:1-30](file://example/etc/core.conf.lua#L1-L30)
 - [tools/mongodb/docker-compose.yml:1-10](file://tools/mongodb/docker-compose.yml#L1-L10)
 
 ### 查询优化
@@ -331,8 +331,8 @@ Svc --> Mongo["MongoDB"]
 - 避免全表扫描，确保查询条件命中索引
 
 章节来源
-- [lualib/dbmgr.lua:111-119](file://lualib/dbmgr.lua#L111-L119)
-- [lualib/mongo_conn.lua:44-57](file://lualib/mongo_conn.lua#L44-L57)
+- [lualib/skyext/dbmgr.lua:111-119](file://lualib/skyext/dbmgr.lua#L111-L119)
+- [lualib/skyext/mongo_conn.lua:44-57](file://lualib/skyext/mongo_conn.lua#L44-L57)
 - [service/mongo_conn.lua:29-54](file://service/mongo_conn.lua#L29-L54)
 
 ### 索引设计
@@ -351,4 +351,4 @@ Svc --> Mongo["MongoDB"]
 章节来源
 - [lualib/orm/schema.lua:187-471](file://lualib/orm/schema.lua#L187-L471)
 - [lualib/orm/init.lua:213-232](file://lualib/orm/init.lua#L213-L232)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)

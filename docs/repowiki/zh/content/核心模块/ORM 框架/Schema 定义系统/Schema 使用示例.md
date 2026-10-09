@@ -9,8 +9,8 @@
 - [lualib/orm/schema.lua](file://lualib/orm/schema.lua)
 - [lualib/orm/init.lua](file://lualib/orm/init.lua)
 - [tools/gen_schema.sh](file://tools/gen_schema.sh)
-- [app/role/roleagent/modules/bag/init.lua](file://app/role/roleagent/modules/bag/init.lua)
-- [app/role/roleagent/modules/mail/init.lua](file://app/role/roleagent/modules/mail/init.lua)
+- [example/nodes/role/roleagent/modules/bag/init.lua](file://example/nodes/role/roleagent/modules/bag/init.lua)
+- [example/nodes/role/roleagent/modules/mail/init.lua](file://example/nodes/role/roleagent/modules/mail/init.lua)
 - [lualib/role_db_api.lua](file://lualib/role_db_api.lua)
 - [lualib/user_db_api.lua](file://lualib/user_db_api.lua)
 </cite>
@@ -211,11 +211,11 @@ AddRes --> End(["完成"])
 ```
 
 图表来源
-- [app/role/roleagent/modules/bag/init.lua:6-23](file://app/role/roleagent/modules/bag/init.lua#L6-L23)
+- [example/nodes/role/roleagent/modules/bag/init.lua:6-23](file://example/nodes/role/roleagent/modules/bag/init.lua#L6-L23)
 
 章节来源
 - [schema/bag.sproto:1-16](file://schema/bag.sproto#L1-L16)
-- [app/role/roleagent/modules/bag/init.lua:6-23](file://app/role/roleagent/modules/bag/init.lua#L6-L23)
+- [example/nodes/role/roleagent/modules/bag/init.lua:6-23](file://example/nodes/role/roleagent/modules/bag/init.lua#L6-L23)
 
 ### 邮件系统
 - 设计要点

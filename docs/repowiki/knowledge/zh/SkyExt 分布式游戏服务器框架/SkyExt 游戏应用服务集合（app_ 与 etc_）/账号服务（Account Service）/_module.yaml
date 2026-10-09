@@ -2,11 +2,11 @@ schema_version: 1
 module_path: app_services/account_service
 title: 账号服务（Account Service）
 scope:
-    - app/account/
-    - etc/app/account1.app.lua
-    - etc/app/account2.app.lua
-    - etc/account1.conf.lua
-    - etc/account2.conf.lua
+    - example/nodes/account/
+    - example/etc/nodes/account1.app.lua
+    - example/etc/nodes/account2.app.lua
+    - example/etc/account1.conf.lua
+    - example/etc/account2.conf.lua
 source_files: []
 depends_on: []
 related_to:

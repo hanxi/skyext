@@ -41,7 +41,7 @@ source_files:
 | `.github/workflows/build-release.yml` | 四平台矩阵构建（Windows/Linux/macOS/FreeBSD），tag `v*` 触发 Release |
 | `.github/workflows/lint.yml` | PR/Push main 时运行 luacheck + stylua --check |
 | `skynet/` | 子模块，`make $(PLAT)` 编译出 `skynet`/`lua`/`luac` 可执行文件 |
-| `3rd/` | Git Submodule 引入的第三方库（libsodium、lua-cjson、luafilesystem、binaryheap.lua、sproto-orm） |
+| `3rd/` | Git Submodule 引入的第三方库（lua-cjson、luafilesystem、binaryheap.lua、sproto-orm） |
 
 ## 3. 架构与约定
 
@@ -49,7 +49,8 @@ source_files:
 - `build.mk` 通过 `uname -s` 自动推断 `PLAT`，也支持显式 `make linux/macosx/freebsd/mingw`。
 - Windows 目标使用 `x86_64-w64-mingw32-gcc` 交叉编译，链接 `-static-libgcc -lpthread -lm -lws2_32 -lgdi32`，产物带 `.exe` 后缀。
 - macOS 使用 `-dynamiclib -Wl,-undefined,dynamic_lookup` 动态加载 C 扩展。
-- libsodium 通过 `./configure --disable-shared --enable-static --with-pic` 静态编译后链接进 `crypto.so`。
+- `crypto.so` 链接系统 OpenSSL（`-lssl -lcrypto`），无需额外编译第三方加密库。
+- Skynet 使用 `TLS_MODULE=ltls` 编译以启用 TLS 支持。
 
 ### 3.2 C 扩展清单
 `LUA_CLIB = jchash cjson traceback lfs crypto`，每个 `.so` 对应一个独立规则，依赖 `lualib-src/` 或 `3rd/` 下的源码。
@@ -58,7 +59,7 @@ source_files:
 ```text
 proto/*.sproto ──→ tools/gen_proto.sh ──→ build/proto/*.spbcfg / *.spb
 schema/*.sproto ──→ tools/gen_schema.sh ──→ lualib/orm/schema_define.lua + schema.lua
-app/role/roleagent/modules/* ──→ autocode (gen_roleagent_modules.lua) ──→ 自动生成模块路由
+example/nodes/role/roleagent/modules/* ──→ autocode (gen_roleagent_modules.lua) ──→ 自动生成模块路由
 ```
 所有生成步骤均通过 `bin/lua tools/run.lua` 统一入口执行，保证运行环境一致。
 
@@ -74,7 +75,7 @@ app/role/roleagent/modules/* ──→ autocode (gen_roleagent_modules.lua) ─�
 
 ## 4. 约定与约束
 
-- **必须先初始化子模块**：首次克隆需执行 `make init`（`git submodule update --init --recursive`），否则 `3rd/libsodium`、`3rd/lua-cjson`、`3rd/luafilesystem`、`3rd/sproto-orm`、`skynet/` 等路径不存在。
+- **必须先初始化子模块**：首次克隆需执行 `make init`（`git submodule update --init --recursive`），否则 `3rd/lua-cjson`、`3rd/luafilesystem`、`3rd/sproto-orm`、`skynet/` 等路径不存在。
 - **构建顺序**：`make build` 会依次编译 Skynet、C 扩展、执行 `copy`（拷贝 `3rd/sproto-orm/orm`、`binaryheap.lua` 到 `lualib/`），并创建 `logs/`。协议/Schema 生成是独立目标，需在 `make build` 之后单独执行 `make proto`、`make schema`。
 - **Lua 代码必须通过 luacheck 且符合 Stylua 格式**：CI 的 lint job 会在 PR 上拒绝不符合规范的提交。
 - **发布产物不包含源码级第三方库**：`dist.py` 明确排除 `3rd/` 目录，运行时依赖已编译好的 `.so` 与生成的 Lua 字节码。

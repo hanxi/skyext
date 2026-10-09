@@ -7,7 +7,7 @@
 - **热更包** `hotfix/<日期>-patch<N>/`：`hotfix.conf.lua`（元信息 + 开关 + 文件清单）+ `codeN.lua`（手写 patcher）
 - **编排服务** `service/hotfix.lua`：加载配置 → 校验 checksum → clearcache → reload_res → reload_sproto → reload_orm_schema → inject_code
 - **支撑 GM 命令**：`clearcache`、`reload_res`、`reload_sproto_schema`、`reload_orm_schema`
-- **CLI 工具** `tools/hotfix.lua`：`refresh` 子命令回写 checksum 和 time
+- **CLI 工具** `example/tools/hotfix.lua`：`refresh` 子命令回写 checksum 和 time
 
 ---
 
@@ -114,7 +114,7 @@ mkdir hotfix/20260831-patch1
 # 编辑 hotfix.conf.lua、update_files、codeN.lua
 # ...
 
-# 生成 checksum 和 time
+# 生成 checksum 和 time（在 example/ 目录下执行）
 ./tools/hotfix.sh refresh hotfix/20260831-patch1
 ```
 
@@ -203,7 +203,7 @@ curl -X POST http://localhost:9092/gm/execute \
 - HTTP Header: `Authorization: Bearer <token>`
 - 或请求参数: `token=<token>`
 
-Token 在 `etc/app/common.app.lua` 中配置 `gm_auth_token`。**未配置 token 时接口禁用。**
+Token 在 `etc/nodes/common.app.lua` 中配置 `gm_auth_token`。**未配置 token 时接口禁用。**
 
 `/gm/list` 接口同样需要鉴权。
 
@@ -251,5 +251,5 @@ Token 在 `etc/app/common.app.lua` 中配置 `gm_auth_token`。**未配置 token
 - 新增 targets 尾通配支持（`roleagent*`）
 - 新增 patcher 顶层沙箱（禁止顶层访问全局变量）
 - 新增 `build_version` 与 `gitsha_base` 不一致警告
-- 统一 checksum 计算模块（`lualib/hotfix_checksum.lua`）
+- 统一 checksum 计算模块（`lualib/skyext/hotfix_checksum.lua`）
 - 工具端配置回写增加替换次数校验和回写验证

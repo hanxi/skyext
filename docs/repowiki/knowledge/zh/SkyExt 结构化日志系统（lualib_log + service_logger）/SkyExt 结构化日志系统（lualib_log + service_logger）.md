@@ -1,18 +1,18 @@
 ---
 kind: logging_system
-name: SkyExt 结构化日志系统（lualib/log + service/logger）
+name: SkyExt 结构化日志系统（lualib/skyext/log + service/logger）
 category: logging_system
 scope:
     - '**'
 source_files:
-    - lualib/log/init.lua
-    - lualib/log/logger.lua
-    - lualib/log/log_level.lua
-    - lualib/log/formatter.lua
-    - lualib/log/bucket/init.lua
-    - lualib/log/bucket/console.lua
-    - lualib/log/bucket/file.lua
-    - lualib/log/bucket/service.lua
+    - lualib/skyext/log/init.lua
+    - lualib/skyext/log/logger.lua
+    - lualib/skyext/log/log_level.lua
+    - lualib/skyext/log/formatter.lua
+    - lualib/skyext/log/bucket/init.lua
+    - lualib/skyext/log/bucket/console.lua
+    - lualib/skyext/log/bucket/file.lua
+    - lualib/skyext/log/bucket/service.lua
     - service/logger/main.lua
     - service/logger/start.lua
     - service/logger/cmd.lua
@@ -22,23 +22,23 @@ source_files:
 ## 1. 整体方案
 
 SkyExt 的日志系统由两部分组成：
-- **客户端库** `lualib/log/`：提供统一的 `log` 接口，封装结构化字段收集、级别过滤、traceback 捕获、以及通过 bucket 抽象写入后端。
+- **客户端库** `lualib/skyext/log/`：提供统一的 `log` 接口，封装结构化字段收集、级别过滤、traceback 捕获、以及通过 bucket 抽象写入后端。
 - **服务端** `service/logger/`：一个独立的 Skynet 服务，注册 `.logger` 地址，接收来自各服务的 `PTYPE_LOG / PTYPE_LOG_ERR` 消息，按配置路由到文件/控制台等 sink，并支持热重载与过载丢弃。
 
-应用代码统一通过 `require "log"` 使用，无需感知底层是本地 console 还是远程 logger 服务。启动时调用 `log.init()` 完成全局初始化。
+应用代码统一通过 `require "skyext.log"` 使用，无需感知底层是本地 console 还是远程 logger 服务。启动时调用 `log.init()` 完成全局初始化。
 
 ## 2. 关键文件与职责
 
 | 文件 | 职责 |
 |---|---|
-| `lualib/log/init.lua` | 暴露 `log.debug/info/warn/error/sys_assert/sys_error/xpcall_msgh/config` 默认实例；`init()` 从 `config` 读取 `log_level`、`log_src`、`log_print_table` 并注入 `_G.assert/_G.error/_G.pcall/_G.xpcall` |
-| `lualib/log/logger.lua` | 核心 Logger 对象实现：结构化事件打包 `_pack_events`、级别过滤 `_log`、traceback 采集（C 扩展 `traceback.c`）、错误上下文保护（safe_pcall/safe_xpcall 计数器防重入） |
-| `lualib/log/log_level.lua` | 定义优先级常量 `DEBUG=4 > INFO=3 > WARN=2 > ERROR=1 > FATAL=0` |
-| `lualib/log/formatter.lua` | 文本格式化（ANSI 彩色）与 JSON 序列化（`cjson.safe.encode`），输出字段含 `module/level/line/msg/time` 及用户自定义 events |
-| `lualib/log/bucket/init.lua` | Bucket 工厂：按 name 动态 `require "log.bucket.console|file|service"`，并提供 `get_default()` 回退到 console |
-| `lualib/log/bucket/console.lua` | 本地 stdout 输出，走 formatter |
-| `lualib/log/bucket/file.lua` | 本地文件输出 |
-| `lualib/log/bucket/service.lua` | 将记录通过 `skynet.send(".logger", "text", record)` 发送到 logger 服务 |
+| `lualib/skyext/log/init.lua` | 暴露 `log.debug/info/warn/error/sys_assert/sys_error/xpcall_msgh/config` 默认实例；`init()` 从 `config` 读取 `log_level`、`log_src`、`log_print_table` 并注入 `_G.assert/_G.error/_G.pcall/_G.xpcall` |
+| `lualib/skyext/log/logger.lua` | 核心 Logger 对象实现：结构化事件打包 `_pack_events`、级别过滤 `_log`、traceback 采集（C 扩展 `traceback.c`）、错误上下文保护（safe_pcall/safe_xpcall 计数器防重入） |
+| `lualib/skyext/log/log_level.lua` | 定义优先级常量 `DEBUG=4 > INFO=3 > WARN=2 > ERROR=1 > FATAL=0` |
+| `lualib/skyext/log/formatter.lua` | 文本格式化（ANSI 彩色）与 JSON 序列化（`cjson.safe.encode`），输出字段含 `module/level/line/msg/time` 及用户自定义 events |
+| `lualib/skyext/log/bucket/init.lua` | Bucket 工厂：按 name 动态 `require "skyext.log.bucket.console|file|service"`，并提供 `get_default()` 回退到 console |
+| `lualib/skyext/log/bucket/console.lua` | 本地 stdout 输出，走 formatter |
+| `lualib/skyext/log/bucket/file.lua` | 本地文件输出 |
+| `lualib/skyext/log/bucket/service.lua` | 将记录通过 `skynet.send(".logger", "text", record)` 发送到 logger 服务 |
 | `service/logger/main.lua` | 进程入口，用 xpcall 包裹启动，失败时写 `bootfaillogpath` 后 `skynet.abort()` |
 | `service/logger/start.lua` | 注册 SYSTEM/text 协议，订阅内核日志；创建 `global.bucket`；回调 `PTYPE_LOG/PTYPE_LOG_ERR` 分发；SIGHUP 触发 `bucket.reload()` |
 | `service/logger/cmd.lua` | GM 命令：`put/close/reload` |
@@ -48,7 +48,7 @@ SkyExt 的日志系统由两部分组成：
 
 ```
 业务模块
-  → require "log".info(msg, key, value, ...)
+  → require "skyext.log".info(msg, key, value, ...)
   → logger._raw_log(level, stack_depth, msg, ...)
     → _pack_events: 将 key/value 对转为 {key, value}[] 数组
     → save_to_bucket: 组装 g_record = {module, level, timestamp, line, msg, events}

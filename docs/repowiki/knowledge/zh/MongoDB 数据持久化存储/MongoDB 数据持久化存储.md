@@ -9,16 +9,16 @@ category_hints:
 scope:
     - '**'
 source_files:
-    - lualib/dbmgr.lua
-    - lualib/mongo_conn.lua
+    - lualib/skyext/dbmgr.lua
+    - lualib/skyext/mongo_conn.lua
     - service/mongo_conn.lua
     - service/mongo_index.lua
     - tools/mongodb/docker-compose.yml
 ---
 
 项目使用 MongoDB 作为 ORM 层的数据持久化后端：
-- `lualib/dbmgr.lua` 管理连接池；
-- `lualib/mongo_conn.lua` 封装连接；
+- `lualib/skyext/dbmgr.lua` 管理连接池；
+- `lualib/skyext/mongo_conn.lua` 封装连接；
 - `service/mongo_conn.lua`、`service/mongo_index.lua` 负责连接初始化与索引创建；
 - ORM schema 定义在 `schema/*.sproto`，通过 `make schema` 生成对应代码；
 - 开发环境通过 `tools/mongodb/docker-compose.yml` 启动单实例 MongoDB。

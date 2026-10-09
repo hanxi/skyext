@@ -2,11 +2,11 @@ schema_version: 1
 module_path: app_services/role_service
 title: 角色服务进程（Login/RoleAgent 网关与多实例角色管理）
 scope:
-    - app/role/
-    - etc/app/role1.app.lua
-    - etc/app/role2.app.lua
-    - etc/role1.conf.lua
-    - etc/role2.conf.lua
+    - example/nodes/role/
+    - example/etc/nodes/role1.app.lua
+    - example/etc/nodes/role2.app.lua
+    - example/etc/role1.conf.lua
+    - example/etc/role2.conf.lua
 source_files: []
 depends_on: []
 related_to:

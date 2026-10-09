@@ -2,15 +2,15 @@
 
 <cite>
 **本文引用的文件**
-- [app/robot/main.lua](file://app/robot/main.lua)
-- [app/robot/robotagent/main.lua](file://app/robot/robotagent/main.lua)
-- [etc/robot.conf.lua](file://etc/robot.conf.lua)
-- [etc/app/robot.app.lua](file://etc/app/robot.app.lua)
-- [etc/app/common.app.lua](file://etc/app/common.app.lua)
-- [lualib/sproto_api.lua](file://lualib/sproto_api.lua)
+- [example/nodes/robot/main.lua](file://example/nodes/robot/main.lua)
+- [example/nodes/robot/robotagent/main.lua](file://example/nodes/robot/robotagent/main.lua)
+- [example/etc/robot.conf.lua](file://example/etc/robot.conf.lua)
+- [example/etc/nodes/robot.app.lua](file://example/etc/nodes/robot.app.lua)
+- [example/etc/nodes/common.app.lua](file://example/etc/nodes/common.app.lua)
+- [lualib/skyext/sproto_api.lua](file://lualib/skyext/sproto_api.lua)
 - [proto/base.sproto](file://proto/base.sproto)
 - [proto/roleagent/role.sproto](file://proto/roleagent/role.sproto)
-- [app/role/roleagent/modules/role/request.lua](file://app/role/roleagent/modules/role/request.lua)
+- [example/nodes/role/roleagent/modules/role/request.lua](file://example/nodes/role/roleagent/modules/role/request.lua)
 </cite>
 
 ## 目录
@@ -33,24 +33,24 @@ Robot 服务由入口服务与若干机器人代理组成，配置文件集中�
 
 ```mermaid
 graph TB
-A["robot.conf.lua"] --> B["app/robot/main.lua"]
-B --> C["app/robot/robotagent/main.lua"]
+A["robot.conf.lua"] --> B["example/nodes/robot/main.lua"]
+B --> C["example/nodes/robot/robotagent/main.lua"]
 C --> D["Gate 服务(外部)"]
 C --> E["Account HTTP 服务(外部)"]
-C --> F["sproto 协议层(lualib/sproto_api.lua)"]
+C --> F["sproto 协议层(lualib/skyext/sproto_api.lua)"]
 C --> G["日志/配置等公共库"]
 ```
 
 图表来源
-- [etc/robot.conf.lua:1-3](file://etc/robot.conf.lua#L1-L3)
-- [app/robot/main.lua:5-21](file://app/robot/main.lua#L5-L21)
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [lualib/sproto_api.lua:136-159](file://lualib/sproto_api.lua#L136-L159)
+- [example/etc/robot.conf.lua:1-3](file://example/etc/robot.conf.lua#L1-L3)
+- [example/nodes/robot/main.lua:5-21](file://example/nodes/robot/main.lua#L5-L21)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [lualib/skyext/sproto_api.lua:136-159](file://lualib/skyext/sproto_api.lua#L136-L159)
 
 章节来源
-- [etc/robot.conf.lua:1-3](file://etc/robot.conf.lua#L1-L3)
-- [etc/app/robot.app.lua:1-29](file://etc/app/robot.app.lua#L1-L29)
-- [app/robot/main.lua:5-21](file://app/robot/main.lua#L5-L21)
+- [example/etc/robot.conf.lua:1-3](file://example/etc/robot.conf.lua#L1-L3)
+- [example/etc/nodes/robot.app.lua:1-29](file://example/etc/nodes/robot.app.lua#L1-L29)
+- [example/nodes/robot/main.lua:5-21](file://example/nodes/robot/main.lua#L5-L21)
 
 ## 核心组件
 - 机器人主进程：负责读取配置、按需启动多个 robotagent 子服务，并在非守护模式下启动控制台。
@@ -59,11 +59,11 @@ C --> G["日志/配置等公共库"]
 - 配置中心：集中定义机器人数量、Gate 节点、账户服务地址、JWT 密钥、日志策略等。
 
 章节来源
-- [app/robot/main.lua:5-21](file://app/robot/main.lua#L5-L21)
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [lualib/sproto_api.lua:136-159](file://lualib/sproto_api.lua#L136-L159)
-- [etc/app/robot.app.lua:1-29](file://etc/app/robot.app.lua#L1-L29)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [example/nodes/robot/main.lua:5-21](file://example/nodes/robot/main.lua#L5-L21)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [lualib/skyext/sproto_api.lua:136-159](file://lualib/skyext/sproto_api.lua#L136-L159)
+- [example/etc/nodes/robot.app.lua:1-29](file://example/etc/nodes/robot.app.lua#L1-L29)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 ## 架构总览
 Robot 服务整体工作流如下：
@@ -99,22 +99,22 @@ end
 ```
 
 图表来源
-- [app/robot/main.lua:11-19](file://app/robot/main.lua#L11-L19)
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [lualib/sproto_api.lua:136-159](file://lualib/sproto_api.lua#L136-L159)
+- [example/nodes/robot/main.lua:11-19](file://example/nodes/robot/main.lua#L11-L19)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [lualib/skyext/sproto_api.lua:136-159](file://lualib/skyext/sproto_api.lua#L136-L159)
 
 ## 详细组件分析
 
-### 机器人主进程（app/robot/main.lua）
+### 机器人主进程（example/nodes/robot/main.lua）
 - 功能：读取 robot_count，循环启动对应数量的 robotagent，并传入 id/name 标识。
 - 关键点：
   - 非守护模式会启动 console 服务便于调试。
   - 启动完成后退出主进程，实际工作由子 agent 承担。
 
 章节来源
-- [app/robot/main.lua:5-21](file://app/robot/main.lua#L5-L21)
+- [example/nodes/robot/main.lua:5-21](file://example/nodes/robot/main.lua#L5-L21)
 
-### 机器人代理（app/robot/robotagent/main.lua）
+### 机器人代理（example/nodes/robot/robotagent/main.lua）
 - 功能：
   - 生成 JWT 并访问 Account 服务获取或创建角色。
   - 根据角色所在的 rolenode 解析 Gate 地址并建立 TCP 连接。
@@ -143,14 +143,14 @@ Info --> Loop["后台协程循环recv_package + dispatch"]
 ```
 
 图表来源
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [app/robot/robotagent/main.lua:97-152](file://app/robot/robotagent/main.lua#L97-L152)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [example/nodes/robot/robotagent/main.lua:97-152](file://example/nodes/robot/robotagent/main.lua#L97-L152)
 
 章节来源
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [app/robot/robotagent/main.lua:97-152](file://app/robot/robotagent/main.lua#L97-L152)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [example/nodes/robot/robotagent/main.lua:97-152](file://example/nodes/robot/robotagent/main.lua#L97-L152)
 
-### 协议与调用封装（lualib/sproto_api.lua）
+### 协议与调用封装（lualib/skyext/sproto_api.lua）
 - 功能：
   - 注册协议模块与命令映射。
   - 提供 call/notify 接口，内部维护 session 与超时。
@@ -160,11 +160,11 @@ Info --> Loop["后台协程循环recv_package + dispatch"]
   - raw_dispatch 负责将请求路由到已注册的处理器，并回写响应。
 
 章节来源
-- [lualib/sproto_api.lua:19-79](file://lualib/sproto_api.lua#L19-L79)
-- [lualib/sproto_api.lua:97-159](file://lualib/sproto_api.lua#L97-L159)
-- [lualib/sproto_api.lua:169-196](file://lualib/sproto_api.lua#L169-L196)
+- [lualib/skyext/sproto_api.lua:19-79](file://lualib/skyext/sproto_api.lua#L19-L79)
+- [lualib/skyext/sproto_api.lua:97-159](file://lualib/skyext/sproto_api.lua#L97-L159)
+- [lualib/skyext/sproto_api.lua:169-196](file://lualib/skyext/sproto_api.lua#L169-L196)
 
-### 配置项（etc/app/robot.app.lua 与 etc/app/common.app.lua）
+### 配置项（example/etc/nodes/robot.app.lua 与 example/etc/nodes/common.app.lua）
 - 机器人相关：
   - robot_count：机器人代理数量，决定并发用户数。
   - account_host：Account 服务 HTTP 地址。
@@ -177,8 +177,8 @@ Info --> Loop["后台协程循环recv_package + dispatch"]
   - server2game：服务器到游戏服映射。
 
 章节来源
-- [etc/app/robot.app.lua:1-29](file://etc/app/robot.app.lua#L1-L29)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [example/etc/nodes/robot.app.lua:1-29](file://example/etc/nodes/robot.app.lua#L1-L29)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 ### 协议定义（proto/base.sproto 与 proto/roleagent/role.sproto）
 - base.sproto：定义基础包结构（type、session、ud）。
@@ -188,14 +188,14 @@ Info --> Loop["后台协程循环recv_package + dispatch"]
 - [proto/base.sproto:1-7](file://proto/base.sproto#L1-L7)
 - [proto/roleagent/role.sproto:1-12](file://proto/roleagent/role.sproto#L1-L12)
 
-### 服务端侧角色接口示例（app/role/roleagent/modules/role/request.lua）
+### 服务端侧角色接口示例（example/nodes/role/roleagent/modules/role/request.lua）
 - 展示 role.login_info 的实现位置与返回结构，便于理解客户端期望的数据格式。
 
 章节来源
-- [app/role/roleagent/modules/role/request.lua:1-31](file://app/role/roleagent/modules/role/request.lua#L1-L31)
+- [example/nodes/role/roleagent/modules/role/request.lua:1-31](file://example/nodes/role/roleagent/modules/role/request.lua#L1-L31)
 
 ## 依赖关系分析
-- 启动依赖：robot.conf 指向 app/robot/main.lua，后者再实例化 robotagent。
+- 启动依赖：robot.conf 指向 example/nodes/robot/main.lua，后者再实例化 robotagent。
 - 运行时依赖：
   - robotagent 依赖 sproto_api 进行协议编解码与调用。
   - 依赖 httpc 与 cjson 与 Account 服务交互。
@@ -215,18 +215,18 @@ RA --> CFG["robot.app.lua / common.app.lua"]
 ```
 
 图表来源
-- [etc/robot.conf.lua:1-3](file://etc/robot.conf.lua#L1-L3)
-- [app/robot/main.lua:5-21](file://app/robot/main.lua#L5-L21)
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [etc/app/robot.app.lua:1-29](file://etc/app/robot.app.lua#L1-L29)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [example/etc/robot.conf.lua:1-3](file://example/etc/robot.conf.lua#L1-L3)
+- [example/nodes/robot/main.lua:5-21](file://example/nodes/robot/main.lua#L5-L21)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [example/etc/nodes/robot.app.lua:1-29](file://example/etc/nodes/robot.app.lua#L1-L29)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 章节来源
-- [etc/robot.conf.lua:1-3](file://etc/robot.conf.lua#L1-L3)
-- [app/robot/main.lua:5-21](file://app/robot/main.lua#L5-L21)
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [etc/app/robot.app.lua:1-29](file://etc/app/robot.app.lua#L1-L29)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [example/etc/robot.conf.lua:1-3](file://example/etc/robot.conf.lua#L1-L3)
+- [example/nodes/robot/main.lua:5-21](file://example/nodes/robot/main.lua#L5-L21)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [example/etc/nodes/robot.app.lua:1-29](file://example/etc/nodes/robot.app.lua#L1-L29)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 ## 性能与指标
 - 并发用户数：通过配置 robot_count 直接控制并行运行的机器人代理数量。
@@ -254,9 +254,9 @@ RA --> CFG["robot.app.lua / common.app.lua"]
   - 调整 sproto_timeout 或优化服务端处理逻辑，关注 sproto_api 中的超时日志。
 
 章节来源
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [lualib/sproto_api.lua:136-159](file://lualib/sproto_api.lua#L136-L159)
-- [etc/app/common.app.lua:74-100](file://etc/app/common.app.lua#L74-L100)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [lualib/skyext/sproto_api.lua:136-159](file://lualib/skyext/sproto_api.lua#L136-L159)
+- [example/etc/nodes/common.app.lua:74-100](file://example/etc/nodes/common.app.lua#L74-L100)
 
 ## 结论
 Robot 服务通过多进程/多协程的机器人代理，实现对系统的稳定压力注入。其优势在于：
@@ -274,8 +274,8 @@ Robot 服务通过多进程/多协程的机器人代理，实现对系统的稳�
 - 设置流量模型：可通过定时器或随机间隔控制请求频率，模拟突发或平稳流量。
 
 章节来源
-- [etc/app/robot.app.lua:1-15](file://etc/app/robot.app.lua#L1-L15)
-- [app/robot/robotagent/main.lua:126-152](file://app/robot/robotagent/main.lua#L126-L152)
+- [example/etc/nodes/robot.app.lua:1-15](file://example/etc/nodes/robot.app.lua#L1-L15)
+- [example/nodes/robot/robotagent/main.lua:126-152](file://example/nodes/robot/robotagent/main.lua#L126-L152)
 
 ### 如何编写测试用例
 - 最小可用用例：
@@ -286,8 +286,8 @@ Robot 服务通过多进程/多协程的机器人代理，实现对系统的稳�
   - 逐步提升 robot_count，记录 QPS、延迟、错误率，绘制趋势图并与基线对比。
 
 章节来源
-- [app/robot/robotagent/main.lua:30-95](file://app/robot/robotagent/main.lua#L30-L95)
-- [lualib/sproto_api.lua:136-159](file://lualib/sproto_api.lua#L136-L159)
+- [example/nodes/robot/robotagent/main.lua:30-95](file://example/nodes/robot/robotagent/main.lua#L30-L95)
+- [lualib/skyext/sproto_api.lua:136-159](file://lualib/skyext/sproto_api.lua#L136-L159)
 
 ### 结果分析方法
 - 成功率：统计 call 成功次数与总次数，计算成功率。

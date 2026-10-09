@@ -5,8 +5,8 @@
 - [lualib/orm/init.lua](file://lualib/orm/init.lua)
 - [lualib/orm/schema.lua](file://lualib/orm/schema.lua)
 - [lualib/orm/schema_define.lua](file://lualib/orm/schema_define.lua)
-- [lualib/mongo_conn.lua](file://lualib/mongo_conn.lua)
-- [lualib/dbmgr.lua](file://lualib/dbmgr.lua)
+- [lualib/skyext/mongo_conn.lua](file://lualib/skyext/mongo_conn.lua)
+- [lualib/skyext/dbmgr.lua](file://lualib/skyext/dbmgr.lua)
 - [schema/bag.sproto](file://schema/bag.sproto)
 - [schema/mail.sproto](file://schema/mail.sproto)
 - [schema/role.sproto](file://schema/role.sproto)
@@ -37,7 +37,7 @@
 ORM 通过元表拦截字段赋值，自动记录变更并生成最小化的 MongoDB 更新指令；配合 dbmgr 提供缓存、定时落盘、版本控制与并发安全加载能力。
 
 ## 项目结构
-ORM 相关代码主要分布在 lualib/orm 与 lualib/dbmgr、lualib/mongo_conn 中，Schema 由 sproto 描述并通过代码生成器产出 schema.lua。
+ORM 相关代码主要分布在 lualib/orm 与 lualib/skyext/dbmgr、lualib/skyext/mongo_conn 中，Schema 由 sproto 描述并通过代码生成器产出 schema.lua。
 
 ```mermaid
 graph TB
@@ -69,15 +69,15 @@ MC --> |"bson.encode<br/>with_bson_encode_context"| OI
 - [lualib/orm/init.lua:213-232](file://lualib/orm/init.lua#L213-L232)
 - [lualib/orm/schema.lua:187-471](file://lualib/orm/schema.lua#L187-L471)
 - [lualib/orm/schema_define.lua:1-131](file://lualib/orm/schema_define.lua#L1-L131)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
 
 **章节来源**
 - [lualib/orm/init.lua:1-491](file://lualib/orm/init.lua#L1-L491)
 - [lualib/orm/schema.lua:1-471](file://lualib/orm/schema.lua#L1-L471)
 - [lualib/orm/schema_define.lua:1-131](file://lualib/orm/schema_define.lua#L1-L131)
-- [lualib/mongo_conn.lua:1-152](file://lualib/mongo_conn.lua#L1-L152)
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
+- [lualib/skyext/mongo_conn.lua:1-152](file://lualib/skyext/mongo_conn.lua#L1-L152)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
 - [schema/role.sproto:1-24](file://schema/role.sproto#L1-L24)
 - [schema/bag.sproto:1-16](file://schema/bag.sproto#L1-L16)
 - [schema/mail.sproto:1-37](file://schema/mail.sproto#L1-L37)
@@ -96,8 +96,8 @@ MC --> |"bson.encode<br/>with_bson_encode_context"| OI
 **章节来源**
 - [lualib/orm/init.lua:40-97](file://lualib/orm/init.lua#L40-L97)
 - [lualib/orm/schema.lua:163-185](file://lualib/orm/schema.lua#L163-L185)
-- [lualib/dbmgr.lua:53-92](file://lualib/dbmgr.lua#L53-L92)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+- [lualib/skyext/dbmgr.lua:53-92](file://lualib/skyext/dbmgr.lua#L53-L92)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 
 ## 架构总览
 ORM 在应用层以“文档对象”形式工作，所有修改均被追踪；dbmgr 作为门面提供 load/unload/save 流程；mongo_conn 负责与 MongoDB 交互，并在 BSON 编码阶段启用 ORM 的 bson 上下文，使迭代器行为适配 MongoDB 的 key 序列化规则。
@@ -132,10 +132,10 @@ end
 ```
 
 **图表来源**
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:53-92](file://lualib/dbmgr.lua#L53-L92)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:53-92](file://lualib/skyext/dbmgr.lua#L53-L92)
 - [lualib/orm/init.lua:428-447](file://lualib/orm/init.lua#L428-L447)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 
 ## 详细组件分析
 
@@ -188,11 +188,11 @@ ORM-->>ENC : 返回结果
 **图表来源**
 - [lualib/orm/init.lua:213-232](file://lualib/orm/init.lua#L213-L232)
 - [lualib/orm/init.lua:170-209](file://lualib/orm/init.lua#L170-L209)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
 
 **章节来源**
 - [lualib/orm/init.lua:170-232](file://lualib/orm/init.lua#L170-L232)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
 
 ### MongoDB 增量更新与批量提交
 - commit_mongo 遍历 __changed_keys 与嵌套脏文档，生成 $set/$unset 指令，并计算路径 key（支持数组索引）。
@@ -220,11 +220,11 @@ Set --> Done
 
 **图表来源**
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 
 **章节来源**
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 
 ### Schema 定义与类型校验
 - sproto 定义数据结构，生成 schema_define.lua，再由 schema.lua 转换为带类型检查能力的 schema 对象。
@@ -321,16 +321,16 @@ end
 ```
 
 **图表来源**
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 - [lualib/orm/init.lua:428-447](file://lualib/orm/init.lua#L428-L447)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 
 **章节来源**
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 - [lualib/orm/init.lua:428-447](file://lualib/orm/init.lua#L428-L447)
-- [lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+- [lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 
 ### 嵌套对象处理
 - 嵌套 table 会被递归包装为 ORM 文档，并建立父子关系；当父文档迭代或序列化时，可正确处理嵌套结构。
@@ -352,8 +352,8 @@ end
 
 **章节来源**
 - [lualib/orm/schema.lua:163-185](file://lualib/orm/schema.lua#L163-L185)
-- [lualib/dbmgr.lua:53-92](file://lualib/dbmgr.lua#L53-L92)
-- [lualib/dbmgr.lua:102-131](file://lualib/dbmgr.lua#L102-L131)
+- [lualib/skyext/dbmgr.lua:53-92](file://lualib/skyext/dbmgr.lua#L53-L92)
+- [lualib/skyext/dbmgr.lua:102-131](file://lualib/skyext/dbmgr.lua#L102-L131)
 - [lualib/orm/init.lua:100-118](file://lualib/orm/init.lua#L100-L118)
 - [lualib/orm/init.lua:297-313](file://lualib/orm/init.lua#L297-L313)
 
@@ -378,13 +378,13 @@ SD --> SP3["schema/mail.sproto"]
 
 **图表来源**
 - [lualib/orm/init.lua:213-232](file://lualib/orm/init.lua#L213-L232)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
 - [lualib/orm/schema.lua:187-471](file://lualib/orm/schema.lua#L187-L471)
 - [lualib/orm/schema_define.lua:1-131](file://lualib/orm/schema_define.lua#L1-L131)
 
 **章节来源**
 - [lualib/orm/init.lua:213-232](file://lualib/orm/init.lua#L213-L232)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
 - [lualib/orm/schema.lua:187-471](file://lualib/orm/schema.lua#L187-L471)
 - [lualib/orm/schema_define.lua:1-131](file://lualib/orm/schema_define.lua#L1-L131)
 
@@ -417,9 +417,9 @@ SD --> SP3["schema/mail.sproto"]
 
 **章节来源**
 - [lualib/orm/schema.lua:163-185](file://lualib/orm/schema.lua#L163-L185)
-- [lualib/dbmgr.lua:53-92](file://lualib/dbmgr.lua#L53-L92)
+- [lualib/skyext/dbmgr.lua:53-92](file://lualib/skyext/dbmgr.lua#L53-L92)
 - [lualib/orm/init.lua:100-118](file://lualib/orm/init.lua#L100-L118)
-- [lualib/dbmgr.lua:202-211](file://lualib/dbmgr.lua#L202-L211)
+- [lualib/skyext/dbmgr.lua:202-211](file://lualib/skyext/dbmgr.lua#L202-L211)
 
 ## 结论
 SkyExt ORM 通过严格的类型校验、细粒度的脏数据追踪与高效的 MongoDB 增量更新，提供了高性能、易用的数据建模与持久化方案。配合 dbmgr 的缓存与版本控制，能够在高并发场景下保证数据一致性与可靠性。建议在业务中充分利用 ORM 的嵌套对象支持与 BSON 上下文，以获得最佳性能与可维护性。
@@ -429,19 +429,19 @@ SkyExt ORM 通过严格的类型校验、细粒度的脏数据追踪与高效的
 ## 附录：使用示例与最佳实践
 - 数据建模
   - 使用 schema[collection].new(data) 创建 ORM 文档，遵循 sproto 定义的字段类型。
-  - 参考路径：[lualib/dbmgr.lua:133-134](file://lualib/dbmgr.lua#L133-L134)
+  - 参考路径：[lualib/skyext/dbmgr.lua:133-134](file://lualib/skyext/dbmgr.lua#L133-L134)
 - 查询与加载
   - 通过 dbmgr.load 获取文档，内部自动 upsert 并启动定时保存。
-  - 参考路径：[lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
+  - 参考路径：[lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
 - 更新与提交
   - 直接修改文档字段，dbmgr 会在定时任务中提交增量更新。
-  - 参考路径：[lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+  - 参考路径：[lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 - 批量提交
   - 利用 commit_mongo 一次性生成 $set/$unset，减少数据库调用次数。
   - 参考路径：[lualib/orm/init.lua:428-447](file://lualib/orm/init.lua#L428-L447)
 - 与 MongoDB 集成
   - 使用 mongo_conn.get_collection 获取集合，调用 safe_update 提交更新。
-  - 参考路径：[lualib/mongo_conn.lua:44-77](file://lualib/mongo_conn.lua#L44-L77)
+  - 参考路径：[lualib/skyext/mongo_conn.lua:44-77](file://lualib/skyext/mongo_conn.lua#L44-L77)
 - 性能优化技巧
   - 合理设计 schema，避免过深的嵌套；尽量使用 map 结构以减少数组移动成本。
   - 利用 with_bson_encode_context 确保序列化效率。
@@ -449,8 +449,8 @@ SkyExt ORM 通过严格的类型校验、细粒度的脏数据追踪与高效的
 - 错误处理与事务
   - 捕获类型校验错误，确保数据合法性；使用 _version 实现乐观锁。
   - 参考路径：[lualib/orm/schema.lua:163-185](file://lualib/orm/schema.lua#L163-L185)
-  - 参考路径：[lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+  - 参考路径：[lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 - 最佳实践
   - 避免循环引用；及时 unload 释放资源；定期监控 nModified 与日志。
   - 参考路径：[lualib/orm/init.lua:100-118](file://lualib/orm/init.lua#L100-L118)
-  - 参考路径：[lualib/dbmgr.lua:150-198](file://lualib/dbmgr.lua#L150-L198)
+  - 参考路径：[lualib/skyext/dbmgr.lua:150-198](file://lualib/skyext/dbmgr.lua#L150-L198)

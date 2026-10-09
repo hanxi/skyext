@@ -5,8 +5,8 @@
 - [lualib/orm/init.lua](file://lualib/orm/init.lua)
 - [lualib/orm/schema.lua](file://lualib/orm/schema.lua)
 - [lualib/orm/schema_define.lua](file://lualib/orm/schema_define.lua)
-- [lualib/dbmgr.lua](file://lualib/dbmgr.lua)
-- [lualib/mongo_conn.lua](file://lualib/mongo_conn.lua)
+- [lualib/skyext/dbmgr.lua](file://lualib/skyext/dbmgr.lua)
+- [lualib/skyext/mongo_conn.lua](file://lualib/skyext/mongo_conn.lua)
 </cite>
 
 ## 目录
@@ -40,15 +40,15 @@ F --> G["MongoDB 驱动<br/>safe_update/find_and_modify"]
 图表来源
 - [lualib/orm/init.lua:234-295](file://lualib/orm/init.lua#L234-L295)
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
-- [lualib/mongo_conn.lua:67-77](file://lualib/mongo_conn.lua#L67-L77)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:67-77](file://lualib/skyext/mongo_conn.lua#L67-L77)
 
 章节来源
 - [lualib/orm/init.lua:1-490](file://lualib/orm/init.lua#L1-L490)
 - [lualib/orm/schema.lua:1-471](file://lualib/orm/schema.lua#L1-L471)
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
-- [lualib/mongo_conn.lua:1-152](file://lualib/mongo_conn.lua#L1-L152)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
+- [lualib/skyext/mongo_conn.lua:1-152](file://lualib/skyext/mongo_conn.lua#L1-L152)
 
 ## 核心组件
 - ORM 文档对象与元表：通过 _new_doc 构造，拦截读写以追踪变更，维护 __stage（当前值）、__changed_keys（变更键集合）、__dirty（是否脏）、__all_dirty（子树整体脏）。
@@ -62,8 +62,8 @@ F --> G["MongoDB 驱动<br/>safe_update/find_and_modify"]
 - [lualib/orm/init.lua:234-295](file://lualib/orm/init.lua#L234-L295)
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
 - [lualib/orm/schema.lua:163-185](file://lualib/orm/schema.lua#L163-L185)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
 
 ## 架构总览
 下图展示从业务侧对 ORM 文档的修改到最终写入 MongoDB 的完整链路，包括脏标记传播、增量提交与版本控制。
@@ -96,10 +96,10 @@ end
 ```
 
 图表来源
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 - [lualib/orm/init.lua:348-447](file://lualib/orm/init.lua#L348-L447)
-- [lualib/mongo_conn.lua:67-77](file://lualib/mongo_conn.lua#L67-L77)
+- [lualib/skyext/mongo_conn.lua:67-77](file://lualib/skyext/mongo_conn.lua#L67-L77)
 
 ## 详细组件分析
 
@@ -192,9 +192,9 @@ Recurse --> Done(["返回 is_dirty,result"])
 - 卸载：dbmgr.unload 取消定时器并强制保存一次，保证内存数据与数据库一致。
 
 章节来源
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/dbmgr.lua:150-198](file://lualib/dbmgr.lua#L150-L198)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:150-198](file://lualib/skyext/dbmgr.lua#L150-L198)
 
 ## 依赖关系分析
 - dbmgr 依赖 orm 与 schema：使用 schema[coll].new 创建 ORM 文档，使用 orm.is_dirty/commit_mongo 进行变更检测与提交。
@@ -210,13 +210,13 @@ SCH --> ORM
 ```
 
 图表来源
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
-- [lualib/mongo_conn.lua:1-152](file://lualib/mongo_conn.lua#L1-L152)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
+- [lualib/skyext/mongo_conn.lua:1-152](file://lualib/skyext/mongo_conn.lua#L1-L152)
 - [lualib/orm/schema.lua:1-471](file://lualib/orm/schema.lua#L1-L471)
 
 章节来源
-- [lualib/dbmgr.lua:1-219](file://lualib/dbmgr.lua#L1-L219)
-- [lualib/mongo_conn.lua:1-152](file://lualib/mongo_conn.lua#L1-L152)
+- [lualib/skyext/dbmgr.lua:1-219](file://lualib/skyext/dbmgr.lua#L1-L219)
+- [lualib/skyext/mongo_conn.lua:1-152](file://lualib/skyext/mongo_conn.lua#L1-L152)
 - [lualib/orm/schema.lua:1-471](file://lualib/orm/schema.lua#L1-L471)
 
 ## 性能考量
@@ -236,9 +236,9 @@ SCH --> ORM
 - BSON 编码异常：确保在 mongo_conn 的 bson_encode 中使用 orm.with_bson_encode_context 包裹。
 
 章节来源
-- [lualib/dbmgr.lua:53-92](file://lualib/dbmgr.lua#L53-L92)
+- [lualib/skyext/dbmgr.lua:53-92](file://lualib/skyext/dbmgr.lua#L53-L92)
 - [lualib/orm/init.lua:170-232](file://lualib/orm/init.lua#L170-L232)
-- [lualib/mongo_conn.lua:14-19](file://lualib/mongo_conn.lua#L14-L19)
+- [lualib/skyext/mongo_conn.lua:14-19](file://lualib/skyext/mongo_conn.lua#L14-L19)
 
 ## 结论
 该 ORM 通过严格的 schema 校验、细粒度的脏标记与变更追踪、以及高效的增量提交机制，实现了高性能、低开销的 MongoDB 持久化。配合 dbmgr 的缓存与版本控制，既保证了数据一致性，又显著降低了数据库压力。推荐在业务中遵循“加载-修改-自动/显式保存”的模式，充分利用 orm.clone/totable/is_dirty 等辅助方法进行调试与扩展。
@@ -253,15 +253,15 @@ SCH --> ORM
 - 保存：调用 dbmgr.unload 或在定时器触发时保存；内部会调用 orm.commit_mongo 生成 $set/$unset 并执行 safe_update。
 
 参考路径
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
 
 ### 单条记录：查询与读取
 - 查询：dbmgr.load 通过 find_and_modify 获取或创建文档，返回 ORM 文档供业务读取与修改。
 - 投影：默认排除 _id，可通过 projection 控制返回字段。
 
 参考路径
-- [lualib/dbmgr.lua:94-148](file://lualib/dbmgr.lua#L94-L148)
+- [lualib/skyext/dbmgr.lua:94-148](file://lualib/skyext/dbmgr.lua#L94-L148)
 
 ### 批量操作：数组/Map 的增删改
 - 数组插入/删除：使用 orm.insert/orm.remove 对数组型 ORM 文档进行操作，ORM 会调整元素索引并标记变更。
@@ -277,8 +277,8 @@ SCH --> ORM
 - 建议在业务中尽量聚合修改，减少频繁的小粒度提交。
 
 参考路径
-- [lualib/dbmgr.lua:67-92](file://lualib/dbmgr.lua#L67-L92)
-- [lualib/mongo_conn.lua:67-77](file://lualib/mongo_conn.lua#L67-L77)
+- [lualib/skyext/dbmgr.lua:67-92](file://lualib/skyext/dbmgr.lua#L67-L92)
+- [lualib/skyext/mongo_conn.lua:67-77](file://lualib/skyext/mongo_conn.lua#L67-L77)
 
 ### 辅助方法使用要点
 - orm.clone：用于创建文档快照，便于回滚或对比差异。

@@ -1,7 +1,7 @@
 # SkyExt 热更模块优化行动计划
 
 > 创建日期：2026-08-31
-> 状态：待执行
+> 状态：**已完成**
 > 前置调研：已完成对热更链路全量代码走读（service/hotfix.lua、tools/hotfix.lua、gm 通道、res/sproto 重载、launcher 启动链路），问题清单见本文第 2 节。
 > 路线决策：**patcher 保持手写**，不做自动生成；本计划聚焦让手写热更流程更安全、更可观测、更可运维。
 
@@ -28,7 +28,7 @@
 | 文件 | 改动性质 |
 |---|---|
 | `service/hotfix.lua` | 核心改造（模板、超时、锁、fail-fast、历史、dry-run、targets） |
-| `lualib/gm_router.lua` | 鉴权 |
+| `lualib/skyext/gm_router.lua` | 鉴权 |
 | `lualib/gm_api.lua` | 不动（仅确认） |
 | `tools/hotfix.lua` | checksum 模块化、配置回写健壮化 |
 | `lualib/hotfix_checksum.lua` | 新增（两端共用） |
@@ -43,7 +43,7 @@
 | 编号 | 级别 | 问题 | 位置 |
 |---|---|---|---|
 | #1 | P0 | **双重静默吞错**：① 注入模板中 load/xpcall 失败仅 log+return nil，skynet.call 以 ok=true,result=nil 返回，inject_to_service 判为成功；② inject_code_files 始终 return true，record_step 的 inject_ok 永远为 true，即使 results 数组中有个别失败项也不影响 step 级判定——history 最终记 success=true | service/hotfix.lua 注入模板 + inject_code_files |
-| #2 | P0 | `/gm/execute` 无鉴权，可远程注入任意 Lua 代码（gm_api.md 注意事项已承认缺失） | lualib/gm_router.lua |
+| #2 | P0 | `/gm/execute` 无鉴权，可远程注入任意 Lua 代码（gm_api.md 注意事项已承认缺失） | lualib/skyext/gm_router.lua |
 | #3 | P1 | checksum 校验不对称：service 端 update_files 读失败仅 warn 跳过，tools 端对同场景 fail-fast，两端行为不一致 | service/hotfix.lua verify_checksum |
 | #4 | P1 | 步骤失败不中断，无 fail-fast，多 target 注入可状态分裂 | service/hotfix.lua execute_hotfix |
 | #5 | P1 | 注入无超时，patcher 卡死 → skynet.call 永久阻塞 → cleanup() 永远不会执行 → g_hotfix_lock 永久占用 | service/hotfix.lua inject_to_service |
@@ -61,7 +61,7 @@
 
 ## 3. 阶段计划
 
-### Phase 1：正确性修复（P0）— 预计 1 天
+### Phase 1：正确性修复（P0）— 预计 1 天 ✅ 已完成
 
 #### 1.1 修复注入模板静默失败（#1）
 
@@ -98,7 +98,7 @@
 
 **验收**：patcher.run 内 `skynet.sleep(6000)`（60s）→ 注入 30s 超时返回失败；随后再次执行 hotfix，300s 内被锁拒绝、模拟超时后可重新执行。
 
-### Phase 2：健壮性与可观测（P1）— 预计 1.5 天
+### Phase 2：健壮性与可观测（P1）— 预计 1.5 天 ✅ 已完成
 
 #### 2.1 checksum 校验统一 fail-fast（#3）
 
@@ -139,14 +139,14 @@
 
 **验收**：Phase 2 整体验收用例见第 4 节 T3~T7。
 
-### Phase 3：安全与覆盖能力（P2）— 预计 2 天
+### Phase 3：安全与覆盖能力（P2）— 预计 2 天 ✅ 已完成
 
 #### 3.1 GM 通道鉴权（#2）
 
 - `etc/common.app.lua` 新增 `gm_auth_token = "<随机长串>"`（部署时生成）
-- `lualib/gm_router.lua`：新增 `check_auth(req)`，校验 `Authorization: Bearer <token>` 或 query/body 参数 `token`
-  - `/gm/execute`（GET/POST）：**未配置 token 时一律拒绝**（安全默认），错误码用 `errcode.PARAM_ERROR` 语义或新增 `errcode.AUTH_FAILED`
-  - `/gm/list`：只读，允许无 token 访问（保持面板可用）；后续如需收紧再改
+- `lualib/skyext/gm_router.lua`：新增 `check_auth(req)`，校验 `Authorization: Bearer <token>` 或 query/body 参数 `token`
+  - `/gm/execute`（GET/POST）：**未配置 token 时一律拒绝**（安全默认），错误码 `errcode.AUTH_FAILED` ✅ 已实现
+  - `/gm/list`：**同样需要 token 鉴权**（实际实现比原计划更严格） ✅ 已实现
   - token 校验失败统一 `log.warn` 记录来源 IP
 - `public/gm.html`：右上角新增 token 输入框（localStorage 持久化），fetch 请求自动附带
 - `docs/gm_api.md`：补充鉴权说明
@@ -182,11 +182,11 @@
 - 在测试环境验证 `skynet.cache.clear()` 是否覆盖 `package.loaded`（构造：模块 A 被服务 S require 后替换磁盘文件 → clearcache → 观察 S 内再次 require 是否拿到新代码）
 - 结论写入 `docs/hotfix.md`："update_files 生效原理"一节，明确活跃服务需 patcher 显式 `package.loaded[...] = nil; require ...` 重载
 
-### Phase 4：工具链与文档（P3）— 预计 1 天
+### Phase 4：工具链与文档（P3）— 预计 1 天 ✅ 已完成
 
-#### 4.1 统一 checksum 实现（#12）
+#### 4.1 统一 checksum 实现（#12） ✅ 已完成
 
-- 新增 `lualib/hotfix_checksum.lua`：
+- `lualib/hotfix_checksum.lua` 已实现，`service/hotfix.lua` 已使用：
   - `M.compute(config, hotfix_dir, root_dir)`：按 update_files → code_files 顺序读文件（任一失败 fail-fast 并返回明确错误），`table.concat` 后 `md5.sumhexa`
   - `M.verify(config, hotfix_dir, root_dir)`：compute + 比对，返回 `(ok, err)`，错误文案区分 file missing / mismatch
 - `service/hotfix.lua` 的 `verify_checksum` 改为调用该模块
@@ -204,14 +204,14 @@
 - `execute_hotfix` 在 load_config 后：读环境变量 `build_version`（etc 配置写入，部署流水线注入），若存在且 ≠ `config.gitsha_base` → `log.warn` 并在返回结果中附加提示"当前部署版本与热更基线不一致，请人工确认补丁适用性"（仅警告不阻断）
 - 构建链路（tools/dist.py）自动生成版本文件的改造列为后续任务（Out of scope）
 
-#### 4.4 文档（#15、#16）
+#### 4.4 文档（#15、#16） ✅ 已完成
 
-- 新增 `docs/hotfix.md`，包含：
+- `docs/hotfix.md` 已创建，包含：
   1. **patcher 契约**：`{ targets, run }` 字段说明；顶层必须纯声明（沙箱强制）；`run` 在目标服务进程内执行，可安全 require/访问全局；一个 code 文件可声明多个 targets；同 targets 的多个 patcher 按 `code_files` 数组顺序执行（显式声明该顺序即依赖顺序）
   2. **update_files 生效原理**：磁盘替换 → checksum 校验 → clearcache 为下次加载做准备 → 活跃服务由 patcher 显式重载 `package.loaded`（以 3.5 验证结论为准）
   3. **完整 SOP**：开发机生成热更包（改 update_files / 写 patcher）→ `./tools/hotfix.sh refresh <dir>` → 发布文件到各节点 → dry-run 预演 → 逐节点 `POST /gm/execute {cmd:"hotfix", confirm:"true", ...}` → 逐节点核对 history 与业务验证
   4. **失败处置手册**：与 2.3 的 STEP_GUIDANCE 同步
-- `docs/gm_api.md` 增补 `hotfix`、`hotfix_history` 两个命令条目（参数、鉴权、示例 curl）
+- `docs/gm_api.md` 已创建，含 `hotfix`、`hotfix_history` 命令条目（参数、鉴权、示例 curl）
 
 ## 4. 测试与验收
 
@@ -251,11 +251,9 @@
 
 ## 7. 执行顺序与工作量
 
-| Phase | 内容 | 工作量 | 依赖 |
-|---|---|---|---|
-| Phase 1 | #1 模板修复 + inject_code_files 返回值修复、#5 超时+锁 | 1 天 | 无 |
-| Phase 2 | #3 校验、#4 fail-fast、#6 指引、#7 持久化、#11 dry-run | 1.5 天 | Phase 1 |
-| Phase 3 | #2 鉴权、#8 通配 targets、#10 沙箱、#9 最小化+验证 | 2 天 | Phase 2 |
-| Phase 4 | #12 统一 checksum、#13 回写健壮化、#14 版本核对、#15 文档 | 1 天 | 无（可与 Phase 3 并行） |
-
-合计约 5.5 人日。Phase 1 独立可发布；每 Phase 结束跑对应测试用例并在 `docs/hotfix.md` 变更日志登记。
+| Phase | 内容 | 工作量 | 依赖 | 状态 |
+|---|---|---|---|---|
+| Phase 1 | #1 模板修复 + inject_code_files 返回值修复、#5 超时+锁 | 1 天 | 无 | ✅ 已完成 |
+| Phase 2 | #3 校验、#4 fail-fast、#6 指引、#7 持久化、#11 dry-run | 1.5 天 | Phase 1 | ✅ 已完成 |
+| Phase 3 | #2 鉴权、#8 通配 targets、#10 沙箱、#9 最小化+验证 | 2 天 | Phase 2 | ✅ 已完成 |
+| Phase 4 | #12 统一 checksum、#13 回写健壮化、#14 版本核对、#15 文档 | 1 天 | 无（可与 Phase 3 并行） | ✅ 已完成 |

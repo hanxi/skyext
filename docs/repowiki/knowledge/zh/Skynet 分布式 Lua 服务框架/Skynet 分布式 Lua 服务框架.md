@@ -10,7 +10,7 @@ scope:
     - '**'
 source_files:
     - service/hotfix.lua
-    - lualib/gm_router.lua
+    - lualib/skyext/gm_router.lua
     - lualib/launcher.lua
 ---
 

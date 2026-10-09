@@ -2,16 +2,16 @@
 
 <cite>
 **本文引用的文件**
-- [lualib/http_server/init.lua](file://lualib/http_server/init.lua)
-- [lualib/http_server/watchdog.lua](file://lualib/http_server/watchdog.lua)
-- [lualib/http_server/agent.lua](file://lualib/http_server/agent.lua)
-- [lualib/cmd_api.lua](file://lualib/cmd_api.lua)
-- [lualib/config.lua](file://lualib/config.lua)
-- [etc/core.conf.lua](file://etc/core.conf.lua)
-- [etc/app/common.app.lua](file://etc/app/common.app.lua)
-- [etc/app/role1.app.lua](file://etc/app/role1.app.lua)
+- [lualib/skyext/http_server/init.lua](file://lualib/skyext/http_server/init.lua)
+- [lualib/skyext/http_server/watchdog.lua](file://lualib/skyext/http_server/watchdog.lua)
+- [lualib/skyext/http_server/agent.lua](file://lualib/skyext/http_server/agent.lua)
+- [lualib/skyext/cmd_api.lua](file://lualib/skyext/cmd_api.lua)
+- [lualib/skyext/config.lua](file://lualib/skyext/config.lua)
+- [example/etc/core.conf.lua](file://example/etc/core.conf.lua)
+- [example/etc/nodes/common.app.lua](file://example/etc/nodes/common.app.lua)
+- [example/etc/nodes/role1.app.lua](file://example/etc/nodes/role1.app.lua)
 - [lualib/skyext.lua](file://lualib/skyext.lua)
-- [lualib/cluster_discovery.lua](file://lualib/cluster_discovery.lua)
+- [lualib/skyext/cluster_discovery.lua](file://lualib/skyext/cluster_discovery.lua)
 </cite>
 
 ## 目录
@@ -44,22 +44,22 @@ A --> H["skyext<br/>初始化配置与日志"]
 ```
 
 图表来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-43](file://lualib/http_server/watchdog.lua#L13-L43)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [lualib/cmd_api.lua:13-43](file://lualib/cmd_api.lua#L13-L43)
-- [lualib/config.lua:6-72](file://lualib/config.lua#L6-L72)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-43](file://lualib/skyext/http_server/watchdog.lua#L13-L43)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [lualib/skyext/cmd_api.lua:13-43](file://lualib/skyext/cmd_api.lua#L13-L43)
+- [lualib/skyext/config.lua:6-72](file://lualib/skyext/config.lua#L6-L72)
 - [lualib/skyext.lua:61-80](file://lualib/skyext.lua#L61-L80)
 
 章节来源
-- [lualib/http_server/init.lua:1-22](file://lualib/http_server/init.lua#L1-L22)
-- [lualib/http_server/watchdog.lua:1-45](file://lualib/http_server/watchdog.lua#L1-L45)
-- [lualib/http_server/agent.lua:1-170](file://lualib/http_server/agent.lua#L1-L170)
-- [lualib/cmd_api.lua:1-46](file://lualib/cmd_api.lua#L1-L46)
-- [lualib/config.lua:1-145](file://lualib/config.lua#L1-L145)
-- [etc/core.conf.lua:1-30](file://etc/core.conf.lua#L1-L30)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
-- [etc/app/role1.app.lua:1-30](file://etc/app/role1.app.lua#L1-L30)
+- [lualib/skyext/http_server/init.lua:1-22](file://lualib/skyext/http_server/init.lua#L1-L22)
+- [lualib/skyext/http_server/watchdog.lua:1-45](file://lualib/skyext/http_server/watchdog.lua#L1-L45)
+- [lualib/skyext/http_server/agent.lua:1-170](file://lualib/skyext/http_server/agent.lua#L1-L170)
+- [lualib/skyext/cmd_api.lua:1-46](file://lualib/skyext/cmd_api.lua#L1-L46)
+- [lualib/skyext/config.lua:1-145](file://lualib/skyext/config.lua#L1-L145)
+- [example/etc/core.conf.lua:1-30](file://example/etc/core.conf.lua#L1-L30)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
+- [example/etc/nodes/role1.app.lua:1-30](file://example/etc/nodes/role1.app.lua#L1-L30)
 - [lualib/skyext.lua:1-81](file://lualib/skyext.lua#L1-L81)
 
 ## 核心组件
@@ -71,11 +71,11 @@ A --> H["skyext<br/>初始化配置与日志"]
 - skyext：在 skynet init 阶段加载配置与日志，确保全局可用。
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-43](file://lualib/http_server/watchdog.lua#L13-L43)
-- [lualib/http_server/agent.lua:20-118](file://lualib/http_server/agent.lua#L20-L118)
-- [lualib/cmd_api.lua:13-43](file://lualib/cmd_api.lua#L13-L43)
-- [lualib/config.lua:6-72](file://lualib/config.lua#L6-L72)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-43](file://lualib/skyext/http_server/watchdog.lua#L13-L43)
+- [lualib/skyext/http_server/agent.lua:20-118](file://lualib/skyext/http_server/agent.lua#L20-L118)
+- [lualib/skyext/cmd_api.lua:13-43](file://lualib/skyext/cmd_api.lua#L13-L43)
+- [lualib/skyext/config.lua:6-72](file://lualib/skyext/config.lua#L6-L72)
 - [lualib/skyext.lua:61-80](file://lualib/skyext.lua#L61-L80)
 
 ## 架构总览
@@ -98,9 +98,9 @@ AG-->>Client : "HTTP 响应"
 ```
 
 图表来源
-- [lualib/http_server/watchdog.lua:13-33](file://lualib/http_server/watchdog.lua#L13-L33)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [lualib/config.lua:40-53](file://lualib/config.lua#L40-L53)
+- [lualib/skyext/http_server/watchdog.lua:13-33](file://lualib/skyext/http_server/watchdog.lua#L13-L33)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [lualib/skyext/config.lua:40-53](file://lualib/skyext/config.lua#L40-L53)
 
 ## 详细组件分析
 
@@ -124,10 +124,10 @@ Wait --> OnConn
 ```
 
 图表来源
-- [lualib/http_server/watchdog.lua:13-33](file://lualib/http_server/watchdog.lua#L13-L33)
+- [lualib/skyext/http_server/watchdog.lua:13-33](file://lualib/skyext/http_server/watchdog.lua#L13-L33)
 
 章节来源
-- [lualib/http_server/watchdog.lua:13-43](file://lualib/http_server/watchdog.lua#L13-L43)
+- [lualib/skyext/http_server/watchdog.lua:13-43](file://lualib/skyext/http_server/watchdog.lua#L13-L43)
 
 ### Agent 工作进程
 - 职责：实现 HTTP 协议解析、请求体大小限制、CORS 头注入、OPTIONS 预检处理、路由匹配、JSON 编解码、静态文件返回、异常捕获与日志。
@@ -157,10 +157,10 @@ Return404 --> End
 ```
 
 图表来源
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
 
 章节来源
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
 
 ### 路由注册与发现
 - 入口：应用侧调用 http_server.register_router(router_name)。
@@ -180,14 +180,14 @@ AG->>AG : "require(name) 并合并到 routers"
 ```
 
 图表来源
-- [lualib/http_server/init.lua:13-20](file://lualib/http_server/init.lua#L13-L20)
-- [lualib/http_server/watchdog.lua:35-39](file://lualib/http_server/watchdog.lua#L35-L39)
-- [lualib/http_server/agent.lua:156-168](file://lualib/http_server/agent.lua#L156-L168)
+- [lualib/skyext/http_server/init.lua:13-20](file://lualib/skyext/http_server/init.lua#L13-L20)
+- [lualib/skyext/http_server/watchdog.lua:35-39](file://lualib/skyext/http_server/watchdog.lua#L35-L39)
+- [lualib/skyext/http_server/agent.lua:156-168](file://lualib/skyext/http_server/agent.lua#L156-L168)
 
 章节来源
-- [lualib/http_server/init.lua:13-20](file://lualib/http_server/init.lua#L13-L20)
-- [lualib/http_server/watchdog.lua:35-39](file://lualib/http_server/watchdog.lua#L35-L39)
-- [lualib/http_server/agent.lua:156-168](file://lualib/http_server/agent.lua#L156-L168)
+- [lualib/skyext/http_server/init.lua:13-20](file://lualib/skyext/http_server/init.lua#L13-L20)
+- [lualib/skyext/http_server/watchdog.lua:35-39](file://lualib/skyext/http_server/watchdog.lua#L35-L39)
+- [lualib/skyext/http_server/agent.lua:156-168](file://lualib/skyext/http_server/agent.lua#L156-L168)
 
 ### 配置管理与启动流程
 - 启动阶段：
@@ -218,19 +218,19 @@ WD-->>WD : "创建 agent 列表并监听端口"
 
 图表来源
 - [lualib/skyext.lua:61-80](file://lualib/skyext.lua#L61-L80)
-- [lualib/config.lua:88-142](file://lualib/config.lua#L88-L142)
-- [etc/core.conf.lua:1-30](file://etc/core.conf.lua#L1-L30)
-- [etc/app/role1.app.lua:1-30](file://etc/app/role1.app.lua#L1-L30)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
-- [lualib/http_server/init.lua:8-11](file://lualib/http_server/init.lua#L8-L11)
+- [lualib/skyext/config.lua:88-142](file://lualib/skyext/config.lua#L88-L142)
+- [example/etc/core.conf.lua:1-30](file://example/etc/core.conf.lua#L1-L30)
+- [example/etc/nodes/role1.app.lua:1-30](file://example/etc/nodes/role1.app.lua#L1-L30)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
+- [lualib/skyext/http_server/init.lua:8-11](file://lualib/skyext/http_server/init.lua#L8-L11)
 
 章节来源
 - [lualib/skyext.lua:61-80](file://lualib/skyext.lua#L61-L80)
-- [lualib/config.lua:88-142](file://lualib/config.lua#L88-L142)
-- [etc/core.conf.lua:1-30](file://etc/core.conf.lua#L1-L30)
-- [etc/app/role1.app.lua:1-30](file://etc/app/role1.app.lua#L1-L30)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
-- [lualib/http_server/init.lua:8-11](file://lualib/http_server/init.lua#L8-L11)
+- [lualib/skyext/config.lua:88-142](file://lualib/skyext/config.lua#L88-L142)
+- [example/etc/core.conf.lua:1-30](file://example/etc/core.conf.lua#L1-L30)
+- [example/etc/nodes/role1.app.lua:1-30](file://example/etc/nodes/role1.app.lua#L1-L30)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
+- [lualib/skyext/http_server/init.lua:8-11](file://lualib/skyext/http_server/init.lua#L8-L11)
 
 ### 服务发现机制（集群）
 - cluster_discovery 提供服务的注册、注销、查询与变更订阅能力。
@@ -252,14 +252,14 @@ ClusterDiscovery --> EventChannel : "订阅 service_change"
 ```
 
 图表来源
-- [lualib/cluster_discovery.lua:11-20](file://lualib/cluster_discovery.lua#L11-L20)
-- [lualib/cluster_discovery.lua:62-76](file://lualib/cluster_discovery.lua#L62-L76)
-- [lualib/cluster_discovery.lua:79-92](file://lualib/cluster_discovery.lua#L79-L92)
+- [lualib/skyext/cluster_discovery.lua:11-20](file://lualib/skyext/cluster_discovery.lua#L11-L20)
+- [lualib/skyext/cluster_discovery.lua:62-76](file://lualib/skyext/cluster_discovery.lua#L62-L76)
+- [lualib/skyext/cluster_discovery.lua:79-92](file://lualib/skyext/cluster_discovery.lua#L79-L92)
 
 章节来源
-- [lualib/cluster_discovery.lua:11-20](file://lualib/cluster_discovery.lua#L11-L20)
-- [lualib/cluster_discovery.lua:62-76](file://lualib/cluster_discovery.lua#L62-L76)
-- [lualib/cluster_discovery.lua:79-92](file://lualib/cluster_discovery.lua#L79-L92)
+- [lualib/skyext/cluster_discovery.lua:11-20](file://lualib/skyext/cluster_discovery.lua#L11-L20)
+- [lualib/skyext/cluster_discovery.lua:62-76](file://lualib/skyext/cluster_discovery.lua#L62-L76)
+- [lualib/skyext/cluster_discovery.lua:79-92](file://lualib/skyext/cluster_discovery.lua#L79-L92)
 
 ## 依赖关系分析
 - 模块耦合：
@@ -285,18 +285,18 @@ AG --> LOG
 ```
 
 图表来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-43](file://lualib/http_server/watchdog.lua#L13-L43)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [lualib/cmd_api.lua:13-43](file://lualib/cmd_api.lua#L13-L43)
-- [lualib/config.lua:6-72](file://lualib/config.lua#L6-L72)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-43](file://lualib/skyext/http_server/watchdog.lua#L13-L43)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [lualib/skyext/cmd_api.lua:13-43](file://lualib/skyext/cmd_api.lua#L13-L43)
+- [lualib/skyext/config.lua:6-72](file://lualib/skyext/config.lua#L6-L72)
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-43](file://lualib/http_server/watchdog.lua#L13-L43)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [lualib/cmd_api.lua:13-43](file://lualib/cmd_api.lua#L13-L43)
-- [lualib/config.lua:6-72](file://lualib/config.lua#L6-L72)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-43](file://lualib/skyext/http_server/watchdog.lua#L13-L43)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [lualib/skyext/cmd_api.lua:13-43](file://lualib/skyext/cmd_api.lua#L13-L43)
+- [lualib/skyext/config.lua:6-72](file://lualib/skyext/config.lua#L6-L72)
 
 ## 性能考虑
 - 并发模型：
@@ -328,9 +328,9 @@ AG --> LOG
   - 对于长时间无响应的连接，可在网关层增加超时与熔断保护。
 
 章节来源
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [lualib/http_server/watchdog.lua:13-43](file://lualib/http_server/watchdog.lua#L13-L43)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [lualib/skyext/http_server/watchdog.lua:13-43](file://lualib/skyext/http_server/watchdog.lua#L13-L43)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 ## 结论
 SkyExt 的 HTTP 服务器采用清晰的分层与职责分离：init 负责编排，watchdog 负责监听与调度，agent 负责协议与路由。配合统一的命令分发与配置加载，实现了可扩展、易维护的 HTTP 服务能力。通过合理的并发配置、请求体限制与缓存策略，可在生产环境中获得稳定高效的性能表现。结合集群发现与健康检查，可进一步支撑横向扩展与高可用部署。
@@ -346,5 +346,5 @@ SkyExt 的 HTTP 服务器采用清晰的分层与职责分离：init 负责编�
   - log_config：日志输出目标与滚动策略。
 
 章节来源
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
-- [lualib/config.lua:40-53](file://lualib/config.lua#L40-L53)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
+- [lualib/skyext/config.lua:40-53](file://lualib/skyext/config.lua#L40-L53)

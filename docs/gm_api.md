@@ -253,7 +253,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=st
 - HTTP Header: `Authorization: Bearer <token>`
 - 请求参数（query 或 body）: `token=<token>`
 
-Token 在 `etc/app/common.app.lua` 中通过 `gm_auth_token` 配置。**未配置 token 时 `/gm/execute` 接口一律拒绝。**
+Token 在 `etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置。**未配置 token 时 `/gm/execute` 接口一律拒绝。**
 
 `/gm/list` 同样需要鉴权。
 
@@ -338,7 +338,7 @@ curl -X POST http://localhost:9092/gm/execute \
 在服务中使用 `gm_api.register()` 注册命令：
 
 ```lua
-local gm_api = require "gm_api"
+local gm_api = require "skyext.gm_api"
 
 local GM_CMD = {}
 

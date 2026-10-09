@@ -4,22 +4,22 @@
 **本文引用的文件**
 - [README.md](file://README.md)
 - [lualib/skyext.lua](file://lualib/skyext.lua)
-- [lualib/http_server/init.lua](file://lualib/http_server/init.lua)
-- [lualib/http_server/agent.lua](file://lualib/http_server/agent.lua)
-- [lualib/http_server/watchdog.lua](file://lualib/http_server/watchdog.lua)
-- [app/account/main.lua](file://app/account/main.lua)
-- [app/account/lualib/account_router.lua](file://app/account/lualib/account_router.lua)
+- [lualib/skyext/http_server/init.lua](file://lualib/skyext/http_server/init.lua)
+- [lualib/skyext/http_server/agent.lua](file://lualib/skyext/http_server/agent.lua)
+- [lualib/skyext/http_server/watchdog.lua](file://lualib/skyext/http_server/watchdog.lua)
+- [example/nodes/account/main.lua](file://example/nodes/account/main.lua)
+- [example/nodes/account/lualib/account_router.lua](file://example/nodes/account/lualib/account_router.lua)
 - [lualib/jwt.lua](file://lualib/jwt.lua)
-- [lualib/sproto_api.lua](file://lualib/sproto_api.lua)
+- [lualib/skyext/sproto_api.lua](file://lualib/skyext/sproto_api.lua)
 - [proto/base.sproto](file://proto/base.sproto)
 - [proto/login.sproto](file://proto/login.sproto)
 - [proto/roleagent/role.sproto](file://proto/roleagent/role.sproto)
-- [app/role/main.lua](file://app/role/main.lua)
+- [example/nodes/role/main.lua](file://example/nodes/role/main.lua)
 - [lualib/rolenode_api.lua](file://lualib/rolenode_api.lua)
 - [lualib/user_db_api.lua](file://lualib/user_db_api.lua)
 - [lualib/role_db_api.lua](file://lualib/role_db_api.lua)
-- [etc/app/common.app.lua](file://etc/app/common.app.lua)
-- [etc/account1.conf.lua](file://etc/account1.conf.lua)
+- [example/etc/nodes/common.app.lua](file://example/etc/nodes/common.app.lua)
+- [example/etc/account1.conf.lua](file://example/etc/account1.conf.lua)
 </cite>
 
 ## 目录
@@ -44,18 +44,18 @@ SkyExt 是基于 skynet 的分布式游戏服务器框架，提供账号服务�
 
 ## 项目结构
 - 应用入口
-  - 账号服务：app/account/main.lua
-  - 角色服务：app/role/main.lua
+  - 账号服务：example/nodes/account/main.lua
+  - 角色服务：example/nodes/role/main.lua
 - HTTP 服务
-  - 启动与路由注册：lualib/http_server/init.lua
-  - 请求处理代理：lualib/http_server/agent.lua
-  - 监听与负载均衡：lualib/http_server/watchdog.lua
+  - 启动与路由注册：lualib/skyext/http_server/init.lua
+  - 请求处理代理：lualib/skyext/http_server/agent.lua
+  - 监听与负载均衡：lualib/skyext/http_server/watchdog.lua
 - 协议与数据
   - sproto 协议定义：proto/base.sproto, proto/login.sproto, proto/roleagent/role.sproto
   - 数据库访问：lualib/user_db_api.lua, lualib/role_db_api.lua
 - 配置
-  - 通用配置：etc/app/common.app.lua
-  - 节点配置：etc/account1.conf.lua
+  - 通用配置：example/etc/nodes/common.app.lua
+  - 节点配置：example/etc/account1.conf.lua
 
 ```mermaid
 graph TB
@@ -69,20 +69,20 @@ SProto --> ProtoDef["协议定义<br/>base/login/role"]
 ```
 
 图表来源
-- [lualib/http_server/watchdog.lua:13-39](file://lualib/http_server/watchdog.lua#L13-L39)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
+- [lualib/skyext/http_server/watchdog.lua:13-39](file://lualib/skyext/http_server/watchdog.lua#L13-L39)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
 - [lualib/jwt.lua:18-67](file://lualib/jwt.lua#L18-L67)
 - [lualib/user_db_api.lua:12-80](file://lualib/user_db_api.lua#L12-L80)
 - [lualib/role_db_api.lua:12-75](file://lualib/role_db_api.lua#L12-L75)
-- [lualib/sproto_api.lua:118-196](file://lualib/sproto_api.lua#L118-L196)
+- [lualib/skyext/sproto_api.lua:118-196](file://lualib/skyext/sproto_api.lua#L118-L196)
 - [proto/base.sproto:1-7](file://proto/base.sproto#L1-L7)
 - [proto/login.sproto:1-26](file://proto/login.sproto#L1-L26)
 - [proto/roleagent/role.sproto:1-13](file://proto/roleagent/role.sproto#L1-L13)
 
 章节来源
 - [README.md:22-38](file://README.md#L22-L38)
-- [etc/account1.conf.lua:1-4](file://etc/account1.conf.lua#L1-L4)
+- [example/etc/account1.conf.lua:1-4](file://example/etc/account1.conf.lua#L1-L4)
 
 ## 核心组件
 - HTTP 服务
@@ -101,12 +101,12 @@ SProto --> ProtoDef["协议定义<br/>base/login/role"]
   - role_db_api：角色表查询与创建，维护 rid 集合。
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-39](file://lualib/http_server/watchdog.lua#L13-L39)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-39](file://lualib/skyext/http_server/watchdog.lua#L13-L39)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
 - [lualib/jwt.lua:18-100](file://lualib/jwt.lua#L18-L100)
-- [lualib/sproto_api.lua:97-159](file://lualib/sproto_api.lua#L97-L159)
+- [lualib/skyext/sproto_api.lua:97-159](file://lualib/skyext/sproto_api.lua#L97-L159)
 - [lualib/user_db_api.lua:12-80](file://lualib/user_db_api.lua#L12-L80)
 - [lualib/role_db_api.lua:12-75](file://lualib/role_db_api.lua#L12-L75)
 
@@ -146,9 +146,9 @@ end
 ```
 
 图表来源
-- [lualib/http_server/watchdog.lua:13-39](file://lualib/http_server/watchdog.lua#L13-L39)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
+- [lualib/skyext/http_server/watchdog.lua:13-39](file://lualib/skyext/http_server/watchdog.lua#L13-L39)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
 - [lualib/jwt.lua:18-67](file://lualib/jwt.lua#L18-L67)
 - [lualib/user_db_api.lua:60-80](file://lualib/user_db_api.lua#L60-L80)
 - [lualib/role_db_api.lua:56-75](file://lualib/role_db_api.lua#L56-L75)
@@ -207,10 +207,10 @@ end
   - 建议：生产环境限制 CORS 来源、启用 HTTPS、对 token 进行签名与有效期控制。
 
 章节来源
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
 - [lualib/jwt.lua:18-67](file://lualib/jwt.lua#L18-L67)
-- [etc/app/common.app.lua:90-100](file://etc/app/common.app.lua#L90-L100)
+- [example/etc/nodes/common.app.lua:90-100](file://example/etc/nodes/common.app.lua#L90-L100)
 
 ### 二进制协议（sproto）
 - 协议加载与分发
@@ -246,13 +246,13 @@ Session --> End
 ```
 
 图表来源
-- [lualib/sproto_api.lua:97-159](file://lualib/sproto_api.lua#L97-L159)
+- [lualib/skyext/sproto_api.lua:97-159](file://lualib/skyext/sproto_api.lua#L97-L159)
 - [proto/base.sproto:1-7](file://proto/base.sproto#L1-L7)
 - [proto/login.sproto:1-26](file://proto/login.sproto#L1-L26)
 - [proto/roleagent/role.sproto:1-13](file://proto/roleagent/role.sproto#L1-L13)
 
 章节来源
-- [lualib/sproto_api.lua:118-196](file://lualib/sproto_api.lua#L118-L196)
+- [lualib/skyext/sproto_api.lua:118-196](file://lualib/skyext/sproto_api.lua#L118-L196)
 - [proto/base.sproto:1-7](file://proto/base.sproto#L1-L7)
 - [proto/login.sproto:1-26](file://proto/login.sproto#L1-L26)
 - [proto/roleagent/role.sproto:1-13](file://proto/roleagent/role.sproto#L1-L13)
@@ -281,13 +281,13 @@ Note over WD,AG : "socket 到达时轮询分发给 agent"
 ```
 
 图表来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-39](file://lualib/http_server/watchdog.lua#L13-L39)
-- [app/account/main.lua:7-16](file://app/account/main.lua#L7-L16)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-39](file://lualib/skyext/http_server/watchdog.lua#L13-L39)
+- [example/nodes/account/main.lua:7-16](file://example/nodes/account/main.lua#L7-L16)
 
 章节来源
-- [lualib/http_server/watchdog.lua:13-39](file://lualib/http_server/watchdog.lua#L13-L39)
-- [app/account/main.lua:7-16](file://app/account/main.lua#L7-L16)
+- [lualib/skyext/http_server/watchdog.lua:13-39](file://lualib/skyext/http_server/watchdog.lua#L13-L39)
+- [example/nodes/account/main.lua:7-16](file://example/nodes/account/main.lua#L7-L16)
 - [lualib/rolenode_api.lua:7-10](file://lualib/rolenode_api.lua#L7-L10)
 
 ### 数据流与持久化
@@ -313,7 +313,7 @@ I --> J["返回 {code, roles}"]
 ```
 
 图表来源
-- [app/account/lualib/account_router.lua:24-59](file://app/account/lualib/account_router.lua#L24-L59)
+- [example/nodes/account/lualib/account_router.lua:24-59](file://example/nodes/account/lualib/account_router.lua#L24-L59)
 - [lualib/user_db_api.lua:12-26](file://lualib/user_db_api.lua#L12-L26)
 - [lualib/role_db_api.lua:12-42](file://lualib/role_db_api.lua#L12-L42)
 - [lualib/rolenode_api.lua:7-10](file://lualib/rolenode_api.lua#L7-L10)
@@ -337,18 +337,18 @@ SProto --> Events["event_channel_api"]
 ```
 
 图表来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/watchdog.lua:13-39](file://lualib/http_server/watchdog.lua#L13-L39)
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/watchdog.lua:13-39](file://lualib/skyext/http_server/watchdog.lua#L13-L39)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
 - [lualib/jwt.lua:18-100](file://lualib/jwt.lua#L18-L100)
 - [lualib/user_db_api.lua:12-80](file://lualib/user_db_api.lua#L12-L80)
 - [lualib/role_db_api.lua:12-75](file://lualib/role_db_api.lua#L12-L75)
-- [lualib/sproto_api.lua:118-196](file://lualib/sproto_api.lua#L118-L196)
+- [lualib/skyext/sproto_api.lua:118-196](file://lualib/skyext/sproto_api.lua#L118-L196)
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/sproto_api.lua:118-196](file://lualib/sproto_api.lua#L118-L196)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/sproto_api.lua:118-196](file://lualib/skyext/sproto_api.lua#L118-L196)
 
 ## 性能考虑
 - HTTP 并发
@@ -381,8 +381,8 @@ SProto --> Events["event_channel_api"]
   - 使用 GM 工具或控制台命令查看服务状态。
 
 章节来源
-- [etc/app/common.app.lua:1-19](file://etc/app/common.app.lua#L1-L19)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
+- [example/etc/nodes/common.app.lua:1-19](file://example/etc/nodes/common.app.lua#L1-L19)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
 - [lualib/jwt.lua:18-67](file://lualib/jwt.lua#L18-L67)
 
 ## 结论
@@ -405,8 +405,8 @@ SkyExt 提供了清晰的 HTTP API 与高效的 sproto 二进制协议层，结�
   - start：主脚本入口
 
 章节来源
-- [etc/app/common.app.lua:21-100](file://etc/app/common.app.lua#L21-L100)
-- [etc/account1.conf.lua:1-4](file://etc/account1.conf.lua#L1-L4)
+- [example/etc/nodes/common.app.lua:21-100](file://example/etc/nodes/common.app.lua#L21-L100)
+- [example/etc/account1.conf.lua:1-4](file://example/etc/account1.conf.lua#L1-L4)
 
 ### 客户端实现指南
 - HTTP

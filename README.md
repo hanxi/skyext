@@ -9,17 +9,32 @@
 ## ✨ 特性
 
 - **分布式架构**: 基于 skynet 实现的高性能分布式游戏服务器
+- **引擎/游戏分层**: 引擎层（`lualib/skyext/`、`service/`）与游戏层（`example/`）清晰分离
 - **微服务设计**: 支持 account 节点和 role 节点分离部署
 - **ORM 支持**: 内置 ORM 框架，支持 MongoDB 数据持久化
 - **协议管理**: 使用 sproto 协议，支持协议版本校验
 - **服务发现**: 基于 etcd 的服务注册与发现
-- **JWT 认证**: 支持 JWT token 登录验证
+- **JWT 认证**: 支持 JWT token 登录验证（基于 OpenSSL HMAC）
 - **日志系统**: 完善的日志记录和管理系统
+- **TLS 支持**: skynet 编译时启用 TLS 模块（ltls）
 - [ ] **热更新**: 支持代码热更新和配置热加载
 - [ ] **监控系统**: 完善监控告警系统
 - [ ] **管理后台**: 完善管理后台，包括火焰图分析
 
 ## 🏗️ 架构设计
+
+### 引擎层与游戏层
+
+skyext 采用引擎/游戏两层架构：
+
+- **引擎层**（skyext 仓库根目录）：提供通用的游戏服务器基础设施
+  - `lualib/skyext/` — 引擎 Lua 库，统一使用 `skyext.*` 命名空间
+  - `service/` — 引擎服务（GM、热更、日志、集群发现、MongoDB 等）
+  - `public/` — 引擎静态资源（GM 管理面板等）
+- **游戏层**（`example/` 目录）：基于引擎开发的具体游戏逻辑
+  - `example/nodes/` — 各节点入口（account、role、robot）
+  - `example/lualib/` — 游戏业务 Lua 库
+  - `example/etc/` — 游戏配置文件
 
 ### 节点类型
 
@@ -29,19 +44,22 @@
 
 ### 核心模块
 
-- **ORM 系统**: `lualib/orm/` - 对象关系映射，支持数据版本管理
-- **服务发现**: `lualib/cluster_discovery.lua` - 基于 etcd 的集群发现
-- **数据库管理**: `lualib/dbmgr.lua` - MongoDB 连接池管理
-- **协议处理**: `lualib/sproto_api.lua` - sproto 协议编解码
-- **HTTP 服务**: `lualib/http_server/` - HTTP 服务器实现
-- **分布式锁**: `lualib/distributed_lock.lua` - 基于 etcd 的分布式锁
+- **ORM 系统**: `lualib/orm/` — 对象关系映射，支持数据版本管理
+- **服务发现**: `lualib/skyext/cluster_discovery.lua` — 基于 etcd 的集群发现
+- **数据库管理**: `lualib/skyext/dbmgr.lua` — MongoDB 连接池管理
+- **协议处理**: `lualib/skyext/sproto_api.lua` — sproto 协议编解码
+- **HTTP 服务**: `lualib/skyext/http_server/` — HTTP 服务器实现
+- **分布式锁**: `lualib/skyext/distributed_lock.lua` — 基于 etcd 的分布式锁
+- **配置管理**: `lualib/skyext/config.lua` — 统一配置读取接口
+- **GM 系统**: `lualib/skyext/gm_api.lua` + `lualib/skyext/gm_router.lua` — GM 命令注册与 HTTP 路由
+- **日志系统**: `lualib/skyext/log/` — 结构化日志（控制台、文件、服务间通信）
 
 ## 📋 依赖环境
 
-- **skynet**: 游戏服务器框架
+- **skynet**: 游戏服务器框架（含 TLS 支持）
 - **etcd**: 服务发现和配置管理
 - **MongoDB**: 数据持久化存储
-- **libsodium**: 加密库
+- **OpenSSL**: 加密库（HMAC-SHA256/SHA512、base64url）
 - **lua-cjson**: JSON 处理
 - **sproto**: 协议序列化
 
@@ -57,7 +75,8 @@ cd skyext
 # 初始化子模块
 make init
 
-# 编译项目
+# 编译项目（在 example/ 目录下）
+cd example
 make build
 ```
 
@@ -66,67 +85,110 @@ make build
 启动 etcd 集群：
 
 ```bash
-cd tools/etcd
+cd example/tools/etcd
 docker compose up -d
 ```
 
 启动 MongoDB：
 
 ```bash
-cd tools/mongodb
+cd example/tools/mongodb
 docker compose up -d
 ```
 
 ### 3. 生成协议和模式文件
 
 ```bash
+cd example
+
 # 生成协议文件
 make proto
 
 # 生成 ORM 模式文件
 make schema
-
-# 生成代码
-make autocode
 ```
 
 ### 4. 启动游戏服务器
 
 ```bash
+# 在 skyext 根目录下启动（root="./" 指向根目录）
+
 # 启动 account 节点（支持多实例）
-./bin/skynet etc/account1.conf.lua
-./bin/skynet etc/account2.conf.lua
+./bin/skynet example/etc/account1.conf.lua
+./bin/skynet example/etc/account2.conf.lua
 
 # 启动 role 节点（支持多实例）
-./bin/skynet etc/role1.conf.lua
-./bin/skynet etc/role2.conf.lua
+./bin/skynet example/etc/role1.conf.lua
+./bin/skynet example/etc/role2.conf.lua
 ```
 
 ### 5. 启动机器人测试
 
 ```bash
 # 启动机器人客户端进行测试
-./bin/skynet etc/robot.conf.lua
+./bin/skynet example/etc/robot.conf.lua
 ```
 
 ## 📁 目录结构
 
 ```
 skyext/
-├── app/                   # 应用程序入口
-│   ├── account/           # 账号服务
-│   ├── role/              # 角色服务
-│   └── robot/             # 机器人客户端
-├── etc/                   # 配置文件
-├── lualib/                # Lua 库文件
+├── lualib/                # 引擎 Lua 库
+│   ├── skyext/            # 引擎模块（require "skyext.*"）
+│   │   ├── init.lua       # 引擎引导模块
+│   │   ├── config.lua     # 配置管理
+│   │   ├── log/           # 日志系统
+│   │   ├── http_server/   # HTTP 服务器
+│   │   ├── entity/        # 实体系统
+│   │   ├── gm_api.lua     # GM 命令注册
+│   │   ├── gm_router.lua  # GM HTTP 路由
+│   │   ├── dbmgr.lua      # 数据库管理
+│   │   ├── etcd.lua       # etcd 客户端
+│   │   └── util/          # 工具库
 │   ├── orm/               # ORM 框架
-│   ├── http_server/       # HTTP 服务器
-│   └── util/              # 工具库
-├── proto/                 # 协议定义文件
-├── schema/                # 数据模式定义
-├── service/               # 服务模块
-├── tools/                 # 工具脚本
-└── test/                  # 测试用例
+│   └── loader.lua         # 服务加载器
+├── service/               # 引擎服务
+│   ├── gm.lua             # GM 调度服务
+│   ├── gm_sys.lua         # GM 系统命令
+│   ├── hotfix.lua         # 热更新服务
+│   ├── cluster_discovery.lua  # 集群发现
+│   ├── mongo_conn.lua     # MongoDB 连接
+│   ├── entity_agent.lua   # 实体代理
+│   └── logger/            # 日志服务
+├── public/                # 引擎静态资源
+│   └── gm.html            # GM Web 管理面板
+├── lualib-src/            # 引擎 C 模块源码
+│   └── crypto.c           # 加密模块（OpenSSL）
+├── service-src/           # 引擎 C 服务源码
+├── example/               # 示例游戏项目
+│   ├── nodes/             # 节点入口
+│   │   ├── account/       # 账号服务
+│   │   ├── role/          # 角色服务
+│   │   └── robot/         # 机器人客户端
+│   ├── etc/               # 游戏配置文件
+│   │   ├── core.conf.lua  # 核心配置（含搜索路径）
+│   │   ├── paths.conf.lua # Lua 搜索路径定义
+│   │   ├── nodes/         # 节点业务配置
+│   │   ├── account*.conf.lua
+│   │   └── role*.conf.lua
+│   ├── lualib/            # 游戏业务 Lua 库
+│   ├── proto/             # 协议定义文件
+│   ├── schema/            # 数据模式定义
+│   ├── hotfix/            # 热更包
+│   ├── res/               # 游戏资源（策划配表等）
+│   ├── test/              # 测试用例
+│   ├── tools/             # 工具脚本
+│   └── Makefile           # 游戏构建入口
+├── build.mk               # 引擎构建规则
+├── Makefile               # 顶层 Makefile
+├── skynet/                # skynet 框架（子模块）
+├── 3rd/                   # 第三方库（子模块）
+│   ├── sproto-orm/
+│   ├── lua-cjson/
+│   ├── binaryheap.lua/
+│   └── luafilesystem/
+├── docs/                  # 文档
+└── tools/                 # 引擎工具
 ```
 
 ## ⚙️ 配置说明
@@ -135,16 +197,16 @@ skyext/
 
 项目采用分层配置设计，配置文件分为两个层级：
 
-1. **节点配置文件**：位于 `etc/` 目录下，定义节点启动参数
-   - `etc/account*.conf.lua`: Account 节点配置文件
-   - `etc/role*.conf.lua`: Role 节点配置文件
-   - `etc/core.conf.lua`: 核心配置文件，包含 skynet 框架基础配置
+1. **节点配置文件**：位于 `example/etc/` 目录下，定义节点启动参数
+   - `example/etc/account*.conf.lua`: Account 节点配置文件
+   - `example/etc/role*.conf.lua`: Role 节点配置文件
+   - `example/etc/core.conf.lua`: 核心配置文件，包含 skynet 框架基础配置和搜索路径
 
-2. **应用配置文件**：位于 `etc/app/` 目录下，定义具体业务配置
-   - `etc/app/common.app.lua`: 通用业务配置（日志、数据库、etcd 等）
-   - `etc/app/account*.app.lua`: Account 节点业务配置
-   - `etc/app/role*.app.lua`: Role 节点业务配置
-   - `etc/app/robot.app.lua`: 机器人客户端业务配置
+2. **应用配置文件**：位于 `example/etc/nodes/` 目录下，定义具体业务配置
+   - `example/etc/nodes/common.app.lua`: 通用业务配置（日志、数据库、etcd 等）
+   - `example/etc/nodes/account*.app.lua`: Account 节点业务配置
+   - `example/etc/nodes/role*.app.lua`: Role 节点业务配置
+   - `example/etc/nodes/robot.app.lua`: 机器人客户端业务配置
 
 ### 节点配置文件
 
@@ -155,9 +217,9 @@ skyext/
 - 线程数等基础参数
 - 应用配置文件路径
 
-示例 (`etc/account1.conf.lua`)：
+示例 (`example/etc/account1.conf.lua`)：
 ```lua
-app_config_path = "etc/app/account1.app.lua"
+app_config_path = "etc/nodes/account1.app.lua"
 start = "account" -- 主脚本 account/main.lua
 include "core.conf.lua" -- 包含核心配置
 ```
@@ -170,7 +232,7 @@ include "core.conf.lua" -- 包含核心配置
 - boolean: 布尔类型
 - table: 表类型（复杂配置结构）
 
-示例 (`etc/app/common.app.lua`)：
+示例 (`example/etc/nodes/common.app.lua`)：
 ```lua
 -- 日志配置
 log_level = 4 -- 日志等级 DEBUG = 4, INFO = 3, WARN = 2, ERROR = 1, FATAL = 0
@@ -192,7 +254,7 @@ max_role_count = 5 -- 最大角色数量
 
 ### config 配置模块
 
-配置模块 (`lualib/config.lua`) 提供统一的配置读取接口：
+配置模块 (`lualib/skyext/config.lua`) 提供统一的配置读取接口：
 - `config.get(key)`: 获取字符串类型配置
 - `config.get_boolean(key)`: 获取布尔类型配置
 - `config.get_number(key)`: 获取数值类型配置
@@ -203,14 +265,19 @@ max_role_count = 5 -- 最大角色数量
 ## 🔧 开发工具
 
 ```bash
+cd example
+
 # 清理编译文件
 make clean
 
-# 完全清理
-make cleanall
-
 # 打包发布
 make dist
+
+# 格式化代码
+make format
+
+# 代码检查
+make lint
 
 # 查看所有可用命令
 make help
@@ -228,8 +295,8 @@ make help
 
 项目采用模块化设计，可以轻松扩展新功能：
 
-- 在 `schema/` 目录定义数据结构
-- 在 `proto/roleagent/` 目录定义协议
+- 在 `example/schema/` 目录定义数据结构
+- 在 `example/proto/roleagent/` 目录定义协议
 - 使用 `make autocode` 自动生成模块代码
 
 ### 计划实现功能
@@ -252,6 +319,8 @@ make help
 
 ## 📚 文档
 
+- [GM 命令接口](docs/gm_api.md) - GM 系统 HTTP API 文档
+- [热更新系统](docs/hotfix.md) - 热更新操作与开发指南
 - [项目 Wiki](https://github.com/hanxi/skyext/wiki) - 详细开发文档
 - [Skynet 官方文档](https://github.com/cloudwu/skynet/wiki) - Skynet 框架文档
 

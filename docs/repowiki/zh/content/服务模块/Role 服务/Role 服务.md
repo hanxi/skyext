@@ -2,18 +2,18 @@
 
 <cite>
 **本文引用的文件**
-- [app/role/main.lua](file://app/role/main.lua)
-- [app/role/watchdog.lua](file://app/role/watchdog.lua)
-- [app/role/login/main.lua](file://app/role/login/main.lua)
-- [app/role/roleagentmgr.lua](file://app/role/roleagentmgr.lua)
-- [app/role/roleagent/main.lua](file://app/role/roleagent/main.lua)
-- [app/role/roleagent/global.lua](file://app/role/roleagent/global.lua)
-- [app/role/roleagent/client.lua](file://app/role/roleagent/client.lua)
-- [app/role/roleagent/rolemgr.lua](file://app/role/roleagent/rolemgr.lua)
-- [app/role/roleagent/modules/init.lua](file://app/role/roleagent/modules/init.lua)
-- [app/role/roleagent/modules/role/init.lua](file://app/role/roleagent/modules/role/init.lua)
-- [app/role/roleagent/modules/bag/init.lua](file://app/role/roleagent/modules/bag/init.lua)
-- [app/role/roleagent/modules/mail/init.lua](file://app/role/roleagent/modules/mail/init.lua)
+- [example/nodes/role/main.lua](file://example/nodes/role/main.lua)
+- [example/nodes/role/watchdog.lua](file://example/nodes/role/watchdog.lua)
+- [example/nodes/role/login/main.lua](file://example/nodes/role/login/main.lua)
+- [example/nodes/role/roleagentmgr.lua](file://example/nodes/role/roleagentmgr.lua)
+- [example/nodes/role/roleagent/main.lua](file://example/nodes/role/roleagent/main.lua)
+- [example/nodes/role/roleagent/global.lua](file://example/nodes/role/roleagent/global.lua)
+- [example/nodes/role/roleagent/client.lua](file://example/nodes/role/roleagent/client.lua)
+- [example/nodes/role/roleagent/rolemgr.lua](file://example/nodes/role/roleagent/rolemgr.lua)
+- [example/nodes/role/roleagent/modules/init.lua](file://example/nodes/role/roleagent/modules/init.lua)
+- [example/nodes/role/roleagent/modules/role/init.lua](file://example/nodes/role/roleagent/modules/role/init.lua)
+- [example/nodes/role/roleagent/modules/bag/init.lua](file://example/nodes/role/roleagent/modules/bag/init.lua)
+- [example/nodes/role/roleagent/modules/mail/init.lua](file://example/nodes/role/roleagent/modules/mail/init.lua)
 - [lualib/rolenode_api.lua](file://lualib/rolenode_api.lua)
 - [proto/base.sproto](file://proto/base.sproto)
 - [proto/roleagent/role.sproto](file://proto/roleagent/role.sproto)
@@ -64,17 +64,17 @@ RoleAgent --> DB["数据库持久化"]
 ```
 
 图表来源
-- [app/role/watchdog.lua:12-62](file://app/role/watchdog.lua#L12-L62)
-- [app/role/login/main.lua:15-35](file://app/role/login/main.lua#L15-L35)
-- [app/role/roleagentmgr.lua:17-30](file://app/role/roleagentmgr.lua#L17-L30)
-- [app/role/roleagent/main.lua:93-116](file://app/role/roleagent/main.lua#L93-L116)
+- [example/nodes/role/watchdog.lua:12-62](file://example/nodes/role/watchdog.lua#L12-L62)
+- [example/nodes/role/login/main.lua:15-35](file://example/nodes/role/login/main.lua#L15-L35)
+- [example/nodes/role/roleagentmgr.lua:17-30](file://example/nodes/role/roleagentmgr.lua#L17-L30)
+- [example/nodes/role/roleagent/main.lua:93-116](file://example/nodes/role/roleagent/main.lua#L93-L116)
 
 章节来源
-- [app/role/main.lua:6-24](file://app/role/main.lua#L6-L24)
-- [app/role/watchdog.lua:58-81](file://app/role/watchdog.lua#L58-L81)
-- [app/role/login/main.lua:15-35](file://app/role/login/main.lua#L15-L35)
-- [app/role/roleagentmgr.lua:17-30](file://app/role/roleagentmgr.lua#L17-L30)
-- [app/role/roleagent/main.lua:93-116](file://app/role/roleagent/main.lua#L93-L116)
+- [example/nodes/role/main.lua:6-24](file://example/nodes/role/main.lua#L6-L24)
+- [example/nodes/role/watchdog.lua:58-81](file://example/nodes/role/watchdog.lua#L58-L81)
+- [example/nodes/role/login/main.lua:15-35](file://example/nodes/role/login/main.lua#L15-L35)
+- [example/nodes/role/roleagentmgr.lua:17-30](file://example/nodes/role/roleagentmgr.lua#L17-L30)
+- [example/nodes/role/roleagent/main.lua:93-116](file://example/nodes/role/roleagent/main.lua#L93-L116)
 
 ## 核心组件
 - watchdog：监听端口，接收新连接，转发到登录；登录后转发到角色代理；管理客户端关闭与错误。
@@ -86,12 +86,12 @@ RoleAgent --> DB["数据库持久化"]
 - 协议与模式：base.sproto 定义包头；role.sproto 定义角色登录信息；schema 定义持久化数据结构。
 
 章节来源
-- [app/role/watchdog.lua:12-73](file://app/role/watchdog.lua#L12-L73)
-- [app/role/login/main.lua:15-35](file://app/role/login/main.lua#L15-L35)
-- [app/role/roleagentmgr.lua:17-48](file://app/role/roleagentmgr.lua#L17-L48)
-- [app/role/roleagent/main.lua:23-116](file://app/role/roleagent/main.lua#L23-L116)
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
-- [app/role/roleagent/modules/init.lua:12-34](file://app/role/roleagent/modules/init.lua#L12-L34)
+- [example/nodes/role/watchdog.lua:12-73](file://example/nodes/role/watchdog.lua#L12-L73)
+- [example/nodes/role/login/main.lua:15-35](file://example/nodes/role/login/main.lua#L15-L35)
+- [example/nodes/role/roleagentmgr.lua:17-48](file://example/nodes/role/roleagentmgr.lua#L17-L48)
+- [example/nodes/role/roleagent/main.lua:23-116](file://example/nodes/role/roleagent/main.lua#L23-L116)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/roleagent/modules/init.lua:12-34](file://example/nodes/role/roleagent/modules/init.lua#L12-L34)
 - [proto/base.sproto:1-7](file://proto/base.sproto#L1-L7)
 - [proto/roleagent/role.sproto:1-13](file://proto/roleagent/role.sproto#L1-L13)
 - [schema/role.sproto:1-24](file://schema/role.sproto#L1-L24)
@@ -128,11 +128,11 @@ A-->>C : 绑定成功/失败
 ```
 
 图表来源
-- [app/role/watchdog.lua:12-22](file://app/role/watchdog.lua#L12-L22)
-- [app/role/login/main.lua:21-25](file://app/role/login/main.lua#L21-L25)
-- [app/role/roleagentmgr.lua:17-30](file://app/role/roleagentmgr.lua#L17-L30)
-- [app/role/roleagent/main.lua:36-80](file://app/role/roleagent/main.lua#L36-L80)
-- [app/role/roleagent/rolemgr.lua:15-25](file://app/role/roleagent/rolemgr.lua#L15-L25)
+- [example/nodes/role/watchdog.lua:12-22](file://example/nodes/role/watchdog.lua#L12-L22)
+- [example/nodes/role/login/main.lua:21-25](file://example/nodes/role/login/main.lua#L21-L25)
+- [example/nodes/role/roleagentmgr.lua:17-30](file://example/nodes/role/roleagentmgr.lua#L17-L30)
+- [example/nodes/role/roleagent/main.lua:36-80](file://example/nodes/role/roleagent/main.lua#L36-L80)
+- [example/nodes/role/roleagent/rolemgr.lua:15-25](file://example/nodes/role/roleagent/rolemgr.lua#L15-L25)
 
 ## 详细组件分析
 
@@ -160,12 +160,12 @@ A-->>A : 绑定完成
 ```
 
 图表来源
-- [app/role/roleagent/main.lua:36-80](file://app/role/roleagent/main.lua#L36-L80)
+- [example/nodes/role/roleagent/main.lua:36-80](file://example/nodes/role/roleagent/main.lua#L36-L80)
 - [lualib/rolenode_api.lua:7-13](file://lualib/rolenode_api.lua#L7-L13)
 
 章节来源
-- [app/role/roleagent/main.lua:15-116](file://app/role/roleagent/main.lua#L15-L116)
-- [app/role/roleagentmgr.lua:17-48](file://app/role/roleagentmgr.lua#L17-L48)
+- [example/nodes/role/roleagent/main.lua:15-116](file://example/nodes/role/roleagent/main.lua#L15-L116)
+- [example/nodes/role/roleagentmgr.lua:17-48](file://example/nodes/role/roleagentmgr.lua#L17-L48)
 - [lualib/rolenode_api.lua:1-17](file://lualib/rolenode_api.lua#L1-L17)
 
 ### 角色生命周期管理
@@ -191,14 +191,14 @@ Save --> End(["结束"])
 ```
 
 图表来源
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
-- [app/role/roleagent/modules/role/init.lua:21-38](file://app/role/roleagent/modules/role/init.lua#L21-L38)
-- [app/role/roleagent/client.lua:20-43](file://app/role/roleagent/client.lua#L20-L43)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/roleagent/modules/role/init.lua:21-38](file://example/nodes/role/roleagent/modules/role/init.lua#L21-L38)
+- [example/nodes/role/roleagent/client.lua:20-43](file://example/nodes/role/roleagent/client.lua#L20-L43)
 
 章节来源
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
-- [app/role/roleagent/modules/role/init.lua:9-38](file://app/role/roleagent/modules/role/init.lua#L9-L38)
-- [app/role/roleagent/client.lua:20-43](file://app/role/roleagent/client.lua#L20-L43)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/roleagent/modules/role/init.lua:9-38](file://example/nodes/role/roleagent/modules/role/init.lua#L9-L38)
+- [example/nodes/role/roleagent/client.lua:20-43](file://example/nodes/role/roleagent/client.lua#L20-L43)
 
 ### 游戏会话管理与状态同步
 - 会话管理：watchdog 维护客户端 fd 与转发服务映射；login 与 roleagent 分别在不同阶段接管 fd。
@@ -206,9 +206,9 @@ Save --> End(["结束"])
 - 跨节点同步：分布式锁确保同一角色在同一时刻仅由一个角色代理持有，避免并发冲突。
 
 章节来源
-- [app/role/watchdog.lua:12-73](file://app/role/watchdog.lua#L12-L73)
-- [app/role/roleagent/main.lua:25-80](file://app/role/roleagent/main.lua#L25-L80)
-- [app/role/roleagent/modules/role/init.lua:21-38](file://app/role/roleagent/modules/role/init.lua#L21-L38)
+- [example/nodes/role/watchdog.lua:12-73](file://example/nodes/role/watchdog.lua#L12-L73)
+- [example/nodes/role/roleagent/main.lua:25-80](file://example/nodes/role/roleagent/main.lua#L25-L80)
+- [example/nodes/role/roleagent/modules/role/init.lua:21-38](file://example/nodes/role/roleagent/modules/role/init.lua#L21-L38)
 
 ### 数据持久化机制
 - 角色数据模型：role.sproto 定义角色基础字段与模块列表；bag.sproto 定义背包资源结构。
@@ -218,8 +218,8 @@ Save --> End(["结束"])
 章节来源
 - [schema/role.sproto:1-24](file://schema/role.sproto#L1-L24)
 - [schema/bag.sproto:1-16](file://schema/bag.sproto#L1-L16)
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
-- [app/role/roleagent/modules/init.lua:12-34](file://app/role/roleagent/modules/init.lua#L12-L34)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/roleagent/modules/init.lua:12-34](file://example/nodes/role/roleagent/modules/init.lua#L12-L34)
 
 ### 角色模块系统
 - 模块初始化：modules.init 注册“role”、“mail”、“bag”模块，并在角色加载时初始化模块数据。
@@ -245,15 +245,15 @@ RoleModule <|-- MailModule : "扩展"
 ```
 
 图表来源
-- [app/role/roleagent/modules/role/init.lua:9-38](file://app/role/roleagent/modules/role/init.lua#L9-L38)
-- [app/role/roleagent/modules/bag/init.lua:6-23](file://app/role/roleagent/modules/bag/init.lua#L6-L23)
-- [app/role/roleagent/modules/mail/init.lua:6-13](file://app/role/roleagent/modules/mail/init.lua#L6-L13)
+- [example/nodes/role/roleagent/modules/role/init.lua:9-38](file://example/nodes/role/roleagent/modules/role/init.lua#L9-L38)
+- [example/nodes/role/roleagent/modules/bag/init.lua:6-23](file://example/nodes/role/roleagent/modules/bag/init.lua#L6-L23)
+- [example/nodes/role/roleagent/modules/mail/init.lua:6-13](file://example/nodes/role/roleagent/modules/mail/init.lua#L6-L13)
 
 章节来源
-- [app/role/roleagent/modules/init.lua:12-34](file://app/role/roleagent/modules/init.lua#L12-L34)
-- [app/role/roleagent/modules/role/init.lua:9-38](file://app/role/roleagent/modules/role/init.lua#L9-L38)
-- [app/role/roleagent/modules/bag/init.lua:6-23](file://app/role/roleagent/modules/bag/init.lua#L6-L23)
-- [app/role/roleagent/modules/mail/init.lua:6-13](file://app/role/roleagent/modules/mail/init.lua#L6-L13)
+- [example/nodes/role/roleagent/modules/init.lua:12-34](file://example/nodes/role/roleagent/modules/init.lua#L12-L34)
+- [example/nodes/role/roleagent/modules/role/init.lua:9-38](file://example/nodes/role/roleagent/modules/role/init.lua#L9-L38)
+- [example/nodes/role/roleagent/modules/bag/init.lua:6-23](file://example/nodes/role/roleagent/modules/bag/init.lua#L6-L23)
+- [example/nodes/role/roleagent/modules/mail/init.lua:6-13](file://example/nodes/role/roleagent/modules/mail/init.lua#L6-L13)
 
 ### 角色间通信协议与消息格式
 - 包结构：base.sproto 定义通用包头（类型、会话、用户数据）。
@@ -263,7 +263,7 @@ RoleModule <|-- MailModule : "扩展"
 章节来源
 - [proto/base.sproto:1-7](file://proto/base.sproto#L1-L7)
 - [proto/roleagent/role.sproto:1-13](file://proto/roleagent/role.sproto#L1-L13)
-- [app/role/roleagent/modules/init.lua:12-16](file://app/role/roleagent/modules/init.lua#L12-L16)
+- [example/nodes/role/roleagent/modules/init.lua:12-16](file://example/nodes/role/roleagent/modules/init.lua#L12-L16)
 
 ## 依赖关系分析
 - watchdog 依赖 login 与 roleagentmgr，负责连接生命周期管理。
@@ -287,18 +287,18 @@ RoleMgr --> DB["dbmgr"]
 ```
 
 图表来源
-- [app/role/watchdog.lua:58-81](file://app/role/watchdog.lua#L58-L81)
-- [app/role/login/main.lua:15-35](file://app/role/login/main.lua#L15-L35)
-- [app/role/roleagentmgr.lua:17-48](file://app/role/roleagentmgr.lua#L17-L48)
-- [app/role/roleagent/main.lua:93-116](file://app/role/roleagent/main.lua#L93-L116)
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/watchdog.lua:58-81](file://example/nodes/role/watchdog.lua#L58-L81)
+- [example/nodes/role/login/main.lua:15-35](file://example/nodes/role/login/main.lua#L15-L35)
+- [example/nodes/role/roleagentmgr.lua:17-48](file://example/nodes/role/roleagentmgr.lua#L17-L48)
+- [example/nodes/role/roleagent/main.lua:93-116](file://example/nodes/role/roleagent/main.lua#L93-L116)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
 
 章节来源
-- [app/role/watchdog.lua:58-81](file://app/role/watchdog.lua#L58-L81)
-- [app/role/login/main.lua:15-35](file://app/role/login/main.lua#L15-L35)
-- [app/role/roleagentmgr.lua:17-48](file://app/role/roleagentmgr.lua#L17-L48)
-- [app/role/roleagent/main.lua:93-116](file://app/role/roleagent/main.lua#L93-L116)
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/watchdog.lua:58-81](file://example/nodes/role/watchdog.lua#L58-L81)
+- [example/nodes/role/login/main.lua:15-35](file://example/nodes/role/login/main.lua#L15-L35)
+- [example/nodes/role/roleagentmgr.lua:17-48](file://example/nodes/role/roleagentmgr.lua#L17-L48)
+- [example/nodes/role/roleagent/main.lua:93-116](file://example/nodes/role/roleagent/main.lua#L93-L116)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
 
 ## 性能考虑
 - 角色对象缓存：rolemgr 维护 g_roles 表，避免重复加载，降低数据库压力。
@@ -308,9 +308,9 @@ RoleMgr --> DB["dbmgr"]
 - 连接复用：watchdog 与 login 分离，减少单点瓶颈。
 
 章节来源
-- [app/role/roleagent/rolemgr.lua:15-56](file://app/role/roleagent/rolemgr.lua#L15-L56)
-- [app/role/roleagent/modules/role/init.lua:21-38](file://app/role/roleagent/modules/role/init.lua#L21-L38)
-- [app/role/roleagent/main.lua:25-80](file://app/role/roleagent/main.lua#L25-L80)
+- [example/nodes/role/roleagent/rolemgr.lua:15-56](file://example/nodes/role/roleagent/rolemgr.lua#L15-L56)
+- [example/nodes/role/roleagent/modules/role/init.lua:21-38](file://example/nodes/role/roleagent/modules/role/init.lua#L21-L38)
+- [example/nodes/role/roleagent/main.lua:25-80](file://example/nodes/role/roleagent/main.lua#L25-L80)
 
 ## 故障恢复与一致性
 - 锁过期回调：分布式锁过期时自动卸载角色，防止僵尸角色占用资源。
@@ -319,8 +319,8 @@ RoleMgr --> DB["dbmgr"]
 - 回退机制：多次尝试获取锁失败时返回明确错误码，便于上层重试或提示。
 
 章节来源
-- [app/role/roleagent/main.lua:25-80](file://app/role/roleagent/main.lua#L25-L80)
-- [app/role/watchdog.lua:44-47](file://app/role/watchdog.lua#L44-L47)
+- [example/nodes/role/roleagent/main.lua:25-80](file://example/nodes/role/roleagent/main.lua#L25-L80)
+- [example/nodes/role/watchdog.lua:44-47](file://example/nodes/role/watchdog.lua#L44-L47)
 
 ## API 调用示例与最佳实践
 - 登录流程
@@ -336,10 +336,10 @@ RoleMgr --> DB["dbmgr"]
   - 模块设计保持高内聚低耦合，便于扩展与维护
 
 章节来源
-- [app/role/login/main.lua:21-25](file://app/role/login/main.lua#L21-L25)
-- [app/role/roleagent/main.lua:36-80](file://app/role/roleagent/main.lua#L36-L80)
+- [example/nodes/role/login/main.lua:21-25](file://example/nodes/role/login/main.lua#L21-L25)
+- [example/nodes/role/roleagent/main.lua:36-80](file://example/nodes/role/roleagent/main.lua#L36-L80)
 - [proto/roleagent/role.sproto:7-12](file://proto/roleagent/role.sproto#L7-L12)
-- [app/role/roleagent/modules/init.lua:12-16](file://app/role/roleagent/modules/init.lua#L12-L16)
+- [example/nodes/role/roleagent/modules/init.lua:12-16](file://example/nodes/role/roleagent/modules/init.lua#L12-L16)
 
 ## 结论
 Role 服务通过 watchdog、login、roleagentmgr、roleagent 的分层协作，实现了可扩展的角色管理与会话控制。借助分布式锁与定时器机制，保证了角色的一致性与资源回收。模块化的设计使得背包、邮件等功能易于扩展与维护。未来可进一步优化负载均衡与懒加载策略，以提升整体性能与稳定性。

@@ -5,15 +5,15 @@ category: error_handling
 scope:
     - '**'
 source_files:
-    - lualib/log/init.lua
-    - lualib/log/logger.lua
-    - lualib/errcode.lua
+    - lualib/skyext/log/init.lua
+    - lualib/skyext/log/logger.lua
+    - lualib/skyext/errcode.lua
     - lualib/skyext.lua
-    - lualib/cmd_api.lua
-    - lualib/http_server/agent.lua
-    - lualib/distributed_lock.lua
-    - app/account/lualib/account_router.lua
-    - app/role/login/login_request.lua
+    - lualib/skyext/cmd_api.lua
+    - lualib/skyext/http_server/agent.lua
+    - lualib/skyext/distributed_lock.lua
+    - example/nodes/account/lualib/account_router.lua
+    - example/nodes/role/login/login_request.lua
     - service/gm_sys.lua
 ---
 
@@ -21,23 +21,23 @@ source_files:
 
 SkyExt 在 Skynet 之上构建了一套统一的错误处理体系，核心思路是：**启动时通过 `log.init` 全局替换 Lua 的 `assert`/`error`/`pcall`/`xpcall`**，使所有异常都先经过结构化日志记录，再抛出；业务层使用集中定义的 `errcode` 常量作为返回值中的 `code` 字段，配合 `true/false` 布尔前缀统一表达成功/失败。
 
-- **全局钩子**：`lualib/log/init.lua` 在 `skynet.init` 中把 `_G.assert`、`_G.error`、`_G.pcall`、`_G.xpcall` 分别替换为 `sys_assert`、`sys_error`、`safe_pcall`、`safe_xpcall`。这意味着任何模块只要 `require "log"` 后调用初始化，后续抛出的所有异常都会走日志流程。
-- **日志器**：`lualib/log/logger.lua` 提供结构化日志（key-value events）、traceback C 扩展（`lualib-src/traceback.c`）以及 `xpcall_msgh` 消息处理器，用于在 xpcall 回调中输出带堆栈的错误。
-- **业务错误码**：`lualib/errcode.lua` 用元表 `__index` 拦截未定义键并直接 `error("Invalid error code: ...")`，强制调用方只能使用预定义常量（如 `OK=0`、`TOKEN_ERROR=7`、`DB_ERROR=6`、`ROLE_NOT_EXIST=3`、`SERVER_NOT_EXIST=9`、`MONGO_DUPLICATE_KEY=11000` 等），避免魔法数字散落。
+- **全局钩子**：`lualib/skyext/log/init.lua` 在 `skynet.init` 中把 `_G.assert`、`_G.error`、`_G.pcall`、`_G.xpcall` 分别替换为 `sys_assert`、`sys_error`、`safe_pcall`、`safe_xpcall`。这意味着任何模块只要 `require "skyext.log"` 后调用初始化，后续抛出的所有异常都会走日志流程。
+- **日志器**：`lualib/skyext/log/logger.lua` 提供结构化日志（key-value events）、traceback C 扩展（`lualib-src/traceback.c`）以及 `xpcall_msgh` 消息处理器，用于在 xpcall 回调中输出带堆栈的错误。
+- **业务错误码**：`lualib/skyext/errcode.lua` 用元表 `__index` 拦截未定义键并直接 `error("Invalid error code: ...")`，强制调用方只能使用预定义常量（如 `OK=0`、`TOKEN_ERROR=7`、`DB_ERROR=6`、`ROLE_NOT_EXIST=3`、`SERVER_NOT_EXIST=9`、`MONGO_DUPLICATE_KEY=11000` 等），避免魔法数字散落。
 
 ## 2. 关键文件与职责
 
 | 文件 | 职责 |
 |---|---|
-| `lualib/log/init.lua` | 暴露 `log.init()`，完成全局 `assert/error/pcall/xpcall` 替换 |
-| `lualib/log/logger.lua` | 日志对象实现：结构化事件、traceback、`sys_assert`/`sys_error`/`xpcall_msgh`、`safe_pcall`/`safe_xpcall` |
-| `lualib/errcode.lua` | 集中业务错误码 + 元表保护 |
+| `lualib/skyext/log/init.lua` | 暴露 `log.init()`，完成全局 `assert/error/pcall/xpcall` 替换 |
+| `lualib/skyext/log/logger.lua` | 日志对象实现：结构化事件、traceback、`sys_assert`/`sys_error`/`xpcall_msgh`、`safe_pcall`/`safe_xpcall` |
+| `lualib/skyext/errcode.lua` | 集中业务错误码 + 元表保护 |
 | `lualib/skyext.lua` | 框架入口，`skynet.init` 中 `pcall(require, "config")` → `pcall(config.init)` → `pcall(log.init)`，确保日志在配置加载失败时仍能工作 |
-| `lualib/cmd_api.lua` | 服务命令分发，未知命令直接 `error(...)` |
-| `lualib/http_server/agent.lua` | HTTP 请求处理，每个请求用 `xpcall(handle_request, log.xpcall_msgh, ...)` 包裹，捕获 handler 异常并写回 4xx/5xx |
-| `lualib/distributed_lock.lua` | 分布式锁，etcd 交互失败 `log.error` 后返回 `false`；锁过期回调用 `xpcall(lock_info.expired_cb, debug.traceback, ...)` 安全执行 |
-| `app/account/lualib/account_router.lua` | 账号路由，统一返回 `{ code = errcode.XXX, ... }` 结构 |
-| `app/role/login/login_request.lua` | 登录请求，按校验阶段填充 `errcode.TOKEN_ERROR` / `PROTO_CHECKSUM` / `ROLE_NOT_EXIST` / `SERVER_NOT_EXIST` |
+| `lualib/skyext/cmd_api.lua` | 服务命令分发，未知命令直接 `error(...)` |
+| `lualib/skyext/http_server/agent.lua` | HTTP 请求处理，每个请求用 `xpcall(handle_request, log.xpcall_msgh, ...)` 包裹，捕获 handler 异常并写回 4xx/5xx |
+| `lualib/skyext/distributed_lock.lua` | 分布式锁，etcd 交互失败 `log.error` 后返回 `false`；锁过期回调用 `xpcall(lock_info.expired_cb, debug.traceback, ...)` 安全执行 |
+| `example/nodes/account/lualib/account_router.lua` | 账号路由，统一返回 `{ code = errcode.XXX, ... }` 结构 |
+| `example/nodes/role/login/login_request.lua` | 登录请求，按校验阶段填充 `errcode.TOKEN_ERROR` / `PROTO_CHECKSUM` / `ROLE_NOT_EXIST` / `SERVER_NOT_EXIST` |
 | `service/gm_sys.lua` | GM 系统命令，全部以 `return true/false, message` 形式返回结果 |
 
 ## 3. 架构与约定
@@ -54,7 +54,7 @@ SkyExt 在 Skynet 之上构建了一套统一的错误处理体系，核心思�
 - 常见模式：
   - 成功：`return true, data` 或 `return { code = errcode.OK, ... }`
   - 失败：`return false, "message"` 或 `return { code = errcode.DB_ERROR, msg = "..." }`
-- 错误码来源严格限定于 `lualib/errcode.lua`，访问未定义键会立即 `error`。
+- 错误码来源严格限定于 `lualib/skyext/errcode.lua`，访问未定义键会立即 `error`。
 
 ### 3.3 日志级别与降级
 - 日志模块自身也做防护：`logger:_log` 调用底层 `pcall(_raw_log, ...)`，若日志写入失败则 fallback 到 `print(err, msg, ...)`，保证即使日志子系统崩溃也不影响业务。

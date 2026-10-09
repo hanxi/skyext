@@ -2,13 +2,13 @@
 
 <cite>
 **本文引用的文件**
-- [lualib/http_server/init.lua](file://lualib/http_server/init.lua)
-- [lualib/http_server/agent.lua](file://lualib/http_server/agent.lua)
-- [app/account/main.lua](file://app/account/main.lua)
-- [app/account/lualib/account_router.lua](file://app/account/lualib/account_router.lua)
+- [lualib/skyext/http_server/init.lua](file://lualib/skyext/http_server/init.lua)
+- [lualib/skyext/http_server/agent.lua](file://lualib/skyext/http_server/agent.lua)
+- [example/nodes/account/main.lua](file://example/nodes/account/main.lua)
+- [example/nodes/account/lualib/account_router.lua](file://example/nodes/account/lualib/account_router.lua)
 - [lualib/jwt.lua](file://lualib/jwt.lua)
-- [lualib/errcode.lua](file://lualib/errcode.lua)
-- [etc/app/common.app.lua](file://etc/app/common.app.lua)
+- [lualib/skyext/errcode.lua](file://lualib/skyext/errcode.lua)
+- [example/etc/nodes/common.app.lua](file://example/etc/nodes/common.app.lua)
 - [lualib/user_db_api.lua](file://lualib/user_db_api.lua)
 - [lualib/role_db_api.lua](file://lualib/role_db_api.lua)
 </cite>
@@ -38,25 +38,25 @@ HTTP 服务由 Account 节点启动，内部通过 http_server 模块提供 HTTP
 
 ```mermaid
 graph TB
-Client["客户端"] --> HTTP["HTTP 服务<br/>lualib/http_server"]
-HTTP --> Agent["HTTP Agent<br/>lualib/http_server/agent.lua"]
-Agent --> Router["路由注册<br/>app/account/lualib/account_router.lua"]
+Client["客户端"] --> HTTP["HTTP 服务<br/>lualib/skyext/http_server"]
+HTTP --> Agent["HTTP Agent<br/>lualib/skyext/http_server/agent.lua"]
+Agent --> Router["路由注册<br/>example/nodes/account/lualib/account_router.lua"]
 Router --> DB_User["用户库 API<br/>lualib/user_db_api.lua"]
 Router --> DB_Role["角色库 API<br/>lualib/role_db_api.lua"]
 Router --> JWT["JWT 验证<br/>lualib/jwt.lua"]
-Router --> Err["错误码<br/>lualib/errcode.lua"]
+Router --> Err["错误码<br/>lualib/skyext/errcode.lua"]
 ```
 
 图表来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/agent.lua:20-118](file://lualib/http_server/agent.lua#L20-L118)
-- [app/account/main.lua:7-16](file://app/account/main.lua#L7-L16)
-- [app/account/lualib/account_router.lua:15-140](file://app/account/lualib/account_router.lua#L15-L140)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/agent.lua:20-118](file://lualib/skyext/http_server/agent.lua#L20-L118)
+- [example/nodes/account/main.lua:7-16](file://example/nodes/account/main.lua#L7-L16)
+- [example/nodes/account/lualib/account_router.lua:15-140](file://example/nodes/account/lualib/account_router.lua#L15-L140)
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/agent.lua:20-118](file://lualib/http_server/agent.lua#L20-L118)
-- [app/account/main.lua:7-16](file://app/account/main.lua#L7-L16)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/agent.lua:20-118](file://lualib/skyext/http_server/agent.lua#L20-L118)
+- [example/nodes/account/main.lua:7-16](file://example/nodes/account/main.lua#L7-L16)
 
 ## 核心组件
 - HTTP 服务入口：负责启动 watchdog、注册路由
@@ -67,13 +67,13 @@ Router --> Err["错误码<br/>lualib/errcode.lua"]
 - 错误码：统一错误码定义
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/agent.lua:20-118](file://lualib/http_server/agent.lua#L20-L118)
-- [app/account/lualib/account_router.lua:15-140](file://app/account/lualib/account_router.lua#L15-L140)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/agent.lua:20-118](file://lualib/skyext/http_server/agent.lua#L20-L118)
+- [example/nodes/account/lualib/account_router.lua:15-140](file://example/nodes/account/lualib/account_router.lua#L15-L140)
 - [lualib/jwt.lua:17-100](file://lualib/jwt.lua#L17-L100)
 - [lualib/user_db_api.lua:12-80](file://lualib/user_db_api.lua#L12-L80)
 - [lualib/role_db_api.lua:12-75](file://lualib/role_db_api.lua#L12-L75)
-- [lualib/errcode.lua:1-29](file://lualib/errcode.lua#L1-L29)
+- [lualib/skyext/errcode.lua:1-29](file://lualib/skyext/errcode.lua#L1-L29)
 
 ## 架构总览
 HTTP 请求从客户端到达 Account 节点的 HTTP 服务，经 agent 解析后路由到 account_router。处理器完成 JWT 校验、参数校验、数据库读写，最终返回 JSON 响应。
@@ -104,8 +104,8 @@ end
 ```
 
 图表来源
-- [lualib/http_server/agent.lua:31-118](file://lualib/http_server/agent.lua#L31-L118)
-- [app/account/lualib/account_router.lua:24-59](file://app/account/lualib/account_router.lua#L24-L59)
+- [lualib/skyext/http_server/agent.lua:31-118](file://lualib/skyext/http_server/agent.lua#L31-L118)
+- [example/nodes/account/lualib/account_router.lua:24-59](file://example/nodes/account/lualib/account_router.lua#L24-L59)
 - [lualib/jwt.lua:17-67](file://lualib/jwt.lua#L17-L67)
 - [lualib/user_db_api.lua:60-80](file://lualib/user_db_api.lua#L60-L80)
 - [lualib/role_db_api.lua:12-42](file://lualib/role_db_api.lua#L12-L42)
@@ -119,8 +119,8 @@ end
 - 响应体：统一包含 code 字段，成功时附加业务数据
 
 章节来源
-- [lualib/http_server/agent.lua:48-56](file://lualib/http_server/agent.lua#L48-L56)
-- [lualib/errcode.lua:1-29](file://lualib/errcode.lua#L1-L29)
+- [lualib/skyext/http_server/agent.lua:48-56](file://lualib/skyext/http_server/agent.lua#L48-L56)
+- [lualib/skyext/errcode.lua:1-29](file://lualib/skyext/errcode.lua#L1-L29)
 
 ### 获取角色列表
 - 方法：GET
@@ -147,10 +147,10 @@ end
 - { "code": 9 }  // SERVER_NOT_EXIST
 
 章节来源
-- [app/account/lualib/account_router.lua:24-59](file://app/account/lualib/account_router.lua#L24-L59)
+- [example/nodes/account/lualib/account_router.lua:24-59](file://example/nodes/account/lualib/account_router.lua#L24-L59)
 - [lualib/role_db_api.lua:12-42](file://lualib/role_db_api.lua#L12-L42)
 - [lualib/jwt.lua:17-67](file://lualib/jwt.lua#L17-L67)
-- [lualib/errcode.lua:1-29](file://lualib/errcode.lua#L1-L29)
+- [lualib/skyext/errcode.lua:1-29](file://lualib/skyext/errcode.lua#L1-L29)
 
 ### 创建角色
 - 方法：POST
@@ -182,10 +182,10 @@ end
 - { "code": 6 }  // DB_ERROR
 
 章节来源
-- [app/account/lualib/account_router.lua:61-140](file://app/account/lualib/account_router.lua#L61-L140)
+- [example/nodes/account/lualib/account_router.lua:61-140](file://example/nodes/account/lualib/account_router.lua#L61-L140)
 - [lualib/user_db_api.lua:60-80](file://lualib/user_db_api.lua#L60-L80)
 - [lualib/role_db_api.lua:56-75](file://lualib/role_db_api.lua#L56-L75)
-- [lualib/errcode.lua:1-29](file://lualib/errcode.lua#L1-L29)
+- [lualib/skyext/errcode.lua:1-29](file://lualib/skyext/errcode.lua#L1-L29)
 
 ### 错误码速查
 - 0：OK
@@ -195,7 +195,7 @@ end
 - 9：SERVER_NOT_EXIST（服务器不存在）
 
 章节来源
-- [lualib/errcode.lua:1-29](file://lualib/errcode.lua#L1-L29)
+- [lualib/skyext/errcode.lua:1-29](file://lualib/skyext/errcode.lua#L1-L29)
 
 ## 依赖关系分析
 - HTTP 服务依赖 http_server 模块与 watchdog
@@ -214,16 +214,16 @@ ROUTER --> ERR["errcode.lua"]
 ```
 
 图表来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/agent.lua:20-118](file://lualib/http_server/agent.lua#L20-L118)
-- [app/account/lualib/account_router.lua:1-140](file://app/account/lualib/account_router.lua#L1-L140)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/agent.lua:20-118](file://lualib/skyext/http_server/agent.lua#L20-L118)
+- [example/nodes/account/lualib/account_router.lua:1-140](file://example/nodes/account/lualib/account_router.lua#L1-L140)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 章节来源
-- [lualib/http_server/init.lua:8-20](file://lualib/http_server/init.lua#L8-L20)
-- [lualib/http_server/agent.lua:20-118](file://lualib/http_server/agent.lua#L20-L118)
-- [app/account/lualib/account_router.lua:1-140](file://app/account/lualib/account_router.lua#L1-L140)
-- [etc/app/common.app.lua:1-100](file://etc/app/common.app.lua#L1-L100)
+- [lualib/skyext/http_server/init.lua:8-20](file://lualib/skyext/http_server/init.lua#L8-L20)
+- [lualib/skyext/http_server/agent.lua:20-118](file://lualib/skyext/http_server/agent.lua#L20-L118)
+- [example/nodes/account/lualib/account_router.lua:1-140](file://example/nodes/account/lualib/account_router.lua#L1-L140)
+- [example/etc/nodes/common.app.lua:1-100](file://example/etc/nodes/common.app.lua#L1-L100)
 
 ## 性能与速率限制
 - 请求体大小限制：默认 1MB，可通过配置项调整
@@ -234,8 +234,8 @@ ROUTER --> ERR["errcode.lua"]
   - 使用连接池与索引优化数据库查询（已在配置中声明索引）
 
 章节来源
-- [etc/app/common.app.lua:90-100](file://etc/app/common.app.lua#L90-L100)
-- [lualib/http_server/agent.lua:20-21](file://lualib/http_server/agent.lua#L20-L21)
+- [example/etc/nodes/common.app.lua:90-100](file://example/etc/nodes/common.app.lua#L90-L100)
+- [lualib/skyext/http_server/agent.lua:20-21](file://lualib/skyext/http_server/agent.lua#L20-L21)
 
 ## 安全与最佳实践
 - 认证机制：
@@ -249,8 +249,8 @@ ROUTER --> ERR["errcode.lua"]
 
 章节来源
 - [lualib/jwt.lua:17-100](file://lualib/jwt.lua#L17-L100)
-- [etc/app/common.app.lua:90-91](file://etc/app/common.app.lua#L90-L91)
-- [lualib/http_server/agent.lua:48-56](file://lualib/http_server/agent.lua#L48-L56)
+- [example/etc/nodes/common.app.lua:90-91](file://example/etc/nodes/common.app.lua#L90-L91)
+- [lualib/skyext/http_server/agent.lua:48-56](file://lualib/skyext/http_server/agent.lua#L48-L56)
 
 ## 客户端实现指南
 - 基础流程：
@@ -265,8 +265,8 @@ ROUTER --> ERR["errcode.lua"]
   - 网络错误或超时需做指数退避重试
 
 章节来源
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
-- [lualib/errcode.lua:1-29](file://lualib/errcode.lua#L1-L29)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
+- [lualib/skyext/errcode.lua:1-29](file://lualib/skyext/errcode.lua#L1-L29)
 
 ## 调试与排错
 - 常见问题：
@@ -282,9 +282,9 @@ ROUTER --> ERR["errcode.lua"]
   - 使用 curl 或 Postman 复现问题，逐步缩小范围
 
 章节来源
-- [lualib/http_server/agent.lua:31-75](file://lualib/http_server/agent.lua#L31-L75)
-- [app/account/lualib/account_router.lua:24-140](file://app/account/lualib/account_router.lua#L24-L140)
-- [etc/app/common.app.lua:74-100](file://etc/app/common.app.lua#L74-L100)
+- [lualib/skyext/http_server/agent.lua:31-75](file://lualib/skyext/http_server/agent.lua#L31-L75)
+- [example/nodes/account/lualib/account_router.lua:24-140](file://example/nodes/account/lualib/account_router.lua#L24-L140)
+- [example/etc/nodes/common.app.lua:74-100](file://example/etc/nodes/common.app.lua#L74-L100)
 
 ## 结论
 SkyExt 的 HTTP API 采用简洁的 RESTful 设计，结合 JWT 认证与统一的错误码体系，便于客户端集成与维护。通过合理的配置与安全策略，可支撑稳定的账号与角色管理业务。建议在网关层补充速率限制与审计，进一步提升系统的安全性与稳定性。
