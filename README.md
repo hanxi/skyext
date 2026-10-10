@@ -17,7 +17,9 @@
 - **JWT 认证**: 支持 JWT token 登录验证（基于 OpenSSL HMAC）
 - **日志系统**: 完善的日志记录和管理系统
 - **TLS 支持**: skynet 编译时启用 TLS 模块（ltls）
-- [ ] **热更新**: 支持代码热更新和配置热加载
+- **热更新**: 支持代码热更新和配置热加载
+- **测试框架**: 内置 skytest 测试框架，测试文件紧跟源码（`.test.lua`），每文件独立 skynet 进程
+- **代码覆盖率**: 内置 Lua 代码覆盖率工具（C 加速），支持 lcov 报告输出
 - [ ] **监控系统**: 完善监控告警系统
 - [ ] **管理后台**: 完善管理后台，包括火焰图分析
 
@@ -133,50 +135,87 @@ make schema
 
 ```
 skyext/
+├── bin/                   # 编译产物
+│   ├── skyext             # 统一 CLI（test / serve）
+│   ├── skynet             # skynet 二进制
+│   ├── lua                # Lua 5.5 解释器
+│   └── luac               # Lua 编译器
 ├── lualib/                # 引擎 Lua 库
 │   ├── skyext/            # 引擎模块（require "skyext.*"）
 │   │   ├── init.lua       # 引擎引导模块
 │   │   ├── config.lua     # 配置管理
-│   │   ├── log/           # 日志系统
-│   │   ├── http_server/   # HTTP 服务器
-│   │   ├── entity/        # 实体系统
+│   │   ├── dbmgr.lua      # 数据库管理（ORM 加载/存盘/卸载）
+│   │   ├── etcd.lua       # etcd 客户端
+│   │   ├── cluster_discovery.lua  # 服务发现客户端
+│   │   ├── distributed_lock.lua   # 分布式锁
 │   │   ├── gm_api.lua     # GM 命令注册
 │   │   ├── gm_router.lua  # GM HTTP 路由
-│   │   ├── dbmgr.lua      # 数据库管理
-│   │   ├── etcd.lua       # etcd 客户端
-│   │   └── util/          # 工具库
+│   │   ├── sproto_api.lua # sproto 协议编解码
+│   │   ├── snowflake.lua  # 雪花 ID 生成
+│   │   ├── id_generator.lua  # ID 生成器
+│   │   ├── timer.lua      # 通用定时器
+│   │   ├── time.lua       # 时间工具
+│   │   ├── httpc.lua      # HTTP 客户端
+│   │   ├── cmd_api.lua    # 服务消息分发
+│   │   ├── errcode.lua    # 引擎层错误码
+│   │   ├── res.lua        # 资源/配表加载
+│   │   ├── profiler.lua   # 性能分析
+│   │   ├── ptype.lua      # 协议类型
+│   │   ├── hotfix_checksum.lua    # 热更校验
+│   │   ├── mongo_conn.lua # MongoDB 连接辅助
+│   │   ├── event_channel_api.lua  # 事件通道
+│   │   ├── entity/        # 通用实体系统
+│   │   ├── http_server/   # HTTP 服务器（watchdog + agent）
+│   │   ├── log/           # 日志系统（控制台、文件、服务间通信）
+│   │   └── util/          # 工具库（string、table、path、io）
 │   ├── orm/               # ORM 框架
+│   ├── skytest/           # 测试框架 + 覆盖率
 │   └── loader.lua         # 服务加载器
 ├── service/               # 引擎服务
 │   ├── gm.lua             # GM 调度服务
 │   ├── gm_sys.lua         # GM 系统命令
 │   ├── hotfix.lua         # 热更新服务
-│   ├── cluster_discovery.lua  # 集群发现
-│   ├── mongo_conn.lua     # MongoDB 连接
-│   ├── entity_agent.lua   # 实体代理
+│   ├── cluster_discovery.lua  # 集群发现服务
+│   ├── entity_agent.lua       # 实体代理
+│   ├── entity_agentmgr.lua   # 实体代理管理器
+│   ├── mongo_conn.lua     # MongoDB 连接池
+│   ├── mongo_index.lua    # MongoDB 索引管理
+│   ├── sproto_loader.lua  # sproto 协议加载
+│   ├── skytest_cov.lua    # 覆盖率聚合服务
+│   ├── skytest_runner.lua # 测试运行器服务
 │   └── logger/            # 日志服务
 ├── public/                # 引擎静态资源
 │   └── gm.html            # GM Web 管理面板
 ├── lualib-src/            # 引擎 C 模块源码
-│   └── crypto.c           # 加密模块（OpenSSL）
+│   ├── crypto.c           # 加密模块（OpenSSL）
+│   ├── traceback.c        # 错误追踪
+│   ├── jchash.c           # 一致性哈希
+│   ├── profiler.c         # 性能分析
+│   └── skytest_hook.c     # 覆盖率 debug hook（C 加速）
 ├── service-src/           # 引擎 C 服务源码
+│   └── service_profiler.c
+├── scripts/               # 辅助脚本
+│   └── cov/               # 覆盖率脚本（merge、html、check）
 ├── example/               # 示例游戏项目
 │   ├── nodes/             # 节点入口
 │   │   ├── account/       # 账号服务
-│   │   ├── role/          # 角色服务
+│   │   ├── role/          # 角色服务（含 modules/bag、modules/mail）
 │   │   └── robot/         # 机器人客户端
 │   ├── etc/               # 游戏配置文件
-│   │   ├── core.conf.lua  # 核心配置（含搜索路径）
+│   │   ├── core.conf.lua  # 核心配置
 │   │   ├── paths.conf.lua # Lua 搜索路径定义
 │   │   ├── nodes/         # 节点业务配置
 │   │   ├── account*.conf.lua
 │   │   └── role*.conf.lua
 │   ├── lualib/            # 游戏业务 Lua 库
+│   │   ├── entity_handler/  # 实体 handler（role、example）
+│   │   ├── errcode.lua    # 游戏层错误码
+│   │   ├── jwt.lua        # JWT 鉴权
+│   │   └── launcher.lua   # 启动器
 │   ├── proto/             # 协议定义文件
 │   ├── schema/            # 数据模式定义
 │   ├── hotfix/            # 热更包
 │   ├── res/               # 游戏资源（策划配表等）
-│   ├── test/              # 测试用例
 │   ├── tools/             # 工具脚本
 │   └── Makefile           # 游戏构建入口
 ├── build.mk               # 引擎构建规则
@@ -187,8 +226,7 @@ skyext/
 │   ├── lua-cjson/
 │   ├── binaryheap.lua/
 │   └── luafilesystem/
-├── docs/                  # 文档
-└── tools/                 # 引擎工具
+└── docs/                  # 文档
 ```
 
 ## ⚙️ 配置说明
@@ -297,13 +335,15 @@ make help
 
 - 在 `example/schema/` 目录定义数据结构
 - 在 `example/proto/roleagent/` 目录定义协议
-- 使用 `make autocode` 自动生成模块代码
+
+### 开发中功能
+
+- **背包系统**: 物品管理（基础框架已实现）
+- **邮件系统**: 邮件收发功能（基础框架已实现）
 
 ### 计划实现功能
 
 - **策划配置**: 策划 excel 配置管理
-- **背包系统**: 物品管理
-- **邮件系统**: 邮件收发功能
 - **社交系统**: 好友系统、群聊系统
 - **游戏内商城**: 商品管理、交易功能
 - **交易系统**: 物品交易拍卖功能
@@ -317,11 +357,39 @@ make help
 - **网关服务**: [goscon](https://github.com/hanxi/goscon) - WebSocket 转 TCP 网关
 - **登录鉴权**: [gamepass](https://github.com/hanxi/gamepass) - 第三方登录鉴权服务
 
+## 🧪 测试与覆盖率
+
+[![Coverage](https://img.shields.io/badge/coverage-report-blue)](https://hanxi.github.io/skyext/coverage/)
+
+内置 skytest 测试框架和基于 C 加速的 Lua 代码覆盖率工具。测试文件以 `.test.lua` 结尾，放在被测文件旁边，每个文件在独立 skynet 进程中运行。
+
+```bash
+# 运行所有测试
+./bin/skyext test
+
+# 运行指定文件或目录
+./bin/skyext test lualib/skyext/snowflake.test.lua
+./bin/skyext test lualib/skyext/
+
+# 按路径过滤
+./bin/skyext test --match "snowflake"
+
+# 带覆盖率
+./bin/skyext test --cov
+
+```
+
+覆盖率报告输出到 `coverage/html/index.html`，标准 lcov 格式。推送到 main 分支时 CI 会自动更新 [在线报告](https://hanxi.github.io/skyext/coverage/)。
+
 ## 📚 文档
 
-- [GM 命令接口](docs/gm_api.md) - GM 系统 HTTP API 文档
-- [热更新系统](docs/hotfix.md) - 热更新操作与开发指南
-- [项目 Wiki](https://github.com/hanxi/skyext/wiki) - 详细开发文档
+- [项目概述](docs/overview.md) - 项目背景、架构总览、开发路线图
+- [快速上手](docs/getting-started.md) - 环境搭建、编译运行
+- [登录流程](docs/guide/login.md) - 客户端登录认证全流程
+- [热更新系统](docs/guide/hotfix.md) - 热更新操作与开发指南
+- [GM 命令接口](docs/guide/gm_api.md) - GM 系统 HTTP API 文档
+- [实体系统设计](docs/design/entity_system.md) - 通用实体系统设计方案
+- [测试框架设计](docs/design/skytest.md) - skytest 设计文档
 - [Skynet 官方文档](https://github.com/cloudwu/skynet/wiki) - Skynet 框架文档
 
 ## 💬 交流讨论

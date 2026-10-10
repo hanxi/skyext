@@ -76,6 +76,12 @@ $(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(
 
 SKYEXT_LUA_CLIB = jchash cjson traceback lfs crypto profiler_c
 
+# ---------- skytest C hook ----------
+
+$(SKYEXT_LUACLIB_PATH)/skytest/hook.so : $(SKYEXT_ROOT)/lualib-src/skytest_hook.c | $(SKYEXT_LUACLIB_PATH)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+
 # ---------- 引擎 C 服务（产物输出到引擎 cservice/）----------
 
 SKYEXT_CSERVICE_PATH = $(SKYEXT_ROOT)/cservice
@@ -110,7 +116,9 @@ copy:
 
 skyext_build: skynet \
 	$(foreach v, $(SKYEXT_LUA_CLIB), $(SKYEXT_LUACLIB_PATH)/$(v).so) \
-	$(foreach v, $(SKYEXT_CSERVICE), $(SKYEXT_CSERVICE_PATH)/$(v).so) copy | $(BIN_PATH)
+	$(foreach v, $(SKYEXT_CSERVICE), $(SKYEXT_CSERVICE_PATH)/$(v).so) \
+	$(SKYEXT_LUACLIB_PATH)/skytest/hook.so \
+	copy | $(BIN_PATH)
 
 # ---------- 清理 ----------
 
@@ -118,6 +126,7 @@ clean:
 	cd $(SKYEXT_ROOT)/skynet && $(MAKE) clean
 	rm -f $(SKYEXT_LUACLIB_PATH)/*.so
 	rm -rf $(SKYEXT_LUACLIB_PATH)/*.so.dSYM
+	rm -rf $(SKYEXT_LUACLIB_PATH)/skytest
 	rm -f $(SKYEXT_CSERVICE_PATH)/*.so
 	rm -rf $(SKYEXT_CSERVICE_PATH)/*.so.dSYM
 	rm -rf $(BIN_PATH)/*

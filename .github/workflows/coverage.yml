@@ -1,0 +1,160 @@
+name: CI & Pages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    container: debian:13
+
+    services:
+      mongo:
+        image: mongo:6-jammy
+        ports:
+          - 27017:27017
+      etcd:
+        image: gcr.io/etcd-development/etcd:v3.6.5
+        env:
+          ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+        ports:
+          - 2379:2379
+
+    steps:
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends \
+          build-essential make pkg-config autoconf automake libtool \
+          git curl ca-certificates \
+          libreadline-dev libedit-dev \
+          lcov
+
+    - name: Update CA certificates
+      run: |
+        update-ca-certificates
+        git config --global http.sslverify true
+        git config --global http.sslcainfo /etc/ssl/certs/ca-certificates.crt
+
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+        fetch-depth: 1
+
+    - name: Build
+      run: make build
+
+    - name: Wait for services
+      run: |
+        for i in $(seq 1 30); do
+          (echo > /dev/tcp/mongo/27017) 2>/dev/null && break
+          sleep 1
+        done
+        for i in $(seq 1 30); do
+          curl -sf http://etcd:2379/health >/dev/null 2>&1 && break || true
+          sleep 1
+        done
+
+    - name: Run tests with coverage
+      env:
+        MONGO_HOST: mongo
+        ETCD_ENDPOINTS: http://etcd:2379
+      run: ./bin/skyext test --cov
+
+    - name: Generate coverage report
+      run: |
+        COV_DIR="./coverage"
+        lcov_file="$COV_DIR/lua_coverage.info"
+
+        awk '
+          /^SF:/ { skip = ($0 !~ /^SF:\.\//) }
+          !skip { print }
+        ' "$lcov_file" > "$COV_DIR/lua_coverage_clean.info"
+
+        genhtml "$COV_DIR/lua_coverage_clean.info" \
+          --output-directory "$COV_DIR/html" \
+          --title "skyext coverage ($(date +%Y-%m-%d))" \
+          --legend \
+          --no-function-coverage
+
+        TOTAL=$(awk '/^DA:/{n++} END{print n+0}' "$COV_DIR/lua_coverage_clean.info")
+        COVERED=$(awk '/^DA:/{split($0,a,","); if(a[2]+0>0) n++} END{print n+0}' "$COV_DIR/lua_coverage_clean.info")
+        FILES=$(grep -c "^SF:" "$COV_DIR/lua_coverage_clean.info" || echo 0)
+        PCT=$(awk "BEGIN{printf \"%.1f\", $COVERED*100/$TOTAL}")
+        echo "## Coverage: ${PCT}% ($COVERED/$TOTAL lines, $FILES files)" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage/html/
+        retention-days: 30
+
+    - name: Upload lcov
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-lcov
+        path: coverage/lua_coverage_clean.info
+        retention-days: 30
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Download coverage report
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-report
+        path: _site/coverage
+
+    - name: Assemble site
+      run: |
+        mkdir -p _site
+        printf '<!DOCTYPE html><meta http-equiv="refresh" content="0;url=docs/">' > _site/index.html
+        touch _site/.nojekyll
+
+        # Docsify doc site at /docs/
+        mkdir -p _site/docs
+        rsync -a --exclude='plan/' --exclude='design/' --exclude='internal/' docs/ _site/docs/
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v5
+
+    - name: Upload to Pages
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: _site
+
+    - name: Deploy
+      id: deploy
+      uses: actions/deploy-pages@v4

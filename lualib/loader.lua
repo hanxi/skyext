@@ -74,6 +74,9 @@ if SERVICE_PATH then
         .. package.path
 end
 
+-- 加载 skytest 覆盖率（未部署或未开启时静默跳过）
+pcall(require, "skytest.cov")
+
 -- 加载 skyext
 local ok, err = pcall(require, "skyext")
 if not ok then

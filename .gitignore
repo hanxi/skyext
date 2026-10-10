@@ -1,4 +1,5 @@
-bin/
+bin/*
+!bin/skyext
 build/
 luaclib/
 cservice/
@@ -19,5 +20,9 @@ dist/
 skyext.zip
 /skyext/
 
+coverage/
+
 .DS_Store
+.vscode/
 .aone_copilot/
+.claude/

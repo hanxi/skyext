@@ -1,0 +1,271 @@
+# 登录流程图
+
+## 概述
+
+系统支持两种认证方式：
+
+1. **正常客户端 OAuth 认证**：通过 GamePass OAuth 服务进行用户身份认证，获取 JWT Token
+2. **机器人客户端模拟认证**：机器人客户端直接生成 JWT Token，跳过 OAuth 流程
+
+## 完整登录流程（正常客户端）
+
+```mermaid
+flowchart TD
+    A[客户端启动] --> B[检查登录状态]
+    B --> C{是否已有有效Token?}
+
+    C -->|否| D[启动OAuth登录流程]
+    C -->|是| H[使用现有JWT Token]
+
+    D --> E[跳转到GamePass OAuth页面]
+    E --> F[用户在GamePass完成认证]
+    F --> G[OAuth回调返回JWT Token]
+    G --> H
+
+    H --> I[HTTP GET /roles?token=xxx<br/>向Account服务获取角色列表]
+
+    I --> J{是否有角色?}
+
+    J -->|有角色| K[从角色列表中选择角色]
+    J -->|无角色| L[HTTP POST /create_role<br/>创建新角色]
+
+    L --> M{创建成功?}
+    M -->|成功| N[获取新创建的角色信息]
+    M -->|失败| O[登录失败]
+
+    N --> K
+    K --> P[获取角色的rolenode信息]
+    P --> Q[根据rolenode获取对应的wsUrl]
+    Q --> R[建立WebSocket连接到rolenode]
+
+    R --> S{连接成功?}
+    S -->|失败| T[连接失败]
+    S -->|成功| U[发送sproto login.login消息<br/>包含token, rid, proto_checksum, server]
+
+    U --> V{登录成功?}
+    V -->|失败| W[登录失败]
+    V -->|成功| X[发送sproto role.login_info消息]
+
+    X --> Y[登录完成，进入游戏]
+
+    style A fill:#e1f5fe
+    style Y fill:#c8e6c9
+    style O fill:#ffcdd2
+    style T fill:#ffcdd2
+    style W fill:#ffcdd2
+    style D fill:#fff3e0
+    style E fill:#fff3e0
+    style F fill:#fff3e0
+    style G fill:#fff3e0
+```
+
+## 机器人客户端简化流程
+
+```mermaid
+flowchart TD
+    A1[机器人客户端启动] --> B1[直接生成JWT Token<br/>模拟OAuth认证结果]
+    B1 --> C1[HTTP GET /roles?token=xxx<br/>向Account服务获取角色列表]
+
+    C1 --> D1{是否有角色?}
+
+    D1 -->|有角色| E1[从角色列表中选择角色]
+    D1 -->|无角色| F1[HTTP POST /create_role<br/>创建新角色]
+
+    F1 --> G1{创建成功?}
+    G1 -->|成功| H1[获取新创建的角色信息]
+    G1 -->|失败| I1[登录失败]
+
+    H1 --> E1
+    E1 --> J1[获取角色的rolenode信息]
+    J1 --> K1[根据rolenode获取对应的wsUrl]
+    K1 --> L1[建立WebSocket连接到rolenode]
+
+    L1 --> M1{连接成功?}
+    M1 -->|失败| N1[连接失败]
+    M1 -->|成功| O1[发送sproto login.login消息<br/>包含token, rid, proto_checksum, server]
+
+    O1 --> P1{登录成功?}
+    P1 -->|失败| Q1[登录失败]
+    P1 -->|成功| R1[发送sproto role.login_info消息]
+
+    R1 --> S1[登录完成，进入游戏]
+
+    style A1 fill:#e1f5fe
+    style S1 fill:#c8e6c9
+    style I1 fill:#ffcdd2
+    style N1 fill:#ffcdd2
+    style Q1 fill:#ffcdd2
+    style B1 fill:#ffeb3b
+```
+
+## 认证架构
+
+```mermaid
+graph LR
+    subgraph "客户端类型"
+        Client[游戏客户端]
+        RobotClient[机器人客户端]
+    end
+
+    subgraph "认证方式"
+        GamePass[GamePass OAuth服务]
+        LocalGen[本地Token生成]
+    end
+
+    Client -->|OAuth认证| GamePass
+    GamePass -->|返回JWT Token| Client
+    RobotClient -->|直接生成| LocalGen
+    LocalGen -->|模拟Token| RobotClient
+
+    style GamePass fill:#e3f2fd
+    style LocalGen fill:#fff3e0
+```
+
+## 服务集群架构
+
+```mermaid
+graph TB
+    subgraph "Account服务集群"
+        Account1[Account服务1<br/>:8080]
+        Account2[Account服务2<br/>:8081]
+    end
+
+    subgraph "RoleNode集群"
+        RoleNode1[RoleNode1<br/>:1249]
+        RoleNode2[RoleNode2<br/>:1249]
+    end
+
+    subgraph "游戏服务器"
+        S1[测试服务器1 - s1]
+        S2[测试服务器2 - s2]
+    end
+
+    Account1 -.->|角色数据| S1
+    Account1 -.->|角色数据| S2
+    Account2 -.->|角色数据| S1
+    Account2 -.->|角色数据| S2
+
+    RoleNode1 -.->|游戏服务| S1
+    RoleNode1 -.->|游戏服务| S2
+    RoleNode2 -.->|游戏服务| S1
+    RoleNode2 -.->|游戏服务| S2
+
+    style Account1 fill:#e8f5e8
+    style Account2 fill:#e8f5e8
+    style RoleNode1 fill:#fff3e0
+    style RoleNode2 fill:#fff3e0
+```
+
+## 协议交互时序图
+
+### 正常客户端 OAuth 认证流程
+
+```mermaid
+sequenceDiagram
+    participant C as 客户端
+    participant GP as GamePass OAuth
+    participant A as Account服务
+    participant R as RoleNode
+
+    Note over C: 1. 启动OAuth认证
+    C->>GP: 跳转到OAuth认证页面
+    GP-->>C: 用户完成认证，返回JWT Token
+
+    Note over C: 2. 使用JWT Token获取角色
+    C->>A: HTTP GET /roles?token=xxx
+    A-->>C: 返回角色列表
+
+    alt 如果没有角色
+        C->>A: HTTP POST /create_role
+        A-->>C: 返回新创建的角色
+    end
+
+    Note over C: 3. 选择角色，连接游戏节点
+    C->>R: WebSocket连接到rolenode
+    R-->>C: 连接建立成功
+
+    C->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
+    R-->>C: 登录响应<br/>{code, rid, rolenode}
+
+    C->>R: sproto role.login_info
+    R-->>C: 角色信息响应
+
+    Note over C,R: 登录完成，开始游戏
+```
+
+### 机器人客户端简化认证流程
+
+```mermaid
+sequenceDiagram
+    participant RC as 机器人客户端
+    participant A as Account服务
+    participant R as RoleNode
+
+    Note over RC: 1. 直接生成JWT Token（模拟OAuth结果）
+    RC->>RC: 本地生成JWT Token<br/>jwt.sign({account: "robot3"}, secret)
+
+    Note over RC: 2. 使用模拟Token获取角色
+    RC->>A: HTTP GET /roles?token=xxx
+    A-->>RC: 返回角色列表
+
+    alt 如果没有角色
+        RC->>A: HTTP POST /create_role<br/>{token, server, name}
+        A-->>RC: 返回新创建的角色
+    end
+
+    Note over RC: 3. 选择角色，连接游戏节点
+    RC->>R: WebSocket连接到rolenode
+    R-->>RC: 连接建立成功
+
+    RC->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
+    R-->>RC: 登录响应<br/>{code, rid, rolenode}
+
+    RC->>R: sproto role.login_info
+    R-->>RC: 角色信息响应
+
+    Note over RC,R: 登录完成，开始游戏
+```
+
+## 关键数据结构
+
+### JWT Token
+
+**正常客户端**（通过 GamePass OAuth 获取）：
+
+```json
+{
+  "account": "user_account_id",
+  "sub": "user_subject_id",
+  "iat": 1638360000,
+  "exp": 1638363600,
+  "iss": "gamepass_oauth_service",
+  "aud": "game_client"
+}
+```
+
+**机器人客户端**（本地生成，仅用于测试）：
+
+```json
+{
+  "account": "robot3"
+}
+```
+
+### Account 服务 API
+
+**获取角色列表：**
+
+```
+GET /roles?token=jwt_token_string
+
+Response: { "code": 0, "roles": [...] }
+```
+
+**创建角色：**
+
+```
+POST /create_role
+Body: { "token": "...", "server": "s1", "name": "角色名称" }
+
+Response: { "code": 0, "role": {...} }
+```

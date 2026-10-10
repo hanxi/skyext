@@ -71,15 +71,16 @@ function M.get_table(key)
     return s
 end
 
-local function serialize(t)
+function M.serialize(t)
     if type(t) == "table" then
-        local s = "{"
+        local parts = { "{" }
         for k, v in pairs(t) do
-            s = s .. "[" .. serialize(k) .. "]=" .. serialize(v) .. ","
+            parts[#parts + 1] = "[" .. M.serialize(k) .. "]=" .. M.serialize(v) .. ","
         end
-        return s .. "}"
+        parts[#parts + 1] = "}"
+        return table.concat(parts)
     elseif type(t) == "string" then
-        return '"' .. t .. '"'
+        return string.format("%q", t)
     else
         return tostring(t)
     end
@@ -134,7 +135,7 @@ function M.init()
     skynet.setenv("app_config_loaded", "true")
     for k, v in pairs(result) do
         if type(v) == "table" then
-            skynet.setenv(k, serialize(v))
+            skynet.setenv(k, M.serialize(v))
         else
             skynet.setenv(k, tostring(v))
         end
