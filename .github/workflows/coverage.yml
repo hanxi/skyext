@@ -42,7 +42,7 @@ jobs:
         apt-get install -y --no-install-recommends \
           build-essential make pkg-config autoconf automake libtool \
           git curl ca-certificates \
-          libreadline-dev libedit-dev \
+          libreadline-dev libedit-dev libssl-dev \
           lcov
 
     - name: Update CA certificates

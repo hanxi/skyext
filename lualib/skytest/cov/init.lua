@@ -1,5 +1,7 @@
 local config = require "skytest.cov.config"
-if not config.enabled then return end
+if not config.enabled then
+    return
+end
 
 local skynet = require "skynet"
 

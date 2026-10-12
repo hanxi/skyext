@@ -52,8 +52,17 @@ function M.reliable_send(type_name, entity_id, cmd, args)
     end
     if not ok then
         local log = require "skyext.log"
-        log.warn("reliable_send immediate delivery failed, will retry on load",
-            "type", type_name, "id", entity_id, "cmd", cmd, "msg_id", msg_id)
+        log.warn(
+            "reliable_send immediate delivery failed, will retry on load",
+            "type",
+            type_name,
+            "id",
+            entity_id,
+            "cmd",
+            cmd,
+            "msg_id",
+            msg_id
+        )
     end
 end
 

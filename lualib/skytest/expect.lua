@@ -1,11 +1,19 @@
 local function deep_equal(a, b)
-    if a == b then return true end
-    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    if a == b then
+        return true
+    end
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false
+    end
     for k, v in pairs(a) do
-        if not deep_equal(v, b[k]) then return false end
+        if not deep_equal(v, b[k]) then
+            return false
+        end
     end
     for k in pairs(b) do
-        if a[k] == nil then return false end
+        if a[k] == nil then
+            return false
+        end
     end
     return true
 end
@@ -113,6 +121,8 @@ local function make_assertions(value, negated)
         end
     end
 
+    -- The negated comparisons must also fail for NaN and preserve metamethod behavior.
+    -- luacheck: push ignore 581
     function assertions.be_gt(n)
         if negated then
             if value > n then
@@ -161,6 +171,7 @@ local function make_assertions(value, negated)
         end
     end
 
+    -- luacheck: pop
     function assertions.contain(substr)
         if type(value) ~= "string" then
             fail(string.format("Expected string for contain, got %s", type(value)), 2)

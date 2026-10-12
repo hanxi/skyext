@@ -76,6 +76,15 @@ $(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(
 
 SKYEXT_LUA_CLIB = jchash cjson traceback lfs crypto profiler_c
 
+# mingw.mk 不构建 TLS_MODULE，待 Lua 导入库生成后单独编译。
+SKYEXT_TLS_MODULE =
+ifeq ($(PLAT), mingw)
+SKYEXT_TLS_MODULE = $(SKYEXT_ROOT)/skynet/luaclib/ltls.so
+
+$(SKYEXT_TLS_MODULE): $(SKYEXT_ROOT)/skynet/lualib-src/ltls.c | skynet
+	$(CC) $(CFLAGS) $(SHARED) $< -o $@ -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
+endif
+
 # ---------- skytest C hook ----------
 
 $(SKYEXT_LUACLIB_PATH)/skytest/hook.so : $(SKYEXT_ROOT)/lualib-src/skytest_hook.c | $(SKYEXT_LUACLIB_PATH)
@@ -115,6 +124,7 @@ copy:
 # ---------- 引擎 build target ----------
 
 skyext_build: skynet \
+	$(SKYEXT_TLS_MODULE) \
 	$(foreach v, $(SKYEXT_LUA_CLIB), $(SKYEXT_LUACLIB_PATH)/$(v).so) \
 	$(foreach v, $(SKYEXT_CSERVICE), $(SKYEXT_CSERVICE_PATH)/$(v).so) \
 	$(SKYEXT_LUACLIB_PATH)/skytest/hook.so \

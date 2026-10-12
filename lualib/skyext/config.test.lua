@@ -1,4 +1,3 @@
-local skynet = require "skynet"
 local t = require "skytest"
 local config = require "skyext.config"
 
@@ -37,7 +36,7 @@ t.describe("config.serialize", function()
     end)
 
     t.it("serializes simple tables", function()
-        local result = config.serialize({a = 1, b = "two"})
+        local result = config.serialize({ a = 1, b = "two" })
         local fn = load("return " .. result)
         t.expect(fn).to.exist()
         local tbl = fn()
@@ -46,7 +45,7 @@ t.describe("config.serialize", function()
     end)
 
     t.it("serializes nested tables", function()
-        local result = config.serialize({x = {y = 3}})
+        local result = config.serialize({ x = { y = 3 } })
         local fn = load("return " .. result)
         t.expect(fn).to.exist()
         local tbl = fn()
@@ -54,7 +53,7 @@ t.describe("config.serialize", function()
     end)
 
     t.it("serializes array-like tables", function()
-        local result = config.serialize({1, 2, 3})
+        local result = config.serialize({ 1, 2, 3 })
         local fn = load("return " .. result)
         t.expect(fn).to.exist()
         local tbl = fn()

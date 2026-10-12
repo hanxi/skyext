@@ -21,5 +21,6 @@ ignore = {
 exclude_files = {
     "3rd/**",
     "etc/**",
+    "example/etc/**", -- skynet config files use a dynamic global environment
     "skynet/**",
 }

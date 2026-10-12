@@ -56,8 +56,19 @@ function CMD.__deliver_reliable(entity_id, msg_id, cmd, args)
         if ok2 then
             reliable_msg.mark_delivered(msg_id)
         else
-            log.error("deliver_reliable handler failed", "type", type_name, "id", entity_id,
-                "cmd", cmd, "msg_id", msg_id, "err", err)
+            log.error(
+                "deliver_reliable handler failed",
+                "type",
+                type_name,
+                "id",
+                entity_id,
+                "cmd",
+                cmd,
+                "msg_id",
+                msg_id,
+                "err",
+                err
+            )
         end
     else
         log.warn("deliver_reliable no handler", "type", type_name, "cmd", cmd)
@@ -77,13 +88,12 @@ function CMD.bind_client(entity_id, fd)
         end
         local cluster = require "skynet.cluster"
         local holder_node = lock_info
-        local holder_agent = types.format_agent_service_name(type_name,
-            types.calc_agent_index(type_name, entity_id))
+        local holder_agent = types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
         local ret = pcall(cluster.call, holder_node, holder_agent, "unload_entity", entity_id)
         if not ret then
             return errcode.IN_OTHER_NODE
         end
-        ok, lock_info = entitymgr:try_ensure_loaded(entity_id)
+        ok = entitymgr:try_ensure_loaded(entity_id)
         if not ok then
             return errcode.LOCAK_FAILED
         end
@@ -149,8 +159,7 @@ function CMD.start(conf)
         client_ext.init(entitymgr)
     end
 
-    log.info("entity_agent started", "type", type_name, "index", agent_index,
-        "modules", conf.modules)
+    log.info("entity_agent started", "type", type_name, "index", agent_index, "modules", conf.modules)
 end
 
 skynet.start(function()

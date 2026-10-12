@@ -59,7 +59,6 @@ skynet.start(function()
         log.info("discovered modules", "type", type_name, "modules", module_names)
     end
 
-    local agents = {}
     for i = 1, agent_count do
         local agent = skynet.newservice("entity_agent", type_name, i)
         skynet.call(agent, "lua", "start", {
@@ -67,7 +66,6 @@ skynet.start(function()
             modules_path = modules_path or "",
             watchdog = g_conf.watchdog,
         })
-        agents[i] = agent
         log.info("entity_agent created", "type", type_name, "index", i, "addr", agent)
     end
 

@@ -22,6 +22,7 @@ t.describe("errcode", function()
     t.it("throws on invalid error code access", function()
         t.expect(function()
             local _ = errcode.NONEXISTENT_CODE
-        end).to.throw("Invalid error code")
+        end).to
+            .throw("Invalid error code")
     end)
 end)

@@ -113,11 +113,11 @@ function t.start_skynet(opts)
 
     local conf_lines = {
         string.format('root = "%s/"', root),
-        string.format('skyext_root = root'),
+        string.format("skyext_root = root"),
         string.format('game_root = root .. "example/"'),
         'include "paths.conf.lua"',
-        'thread = 4',
-        'harbor = 0',
+        "thread = 4",
+        "harbor = 0",
         'bootstrap = "snlua bootstrap"',
         string.format('start = "%s"', opts.start or ""),
         'logservice = "snlua"',

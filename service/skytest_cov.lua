@@ -146,8 +146,15 @@ function CMD.DUMP()
     end
 
     local pct = total_lines > 0 and string.format("%.1f%%", covered_lines / total_lines * 100) or "N/A"
-    skynet.error(string.format("[skytest.cov] coverage: %s (%d/%d lines in %d files)",
-        pct, covered_lines, total_lines, file_count))
+    skynet.error(
+        string.format(
+            "[skytest.cov] coverage: %s (%d/%d lines in %d files)",
+            pct,
+            covered_lines,
+            total_lines,
+            file_count
+        )
+    )
 
     return {
         files = file_count,
@@ -194,7 +201,7 @@ skynet.start(function()
                     skynet.error("[skytest.cov] auto-flushed on exit")
                 end
             end)
-        end
+        end,
     })
     debug.getregistry()["skytest_cov_flush_sentinel"] = sentinel
 

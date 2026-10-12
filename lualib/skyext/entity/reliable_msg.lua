@@ -25,8 +25,7 @@ function M.save(target_type, target_id, cmd, args)
     }
     local coll = get_coll()
     coll:safe_insert(doc)
-    log.debug("reliable_msg save", "msg_id", msg_id, "target_type", target_type,
-        "target_id", target_id, "cmd", cmd)
+    log.debug("reliable_msg save", "msg_id", msg_id, "target_type", target_type, "target_id", target_id, "cmd", cmd)
     return msg_id
 end
 

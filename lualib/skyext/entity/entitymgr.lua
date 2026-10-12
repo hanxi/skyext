@@ -52,8 +52,7 @@ function M:_call_modules_on_load(entity)
         if mod_inst.on_load then
             local ok, err = xpcall(mod_inst.on_load, debug.traceback, mod_inst)
             if not ok then
-                log.error("module on_load failed", "type", self.type_name, "id", entity.id,
-                    "module", name, "err", err)
+                log.error("module on_load failed", "type", self.type_name, "id", entity.id, "module", name, "err", err)
             end
         end
     end
@@ -67,8 +66,17 @@ function M:_call_modules_on_unload(entity)
         if mod_inst.on_unload then
             local ok, err = xpcall(mod_inst.on_unload, debug.traceback, mod_inst)
             if not ok then
-                log.error("module on_unload failed", "type", self.type_name, "id", entity.id,
-                    "module", name, "err", err)
+                log.error(
+                    "module on_unload failed",
+                    "type",
+                    self.type_name,
+                    "id",
+                    entity.id,
+                    "module",
+                    name,
+                    "err",
+                    err
+                )
             end
         end
     end
@@ -83,15 +91,44 @@ function M:_deliver_pending_msgs(entity)
             local ok, err = xpcall(handler_func, debug.traceback, entity, table.unpack(msg.args or {}))
             if ok then
                 reliable_msg.mark_delivered(msg.msg_id)
-                log.info("delivered pending reliable msg", "type", self.type_name,
-                    "id", entity.id, "cmd", msg.cmd, "msg_id", msg.msg_id)
+                log.info(
+                    "delivered pending reliable msg",
+                    "type",
+                    self.type_name,
+                    "id",
+                    entity.id,
+                    "cmd",
+                    msg.cmd,
+                    "msg_id",
+                    msg.msg_id
+                )
             else
-                log.error("deliver pending reliable msg failed", "type", self.type_name,
-                    "id", entity.id, "cmd", msg.cmd, "msg_id", msg.msg_id, "err", err)
+                log.error(
+                    "deliver pending reliable msg failed",
+                    "type",
+                    self.type_name,
+                    "id",
+                    entity.id,
+                    "cmd",
+                    msg.cmd,
+                    "msg_id",
+                    msg.msg_id,
+                    "err",
+                    err
+                )
             end
         else
-            log.warn("no handler for pending reliable msg", "type", self.type_name,
-                "id", entity.id, "cmd", msg.cmd, "msg_id", msg.msg_id)
+            log.warn(
+                "no handler for pending reliable msg",
+                "type",
+                self.type_name,
+                "id",
+                entity.id,
+                "cmd",
+                msg.cmd,
+                "msg_id",
+                msg.msg_id
+            )
             reliable_msg.mark_delivered(msg.msg_id)
         end
     end

@@ -21,6 +21,7 @@ t.describe("example errcode", function()
     t.it("throws on invalid code access", function()
         t.expect(function()
             local _ = errcode.TOTALLY_BOGUS_CODE
-        end).to.throw("Invalid error code")
+        end).to
+            .throw("Invalid error code")
     end)
 end)

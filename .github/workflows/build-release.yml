@@ -6,8 +6,7 @@ on:
     tags: [ 'v*' ]
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 jobs:
   build:
@@ -17,156 +16,161 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: windows
-            os: ubuntu-latest
-            container: debian:13
-            target: mingw
-            artifact: skyext-windows.zip
           - platform: linux
             os: ubuntu-latest
-            container: debian:13
-            target: linux
-            artifact: skyext-linux.zip
           - platform: macosx
             os: macos-latest
-            target: macosx
-            artifact: skyext-macosx.zip
-          - platform: freebsd
-            os: ubuntu-latest
-            container: debian:13
-            target: freebsd
-            artifact: skyext-freebsd.zip
-
-    container: ${{ matrix.container }}
+          - platform: windows
+            os: windows-latest
 
     steps:
-    - name: Install dependencies (Debian - Windows/Linux)
-      if: matrix.container == 'debian:13'
-      run: |
-        apt-get update
-        apt-get install -y --no-install-recommends \
-          build-essential \
-          make \
-          pkg-config \
-          mingw-w64 \
-          mingw-w64-tools \
-          mingw-w64-i686-dev \
-          mingw-w64-x86-64-dev \
-          autoconf \
-          automake \
-          libtool \
-          git \
-          zip \
-          ca-certificates \
-          curl \
-          libreadline-dev \
-          libedit-dev \
-          rsync
-
-    - name: Install dependencies (macOS)
-      if: matrix.platform == 'macosx'
-      run: |
-        # macOS usually has most build tools pre-installed
-        # Install any additional dependencies if needed
-        brew install autoconf automake libtool || true
-
-    - name: Install dependencies (FreeBSD)
-      if: matrix.platform == 'freebsd'
-      run: |
-        # FreeBSD build using standard build tools (cross-compilation compatible)
-        apt-get update
-        apt-get install -y --no-install-recommends \
-          build-essential \
-          make \
-          pkg-config \
-          autoconf \
-          automake \
-          libtool \
-          git \
-          zip \
-          ca-certificates \
-          curl \
-          libreadline-dev \
-          libedit-dev \
-          rsync
-
-    - name: Update CA certificates (Debian containers)
-      if: matrix.container == 'debian:13'
-      run: |
-        update-ca-certificates
-
-    - name: Configure Git SSL (Debian containers)
-      if: matrix.container == 'debian:13'
-      run: |
-        git config --global http.sslverify true
-        git config --global http.sslcainfo /etc/ssl/certs/ca-certificates.crt
-
     - name: Checkout code
       uses: actions/checkout@v6
       with:
         submodules: recursive
         fetch-depth: 1
 
-    - name: Build ${{ matrix.platform }}
+    - name: Install dependencies (Linux)
+      if: matrix.platform == 'linux'
       run: |
-        make cleanall
-        make ${{ matrix.target }}
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential pkg-config autoconf automake libtool \
+          libssl-dev libreadline-dev libedit-dev rsync zip
 
-    - name: Prepare build files
-      run: |
-        mkdir -p build-output
-        # Copy all files except .git and .github with ignore-errors flag
-    - name: Clean and recreate directory
-      run: |
-        rm -rf build-output/
-        mkdir -p build-output/
+    - name: Install dependencies (macOS)
+      if: matrix.platform == 'macosx'
+      run: brew install autoconf automake libtool openssl@3 rsync
 
-    - name: Sync files to build-output excluding specific directories
+    - name: Install dependencies (Windows)
+      if: matrix.platform == 'windows'
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          make git rsync zip
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-binutils
+          mingw-w64-x86_64-openssl
+
+    - name: Build Linux
+      if: matrix.platform == 'linux'
+      run: make -C example linux
+
+    - name: Build macOS
+      if: matrix.platform == 'macosx'
       run: |
-        rsync -av --ignore-errors --exclude='.git*' --exclude='.github' --exclude='build-output' . build-output/
+        openssl_prefix="$(brew --prefix openssl@3)"
+        make -C example macosx \
+          MYCFLAGS="-I${openssl_prefix}/include -L${openssl_prefix}/lib" \
+          TLS_INC="${openssl_prefix}/include" TLS_LIB="${openssl_prefix}/lib"
+
+    - name: Build Windows
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
+      run: |
+        test "$(gcc -dumpmachine)" = x86_64-w64-mingw32
+        make -C example mingw CC=gcc AR=ar RANLIB=ranlib
+        # Bundle all MinGW DLLs imported by the executables and C modules,
+        # including transitive OpenSSL dependencies.
+        while :; do
+          copied=0
+          for binary in bin/*.exe bin/*.dll luaclib/*.so luaclib/skytest/*.so \
+                        cservice/*.so skynet/luaclib/*.so skynet/cservice/*.so; do
+            [ -f "$binary" ] || continue
+            for name in $(objdump -p "$binary" | awk '/DLL Name:/ { print $3 }'); do
+              dll="/mingw64/bin/$name"
+              if [ -f "$dll" ] && [ ! -f "bin/$name" ]; then
+                cp "$dll" bin/
+                copied=1
+              fi
+            done
+          done
+          [ "$copied" -eq 0 ] && break
+        done
+        test -f skynet/luaclib/ltls.so
+        env PATH="$(pwd)/bin:/usr/bin:/bin" ./bin/lua.exe -e \
+          'package.cpath = "./luaclib/?.so;./skynet/luaclib/?.so"; assert(require("crypto")); assert(package.loadlib("./skynet/luaclib/ltls.so", "luaopen_ltls_init_c"))'
+
+    - name: Package Linux/macOS
+      if: matrix.platform != 'windows'
+      run: sh scripts/ci/package-release.sh "${{ matrix.platform }}"
+
+    - name: Package Windows
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
+      run: sh scripts/ci/package-release.sh windows
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.artifact }}
-        path: build-output/
+        name: skyext-${{ matrix.platform }}
+        path: release-assets/skyext-${{ matrix.platform }}.zip
+        if-no-files-found: error
+        retention-days: 30
+
+  build-freebsd:
+    name: Build freebsd
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+        fetch-depth: 1
+
+    - name: Build and package in FreeBSD VM
+      uses: vmactions/freebsd-vm@v1
+      with:
+        release: '14.4'
+        sync: rsync
+        prepare: |
+          pkg install -y gmake git autoconf automake libtool pkgconf openssl rsync zip
+        run: |
+          set -eu
+          test "$(uname -s)" = FreeBSD
+          gmake -C example freebsd \
+            MYCFLAGS='-I/usr/local/include -L/usr/local/lib' \
+            TLS_INC=/usr/local/include TLS_LIB=/usr/local/lib
+          sh scripts/ci/package-release.sh freebsd
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: skyext-freebsd
+        path: release-assets/skyext-freebsd.zip
+        if-no-files-found: error
         retention-days: 30
 
   release:
     name: Create Release
-    needs: build
+    needs: [build, build-freebsd]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    
+    permissions:
+      contents: write
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        path: artifacts
+        pattern: skyext-*
+        path: release-assets
+        merge-multiple: true
 
-    - name: Prepare release assets
+    - name: Verify release assets
       run: |
-        mkdir -p release-assets
-        # Copy zip files from artifact directories to release assets
-        for artifact in skyext-windows.zip skyext-linux.zip skyext-macosx.zip skyext-freebsd.zip; do
-          if [ -d "artifacts/${artifact}" ]; then
-            # The artifacts are already organized, just copy them
-            cp -r "artifacts/${artifact}/"* "release-assets/" 2>/dev/null || true
-            # Or if we want to create new zip files with consistent naming
-            platform=$(echo ${artifact} | sed 's/skyext-\(.*\)\.zip/\1/')
-            cd "artifacts/${artifact}"
-            zip -r "../../release-assets/skyext-${platform}.zip" .
-            cd ../..
-          fi
+        for platform in linux macosx windows freebsd; do
+          test -s "release-assets/skyext-${platform}.zip"
+          unzip -tq "release-assets/skyext-${platform}.zip" > /dev/null
         done
-        ls -la release-assets/
+        ls -lh release-assets/
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: release-assets/*.zip
+        fail_on_unmatched_files: true
         generate_release_notes: true
-        draft: false
-        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

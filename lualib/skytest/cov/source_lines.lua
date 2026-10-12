@@ -21,7 +21,9 @@ end
 local function list_lua_files(dir, exclude_patterns)
     local files = {}
     local handle = io.popen(string.format('find %q -name "*.lua" -type f 2>/dev/null', dir))
-    if not handle then return files end
+    if not handle then
+        return files
+    end
 
     for path in handle:lines() do
         local skip = false
@@ -48,7 +50,7 @@ function M.scan(source_dirs, exclude_patterns)
     for _, dir in ipairs(source_dirs) do
         local files = list_lua_files(dir, exclude_patterns)
         for _, filepath in ipairs(files) do
-            local lines, err = scan_file(filepath)
+            local lines = scan_file(filepath)
             if lines then
                 local source_key = "@./" .. filepath:gsub("^%./", "")
                 baseline[source_key] = {}

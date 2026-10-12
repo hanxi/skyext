@@ -31,7 +31,9 @@ end
 
 local function scan_dir(dir, exclude_patterns, results)
     local handle = io.popen('find "' .. dir .. '" -name "*.lua" -type f 2>/dev/null')
-    if not handle then return end
+    if not handle then
+        return
+    end
 
     for path in handle:lines() do
         local skip = false

@@ -9,19 +9,14 @@ local function find_upvalue(fn, name)
     local i = 1
     while true do
         local n, v = debug.getupvalue(fn, i)
-        if n == nil then return nil, nil end
-        if n == name then return i, v end
+        if n == nil then
+            return nil, nil
+        end
+        if n == name then
+            return i, v
+        end
         i = i + 1
     end
-end
-
-local function set_upvalue(fn, name, val)
-    local idx = find_upvalue(fn, name)
-    if idx then
-        debug.setupvalue(fn, idx, val)
-        return true
-    end
-    return false
 end
 
 local function patch_coroutine_hook()
@@ -56,7 +51,7 @@ local function patch_coroutine_hook()
 
     -- Step 3: Also patch coroutine.create globally for user code
     local raw_create = coroutine.create
-    coroutine.create = chook.wrap_create(raw_create, stats)
+    rawset(coroutine, "create", chook.wrap_create(raw_create, stats))
 
     return true, warnings
 end
@@ -72,7 +67,7 @@ local function probe_coroutine_hook()
         probe_line = info.currentline
     end
 
-    local co = skynet.fork(probe_fn)
+    skynet.fork(probe_fn)
     -- The fork enqueues the coroutine; it won't run until we yield.
     -- Use skynet.sleep(0) to let the scheduler run the fork.
     skynet.sleep(0)
@@ -86,7 +81,7 @@ local function probe_coroutine_hook()
     -- if other sources have data, the hook mechanism works.
     local file_stats = collector.stats[probe_source]
     if not file_stats then
-        for _ in pairs(collector.stats) do
+        if next(collector.stats) then
             return true
         end
         return false, string.format("no stats recorded for probe source %s", probe_source)
@@ -105,7 +100,7 @@ local function install_exit_anchor()
     local sentinel = setmetatable({}, {
         __gc = function()
             pcall(collector.report_to_central)
-        end
+        end,
     })
     -- Keep sentinel alive in the registry so it's only collected when the VM shuts down.
     debug.getregistry()["skytest_cov_exit_sentinel"] = sentinel
@@ -113,7 +108,9 @@ end
 
 function M.setup()
     local cfg = config.get()
-    if not cfg.enabled then return end
+    if not cfg.enabled then
+        return
+    end
 
     -- Install C hook on the main coroutine (no filter yet — probe needs to run unfiltered)
     chook.start(collector.stats)
@@ -142,10 +139,7 @@ function M.setup()
 
     -- Now apply C-level path filters (after probe passed)
     if #cfg.include > 0 or #cfg.exclude > 0 then
-        chook.set_filter(
-            #cfg.include > 0 and cfg.include or nil,
-            #cfg.exclude > 0 and cfg.exclude or nil
-        )
+        chook.set_filter(#cfg.include > 0 and cfg.include or nil, #cfg.exclude > 0 and cfg.exclude or nil)
     end
 
     -- Start central service (uniqueservice ensures only one instance).
@@ -171,8 +165,9 @@ function M.setup()
         end
     end)
 
-    skynet.error("[skytest.cov] installed successfully" ..
-        (ok and ", coroutine hook active" or ", coroutine hook DEGRADED"))
+    skynet.error(
+        "[skytest.cov] installed successfully" .. (ok and ", coroutine hook active" or ", coroutine hook DEGRADED")
+    )
 end
 
 return M

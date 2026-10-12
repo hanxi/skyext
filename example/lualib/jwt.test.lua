@@ -1,4 +1,3 @@
-local skynet = require "skynet"
 local t = require "skytest"
 local jwt = require "jwt"
 
@@ -36,6 +35,7 @@ t.describe("jwt", function()
         t.it("rejects invalid format", function()
             local result, err = jwt.verify("not.a.valid.token.format", secret)
             t.expect(result).to.be_nil()
+            t.expect(err).to.equal("invalid token format")
         end)
 
         t.it("rejects wrong secret", function()
@@ -58,6 +58,7 @@ t.describe("jwt", function()
             local tampered = table.concat(parts, ".")
             local result, err = jwt.verify(tampered, secret)
             t.expect(result).to.be_nil()
+            t.expect(err).to.exist()
         end)
     end)
 

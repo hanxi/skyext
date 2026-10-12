@@ -82,7 +82,12 @@ mongo_config = {
             entity_msg = {
                 indexes = {
                     { "target_type", "target_id", "status", background = true },
-                    { "create_time", expireAfterSeconds = 604800, partialFilterExpression = { status = 1 }, background = true },
+                    {
+                        "create_time",
+                        expireAfterSeconds = 604800,
+                        partialFilterExpression = { status = 1 },
+                        background = true,
+                    },
                 },
             },
         },

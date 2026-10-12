@@ -12,7 +12,9 @@ local defaults = {
 }
 
 local function to_patterns(s)
-    if not s or s == "" then return {} end
+    if not s or s == "" then
+        return {}
+    end
     local t = {}
     for p in s:gmatch("[^,;]+") do
         t[#t + 1] = p:match("^%s*(.-)%s*$")

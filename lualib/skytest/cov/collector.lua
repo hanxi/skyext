@@ -17,8 +17,12 @@ local function match_patterns(source, patterns)
 end
 
 function M.should_track(source)
-    if not source or source == "" then return false end
-    if source:sub(1, 1) ~= "@" then return false end
+    if not source or source == "" then
+        return false
+    end
+    if source:sub(1, 1) ~= "@" then
+        return false
+    end
 
     local path = source:sub(2)
     if not cfg then
@@ -80,7 +84,9 @@ end
 
 function M.report_to_central()
     local data = M.dump()
-    if not next(data) then return end
+    if not next(data) then
+        return
+    end
     pcall(skynet.send, config.get().service_name, "lua", "REPORT", data)
 end
 

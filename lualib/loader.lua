@@ -57,9 +57,14 @@ local game_root = skynet.getenv("game_root") or "./"
 local start = skynet.getenv("start")
 
 -- 节点独有库 prepend（优先于游戏/引擎/skynet）
-local node_lualib =
-    game_root .. "nodes/" .. start .. "/lualib/?.lua;" ..
-    game_root .. "nodes/" .. start .. "/lualib/?/init.lua;"
+local node_lualib = game_root
+    .. "nodes/"
+    .. start
+    .. "/lualib/?.lua;"
+    .. game_root
+    .. "nodes/"
+    .. start
+    .. "/lualib/?/init.lua;"
 package.path = node_lualib .. package.path
 
 -- 节点根目录 prepend（优先于节点独有库）
@@ -69,8 +74,12 @@ end
 
 -- 服务独有库 prepend（最高优先级）
 if SERVICE_PATH then
-    package.path = SERVICE_PATH .. SERVICE_NAME .. "/lualib/?.lua;"
-        .. SERVICE_PATH .. SERVICE_NAME .. "/lualib/?/init.lua;"
+    package.path = SERVICE_PATH
+        .. SERVICE_NAME
+        .. "/lualib/?.lua;"
+        .. SERVICE_PATH
+        .. SERVICE_NAME
+        .. "/lualib/?/init.lua;"
         .. package.path
 end
 
