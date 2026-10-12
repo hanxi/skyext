@@ -63,8 +63,16 @@ jobs:
       run: |
         openssl_prefix="$(brew --prefix openssl@3)"
         make -C example macosx \
-          MYCFLAGS="-I${openssl_prefix}/include -L${openssl_prefix}/lib" \
+          OPENSSL_CFLAGS="-I${openssl_prefix}/include" \
+          OPENSSL_LDFLAGS="-L${openssl_prefix}/lib" \
           TLS_INC="${openssl_prefix}/include" TLS_LIB="${openssl_prefix}/lib"
+
+    - name: Apply Skynet MinGW compatibility patch
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
+      run: |
+        git -C skynet apply --check ../scripts/ci/patches/skynet-mingw-clock.patch
+        git -C skynet apply ../scripts/ci/patches/skynet-mingw-clock.patch
 
     - name: Build Windows
       if: matrix.platform == 'windows'
@@ -131,7 +139,8 @@ jobs:
           set -eu
           test "$(uname -s)" = FreeBSD
           gmake -C example freebsd \
-            MYCFLAGS='-I/usr/local/include -L/usr/local/lib' \
+            OPENSSL_CFLAGS=-I/usr/local/include \
+            OPENSSL_LDFLAGS=-L/usr/local/lib \
             TLS_INC=/usr/local/include TLS_LIB=/usr/local/lib
           sh scripts/ci/package-release.sh freebsd
 

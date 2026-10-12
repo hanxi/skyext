@@ -114,12 +114,13 @@ jobs:
         retention-days: 30
 
   deploy-pages:
-    name: Deploy to GitHub Pages
+    name: Deploy Pages (when configured)
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     permissions:
+      contents: read
       pages: write
       id-token: write
 
@@ -128,16 +129,34 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
 
     steps:
+    - name: Check Pages configuration
+      id: pages
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        status=$(curl -sS -o /dev/null -w '%{http_code}' \
+          -H 'Accept: application/vnd.github+json' \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages")
+        case "$status" in
+          200) echo "enabled=true" >> "$GITHUB_OUTPUT" ;;
+          404) echo "GitHub Pages 尚未启用；覆盖率报告已作为构建产物上传，本次跳过站点部署。" >> "$GITHUB_STEP_SUMMARY" ;;
+          *) echo "查询 GitHub Pages 失败 (HTTP $status)" >&2; exit 1 ;;
+        esac
+
     - name: Checkout code
+      if: steps.pages.outputs.enabled == 'true'
       uses: actions/checkout@v6
 
     - name: Download coverage report
+      if: steps.pages.outputs.enabled == 'true'
       uses: actions/download-artifact@v4
       with:
         name: coverage-report
         path: _site/coverage
 
     - name: Assemble site
+      if: steps.pages.outputs.enabled == 'true'
       run: |
         mkdir -p _site
         printf '<!DOCTYPE html><meta http-equiv="refresh" content="0;url=docs/">' > _site/index.html
@@ -148,13 +167,16 @@ jobs:
         rsync -a --exclude='plan/' --exclude='design/' --exclude='internal/' docs/ _site/docs/
 
     - name: Setup Pages
+      if: steps.pages.outputs.enabled == 'true'
       uses: actions/configure-pages@v5
 
     - name: Upload to Pages
+      if: steps.pages.outputs.enabled == 'true'
       uses: actions/upload-pages-artifact@v3
       with:
         path: _site
 
     - name: Deploy
+      if: steps.pages.outputs.enabled == 'true'
       id: deploy
       uses: actions/deploy-pages@v4

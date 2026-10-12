@@ -26,6 +26,8 @@ BIN_PATH ?= $(SKYEXT_ROOT)/bin
 LUA_DIR ?= $(SKYEXT_ROOT)/skynet/3rd/lua
 LUA_INC ?= $(LUA_DIR)
 CFLAGS = -g -O2 -Wall -I$(LUA_INC) $(MYCFLAGS)
+OPENSSL_CFLAGS ?=
+OPENSSL_LDFLAGS ?=
 SKYNET_LIBS :=
 EXE_SUFFIX :=
 LUA_LIBS :=
@@ -69,7 +71,7 @@ $(SKYEXT_LUACLIB_PATH)/lfs.so : $(SKYEXT_ROOT)/3rd/luafilesystem/src/lfs.c | $(S
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/crypto.so : $(SKYEXT_ROOT)/lualib-src/crypto.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) $(SHARED) $^ -o $@ $(OPENSSL_LDFLAGS) -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
@@ -82,7 +84,7 @@ ifeq ($(PLAT), mingw)
 SKYEXT_TLS_MODULE = $(SKYEXT_ROOT)/skynet/luaclib/ltls.so
 
 $(SKYEXT_TLS_MODULE): $(SKYEXT_ROOT)/skynet/lualib-src/ltls.c | skynet
-	$(CC) $(CFLAGS) $(SHARED) $< -o $@ -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) $(SHARED) $< -o $@ $(OPENSSL_LDFLAGS) -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
 endif
 
 # ---------- skytest C hook ----------
