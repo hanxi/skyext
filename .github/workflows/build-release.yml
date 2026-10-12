@@ -131,24 +131,35 @@ jobs:
         @echo off
         set "PATH=%GITHUB_WORKSPACE%\bin;%SystemRoot%\System32;%SystemRoot%"
         cd /d "%TEMP%"
-        call "%GITHUB_WORKSPACE%\bin\skyext.bat" --help > "%TEMP%\skyext-cli-help.txt"
-        if errorlevel 1 exit /b 1
-        findstr /C:"./bin/skyext" "%TEMP%\skyext-cli-help.txt" >NUL
-        if errorlevel 1 exit /b 1
-        call "%GITHUB_WORKSPACE%\bin\skyext.bat" generate --help > "%TEMP%\skyext-cli-generate.txt"
-        if errorlevel 1 exit /b 1
-        findstr /C:"generate <proto|schema>" "%TEMP%\skyext-cli-generate.txt" >NUL
-        if errorlevel 1 exit /b 1
-        call "%GITHUB_WORKSPACE%\bin\skyext.bat" package --help > "%TEMP%\skyext-cli-package.txt"
-        if errorlevel 1 exit /b 1
-        findstr /C:"package framework <platform>" "%TEMP%\skyext-cli-package.txt" >NUL
-        if errorlevel 1 exit /b 1
-        call "%GITHUB_WORKSPACE%\bin\skyext.bat" test --match "no matching tests" "%GITHUB_WORKSPACE%\lualib\skyext\errcode.test.lua" > "%TEMP%\skyext-cli-test.txt"
-        if errorlevel 1 exit /b 1
-        findstr /C:"No test files found." "%TEMP%\skyext-cli-test.txt" >NUL
-        if errorlevel 1 exit /b 1
-        call "%GITHUB_WORKSPACE%\bin\skyext.bat" unknown-command >NUL 2>&1
-        if not "%ERRORLEVEL%"=="1" exit /b 1
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" --help > "%TEMP%\skyext-cli-help.txt" 2>&1
+        if errorlevel 1 (type "%TEMP%\skyext-cli-help.txt" & exit /b 1)
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" generate --help > "%TEMP%\skyext-cli-generate.txt" 2>&1
+        if errorlevel 1 (type "%TEMP%\skyext-cli-generate.txt" & exit /b 1)
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" package --help > "%TEMP%\skyext-cli-package.txt" 2>&1
+        if errorlevel 1 (type "%TEMP%\skyext-cli-package.txt" & exit /b 1)
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" test --match "no matching tests" "%GITHUB_WORKSPACE%\lualib\skyext\errcode.test.lua" > "%TEMP%\skyext-cli-test.txt" 2>&1
+        if errorlevel 1 (type "%TEMP%\skyext-cli-test.txt" & exit /b 1)
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" unknown-command > "%TEMP%\skyext-cli-unknown.txt" 2>&1
+        if not "%ERRORLEVEL%"=="1" (type "%TEMP%\skyext-cli-unknown.txt" & exit /b 1)
+        exit /b 0
+
+    - name: Verify CLI output (Windows)
+      if: matrix.platform == 'windows'
+      shell: pwsh
+      run: |
+        $checks = @{
+          'skyext-cli-help.txt' = './bin/skyext'
+          'skyext-cli-generate.txt' = 'generate <proto|schema>'
+          'skyext-cli-package.txt' = 'package framework <platform>'
+          'skyext-cli-test.txt' = 'No test files found.'
+          'skyext-cli-unknown.txt' = 'unknown-command'
+        }
+        foreach ($entry in $checks.GetEnumerator()) {
+          $output = Get-Content (Join-Path $env:TEMP $entry.Key) -Raw -Encoding utf8
+          if (-not $output.Contains($entry.Value)) {
+            throw "Expected '$($entry.Value)' in $($entry.Key), got: $output"
+          }
+        }
 
     - name: Package Linux/macOS
       if: matrix.platform != 'windows'

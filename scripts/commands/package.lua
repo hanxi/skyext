@@ -234,12 +234,11 @@ return function(ctx, _, args)
   ./bin/skyext package framework <platform> 打包平台框架发布包 release-assets/skyext-<platform>.zip]])
         return 0
     end
-    if
-        (target == "game" or target == "framework")
-        and (args[2] == "-h" or args[2] == "--help")
-        and not args[3]
-    then
-        print(target == "game" and "用法: ./bin/skyext package game" or "用法: ./bin/skyext package framework <platform>")
+    if (target == "game" or target == "framework") and (args[2] == "-h" or args[2] == "--help") and not args[3] then
+        print(
+            target == "game" and "用法: ./bin/skyext package game"
+                or "用法: ./bin/skyext package framework <platform>"
+        )
         return 0
     end
     if target == "game" then
