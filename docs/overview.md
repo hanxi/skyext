@@ -1,267 +1,56 @@
-# 项目概述
+# 架构概览
 
-## 目录
-1. [简介](#简介)
-2. [项目结构](#项目结构)
-3. [核心组件](#核心组件)
-4. [架构总览](#架构总览)
-5. [详细组件分析](#详细组件分析)
-6. [依赖关系分析](#依赖关系分析)
-7. [性能考量](#性能考量)
-8. [故障排查指南](#故障排查指南)
-9. [结论](#结论)
-10. [附录：快速开始](#附录快速开始)
+skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏服务器基础设施；`example/` 是使用这些能力的示例游戏。本文说明**代码放在哪里、节点如何协作、启动时配置如何生效**。安装、启动和测试步骤集中在[快速上手](getting-started.md)。
 
-## 简介
-SkyExt 是一个基于 Skynet 的分布式游戏服务器框架，采用微服务化设计，将账号服务（Account）与角色服务（Role）解耦部署，通过服务发现实现动态扩缩容。框架内置 ORM、MongoDB 持久化、sproto 协议管理、JWT 认证、日志系统以及基于 etcd 的服务注册与发现能力，并提供热更新等扩展能力。其目标是提供高性能、可扩展、易维护的游戏服务端基础设施，便于快速构建多人在线游戏后端。
+## 引擎层与游戏层
 
-## 项目结构
-项目采用分层与模块化组织：
-- 应用入口：example/nodes/account、example/nodes/role、example/nodes/robot
-- 配置：example/etc/core.conf.lua 定义全局路径与线程数；example/etc/nodes/*.app.lua 定义业务配置
-- 库与工具：lualib 提供 ORM、配置、服务发现、数据库、HTTP、协议等通用能力
-- 服务：service 提供集群发现、日志、Mongo 连接、协议加载等后台服务
-- 协议与模式：proto 与 schema 定义 sproto 协议与数据模型
-- 构建与工具：Makefile、build.mk、tools 脚本用于编译、代码生成与打包
+| 层级 | 主要路径 | 职责 |
+| --- | --- | --- |
+| 引擎 Lua 模块 | `lualib/skyext/` | `skyext.*` 命名空间：配置、日志、HTTP、服务发现、协议、GM、实体路由等 |
+| 引擎基础设施 | `lualib/orm/`、`lualib/skytest/`、`service/` | ORM、测试与覆盖率、GM/热更/数据库等 skynet 服务 |
+| 引擎原生扩展 | `lualib-src/`、`service-src/`、`build.mk` | C 模块、C 服务及构建规则 |
+| 游戏层（示例） | `example/nodes/`、`example/lualib/` | 节点入口、角色/账号逻辑、实体 handler 与业务模块 |
+| 游戏契约与配置 | `example/etc/`、`example/proto/`、`example/schema/` | 节点/应用配置、sproto 协议、ORM 数据模式 |
 
-```mermaid
-graph TB
-A["应用入口<br/>example/nodes/account/main.lua"] --> B["启动器与HTTP服务<br/>lualib/skyext/http_server/*"]
-C["应用入口<br/>example/nodes/role/main.lua"] --> D["网关监听<br/>watchdog/gate"]
-E["核心配置<br/>example/etc/core.conf.lua"] --> A
-E --> C
-F["业务配置<br/>example/etc/nodes/common.app.lua"] --> A
-F --> C
-G["服务发现客户端<br/>lualib/skyext/cluster_discovery.lua"] --> H["服务发现服务<br/>service/cluster_discovery.lua"]
-I["ORM与持久化<br/>lualib/orm/init.lua + lualib/skyext/dbmgr.lua"] --> J["MongoDB"]
-K["配置加载<br/>lualib/skyext/config.lua"] --> F
-```
+游戏项目可以参考 `example/` 实现自身逻辑，并通过搜索路径使用引擎模块。引擎服务通过约定扩展点加载游戏侧代码，例如实体 agent 按实体类型加载 `entity_handler.<type>`；这不等于把业务模块放进 `lualib/skyext/`。`skynet/` 与 `3rd/` 是 Git submodule 依赖。
 
-## 核心组件
-- 配置系统：统一读取节点与应用配置，支持字符串、数值、布尔与表类型，并注入到 skynet 环境供各模块使用
-- 服务发现：客户端封装查询与订阅变更；服务端基于 etcd 租约与心跳维持服务注册信息
-- ORM 与持久化：对象关系映射，脏标记与增量提交，定时落盘与卸载时强制落盘，版本控制避免并发写冲突
-- HTTP 服务：Account 节点暴露 HTTP 接口，路由注册至 account_router
-- 协议与鉴权：sproto 协议编解码与校验，JWT 登录令牌
-- 日志系统：分级输出、文件与控制台双通道、可配置轮转策略
+## 节点与数据流
 
-## 架构总览
-SkyExt 以 Skynet 为运行时，按职责拆分为多个独立进程（节点），通过消息总线与事件通道协作。Account 节点负责用户系统与 HTTP 接入；Role 节点负责角色逻辑与网关接入；两者均通过服务发现进行动态寻址；数据层通过 ORM 与 MongoDB 交互，配置由 etcd 与本地配置文件共同驱动。
+| 节点 | 入口 | 主要职责 |
+| --- | --- | --- |
+| Account | `example/nodes/account/main.lua` | 启动 HTTP 服务并注册账号路由，处理账号与登录请求 |
+| Role | `example/nodes/role/main.lua` | 启动 watchdog/gate，承载角色连接与游戏逻辑 |
+| Robot | `example/nodes/robot/main.lua` | 示例客户端，用于本地登录/游戏流程验证 |
 
-```mermaid
-graph TB
-subgraph "进程"
-ACC["Account 节点<br/>example/nodes/account/main.lua"]
-ROLE["Role 节点<br/>example/nodes/role/main.lua"]
-CD_CLI["服务发现客户端<br/>lualib/skyext/cluster_discovery.lua"]
-CD_SVC["服务发现服务<br/>service/cluster_discovery.lua"]
-DBM["数据库管理器<br/>lualib/skyext/dbmgr.lua"]
-ORM["ORM 引擎<br/>lualib/orm/init.lua"]
-CFG["配置中心<br/>lualib/skyext/config.lua"]
-ETCD["etcd 集群"]
-MONGO["MongoDB"]
-end
-ACC --> CFG
-ROLE --> CFG
-ACC --> CD_CLI
-ROLE --> CD_CLI
-CD_CLI --> CD_SVC
-CD_SVC --> ETCD
-DBM --> ORM
-ORM --> MONGO
-```
+各节点分别运行在 skynet 进程中。示例的 Account、Role 节点都调用游戏层 `example/lualib/launcher.lua` 启动 GM、hotfix 服务，并在启动阶段创建 MongoDB 索引；Role 通过网关接入客户端。服务发现组件把服务注册到 etcd，并为服务端调用方维护节点缓存；示例 Robot 则根据 Account 返回的 `rolenode` 和本地 `gate_nodes` 配置连接网关，而非从 etcd 缓存选择客户端地址。角色与账号数据通过 MongoDB 连接池、ORM 和业务 handler 读取/保存。详细的客户端交互见[登录流程](guide/login.md)及[流程图](guide/login_diagram.md)。
 
-## 详细组件分析
+示例业务配置位于 `example/etc/nodes/`：Account HTTP、Role 网关、GM HTTP 端口，以及 `mongo_config`、`etcd_config`、JWT 密钥等都在这里配置。跨机器部署时，需同时调整监听/对外地址、服务发现地址和外部服务连接地址；示例中的 `127.0.0.1` 只适用于本机环境。
 
-### 配置系统（Config）
-- 功能要点
-  - 从节点配置 app_config_path 加载应用配置，支持 include 与环境变量替换
-  - 提供 get/get_boolean/get_number/get_table 统一访问接口
-  - 将配置序列化后写入 skynet 环境，供其他模块按需读取
-- 关键流程
-  - 初始化时解析 app_config_path，执行 include 链，最终 setenv 所有键值
-  - 支持 table 类型配置，内部序列化为字符串存储于环境
+## 启动与模块加载
 
-```mermaid
-flowchart TD
-Start(["配置初始化"]) --> LoadPath["读取 app_config_path"]
-LoadPath --> Parse["解析并 include 子配置"]
-Parse --> Env["写入 skynet 环境"]
-Env --> Access["get/get_table 等接口读取"]
-Access --> End(["完成"])
-```
+1. skynet 从 `example/etc/<node>.conf.lua` 读取启动参数；节点文件通过 `include "core.conf.lua"` 载入根目录、线程与搜索路径。
+2. `example/etc/core.conf.lua` 定义 `root = "./"`、`skyext_root`、`game_root`，再载入同目录的 `paths.conf.lua`。因此直接启动 skynet 时工作目录必须是 **skyext 仓库根目录**。
+3. `lualib/loader.lua` 依次配置服务局部、节点、游戏公共、引擎和 skynet 的 Lua 模块搜索路径，并加载 `require "skyext"`。
+4. `lualib/skyext/init.lua` 注册初始化回调：`skyext.config` 读取 `app_config_path` 指向的应用配置，`skyext.log` 初始化日志；随后执行服务自身的入口文件。
 
-### 服务发现（Cluster Discovery）
-- 客户端侧
-  - 提供 register/unregister 注册与注销服务
-  - 维护服务节点缓存，支持随机选择与获取全部节点
-  - 订阅 service_change 事件，自动刷新节点列表
-- 服务端侧
-  - 基于 etcd 租约与心跳保活，周期性续租
-  - 维护本地服务表，同步到 etcd，删除时清理
-  - 开启 cluster 端口以便跨进程通信
+搜索优先级允许服务或游戏层覆盖自己的模块，但引擎 Lua 模块应通过 `require "skyext.<模块>"` 引用，避免与同名业务模块冲突。`config.get`、`get_number`、`get_boolean`、`get_table` 分别读取字符串、数值、布尔和表类型的应用配置。配置文件和示例见[快速上手：理解并修改配置](getting-started.md)。
 
-```mermaid
-sequenceDiagram
-participant App as "应用"
-participant CLI as "服务发现客户端"
-participant SVC as "服务发现服务"
-participant ETCD as "etcd"
-App->>CLI : register(service, info)
-CLI->>SVC : 发送注册消息
-SVC->>ETCD : 申请租约(Grant)
-SVC->>ETCD : 设置服务键(带租约)
-loop 心跳
-SVC->>ETCD : 续租(Keepalive)
-end
-App->>CLI : query_service(service)
-CLI->>SVC : 查询节点列表
-SVC-->>CLI : 返回节点集合
-CLI-->>App : 返回可用节点
-```
+## 核心能力与实现位置
 
-### ORM 与数据持久化（ORM + DBMgr）
-- ORM 特性
-  - 文档型对象包装，字段变更追踪与脏标记传播
-  - 支持嵌套对象与数组，序列化时跳过默认值
-  - 增量提交：仅提交变更字段，减少网络与磁盘开销
-- DBMgr 机制
-  - 加载数据时 find_and_modify upsert，创建 ORM 文档并绑定定时落盘
-  - 卸载时取消定时器并强制落盘，保证数据一致性
-  - 版本控制：保存时携带 _version 乐观锁，防止并发覆盖
+| 能力 | 入口或实现 | 说明 |
+| --- | --- | --- |
+| 服务发现 | `lualib/skyext/cluster_discovery.lua`、`service/cluster_discovery.lua` | etcd 注册、租约续期、服务节点查询与变更通知 |
+| 数据持久化 | `lualib/skyext/dbmgr.lua`、`lualib/orm/`、`service/mongo_conn.lua` | 加载/缓存 ORM 对象、跟踪变更、定时与卸载时写入 MongoDB |
+| 协议与鉴权 | `lualib/skyext/sproto_api.lua`、`example/lualib/jwt.lua` | sproto 编解码、示例 JWT 登录 |
+| HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`service/gm.lua` | HTTP 路由及命令注册/执行；接口见 [GM HTTP API](guide/gm_api.md) |
+| 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
+| 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按类型路由、实体生命周期、业务模块扩展 |
+| 测试与覆盖率 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程，生成 lcov 报告 |
 
-```mermaid
-flowchart TD
-LStart(["加载文档"]) --> CheckCache{"缓存命中?"}
-CheckCache --> |是| ReturnDoc["返回ORM文档"]
-CheckCache --> |否| Upsert["find_and_modify upsert"]
-Upsert --> Wrap["包装为ORM文档"]
-Wrap --> Timer["启动随机间隔定时落盘"]
-Timer --> Save["保存脏数据(增量$set/$unset)"]
-Save --> Version{"版本一致?"}
-Version --> |是| Done(["完成"])
-Version --> |否| Rollback["回滚版本号并重试"]
-Rollback --> Save
-```
+**数据可靠性边界**：`dbmgr` 使用脏数据定时落盘，并在卸载时尝试保存；进程异常退出或数据库写入失败时不能据此推断数据已持久化。生产使用前需要结合自身的数据一致性要求、失败日志和恢复策略评估。示例 JWT/GM 密钥也必须更换并限制相关接口访问。
 
-### 应用入口与节点启动
-- Account 节点
-  - 启动 HTTP 服务，注册路由，处理用户相关请求
-- Role 节点
-  - 启动 watchdog/gate 监听客户端连接，承载角色逻辑
+## 当前状态与延伸阅读
 
-```mermaid
-sequenceDiagram
-participant SKY as "Skynet"
-participant ACC as "Account主进程"
-participant HTTP as "HTTP服务"
-participant ROLE as "Role主进程"
-participant GW as "网关(watchdog)"
-SKY->>ACC : 启动 example/nodes/account/main.lua
-ACC->>HTTP : 启动并注册路由
-SKY->>ROLE : 启动 example/nodes/role/main.lua
-ROLE->>GW : 启动网关监听端口
-```
+代码中已有 Account/Role 示例、实体框架、GM/热更、skytest 与覆盖率工具；[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)和[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)描述的是后续方向，不应将规划中的功能视为已交付。仓库中已有 `public/gm.html` 和部分 profiler 相关组件，但不等于完整的运营后台或火焰图服务。
 
-### 启动与初始化钩子
-- skyext 在 skynet.init 中加载配置与日志，确保后续模块可用
-- core.conf 定义 Lua 搜索路径、线程数、bootstrap 服务等基础参数
-
-```mermaid
-flowchart TD
-Boot["Skynet 启动"] --> Init["skyext 初始化"]
-Init --> LoadCfg["加载配置模块并 init"]
-Init --> LoadLog["加载日志模块并 init"]
-Boot --> CoreConf["加载 core.conf 路径与线程"]
-CoreConf --> Services["启动 bootstrap 与服务"]
-```
-
-## 依赖关系分析
-- 构建依赖
-  - 平台检测与编译目标：Linux/macOS/FreeBSD/MinGW
-  - 第三方库：lua-cjson、luafilesystem、OpenSSL、traceback
-  - 产物：skynet 二进制、Lua/C 扩展 .so
-- 运行依赖
-  - etcd：服务注册与发现
-  - MongoDB：数据持久化
-  - sproto：协议序列化与校验
-
-```mermaid
-graph LR
-Build["构建系统<br/>Makefile/build.mk"] --> Bin["skynet 二进制"]
-Build --> CLib["C扩展<br/>cjson/lfs/crypto/traceback"]
-Run["运行期"] --> Etcd["etcd"]
-Run --> Mongo["MongoDB"]
-Run --> Proto["sproto 协议"]
-```
-
-## 性能考量
-- 数据落盘策略
-  - 定时随机延迟落盘，降低集中写入抖动
-  - 卸载时强制落盘，保障进程退出数据一致性
-- 并发与一致性
-  - ORM 脏标记与增量提交，减少无效写入
-  - 版本控制乐观锁，避免并发覆盖
-- 服务发现
-  - 基于 etcd 租约与心跳，保证服务可用性
-  - 客户端缓存与事件订阅，降低查询压力
-- 资源与扩展性
-  - 线程数与连接池可配置，适配不同负载场景
-  - 多实例部署（Account/Role 多节点），水平扩展
-
-## 故障排查指南
-- 配置加载失败
-  - 检查 app_config_path 是否正确，include 链是否完整
-  - 确认环境变量与模板替换无误
-- 服务发现异常
-  - 检查 etcd 连通性与租约续期状态
-  - 查看服务注册键是否存在且未过期
-- 数据持久化问题
-  - 观察 dbmgr 日志中的 save failed 与 not modified 错误
-  - 确认 MongoDB 连接与索引配置正确
-- 协议与版本
-  - 启用 proto checksum 校验，避免协议不一致导致解析失败
-
-## 结论
-SkyExt 以 Skynet 为基础，结合 etcd 与 MongoDB，构建了高内聚、低耦合的微服务化游戏服务器框架。通过 ORM 与增量持久化提升数据层效率，借助服务发现实现弹性伸缩，配合完善的配置与日志体系，为游戏后端开发提供了稳定可靠的基座。未来可在监控、热更、GM 工具等方面持续完善，进一步提升运维与开发体验。
-
-## 开发路线图
-
-- [x] 通用定时器 timer
-- [x] 日志服务 logger
-- [x] 唯一 ID 生成（snowflake）
-- [x] sproto 协议
-- [x] MongoDB 数据库
-- [x] MongoDB ORM
-- [x] JWT 鉴权
-- [x] 机器人 robot 客户端
-- [x] etcd 分布式锁
-- [x] etcd cluster 服务发现
-- [x] HTTP server 封装
-- [x] Account 节点
-- [x] Role 节点
-- [x] [通用实体系统](design/entity_system.md)
-- [x] Windows 版本
-- [x] [热更新 hotfix](guide/hotfix.md)
-- [x] [测试框架 skytest](design/skytest.md)
-- [x] 代码覆盖率
-- [ ] Game 节点
-- [ ] [管理后台](plan/admin_panel.md)
-- [ ] 监控
-- [ ] [火焰图](design/profiler.md)
-
-## 附录：快速开始
-- 环境要求
-  - 操作系统：Linux/macOS/FreeBSD/Windows（MinGW）
-  - 依赖：etcd、MongoDB、OpenSSL、lua-cjson、sproto
-- 安装与初始化
-  - 克隆仓库并初始化子模块
-  - 编译项目与 C 扩展
-- 启动外部服务
-  - 启动 etcd 与 MongoDB（可使用 tools 下的 docker-compose）
-- 生成协议与模式
-  - 生成 sproto 与 ORM schema，并生成角色代理模块
-- 启动节点
-  - 启动多个 Account 与 Role 节点实例
-  - 可选启动机器人进行压测
-
+深入设计见仓库中的[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)和[skytest 设计](https://github.com/hanxi/skyext/blob/main/docs/design/skytest.md)。这些内部文档**不随在线文档站发布**；本文的链接指向 GitHub 源文件。配置、测试和操作命令请以[快速上手](getting-started.md)为准。

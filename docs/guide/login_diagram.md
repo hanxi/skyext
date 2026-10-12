@@ -4,10 +4,12 @@
 
 系统支持两种认证方式：
 
-1. **正常客户端 OAuth 认证**：通过 GamePass OAuth 服务进行用户身份认证，获取 JWT Token
+1. **正式客户端 OAuth 认证**：通过 GamePass OAuth 服务进行用户身份认证，获取 JWT Token
 2. **机器人客户端模拟认证**：机器人客户端直接生成 JWT Token，跳过 OAuth 流程
 
-## 完整登录流程（正常客户端）
+> **传输协议说明**：skynet gate 监听的是 TCP 端口。正式客户端通常经 WebSocket 网关（如 [goscon](https://github.com/hanxi/goscon)）转接到 TCP；机器人客户端使用 `socket.open` 直连 TCP。以下流程图中"连接到网关"均指最终到达 skynet gate 的连接。
+
+## 完整登录流程（正式客户端）
 
 ```mermaid
 flowchart TD
@@ -35,8 +37,8 @@ flowchart TD
 
     N --> K
     K --> P[获取角色的rolenode信息]
-    P --> Q[根据rolenode获取对应的wsUrl]
-    Q --> R[建立WebSocket连接到rolenode]
+    P --> Q[根据rolenode获取对应的网关地址]
+    Q --> R[经WebSocket网关连接到rolenode]
 
     R --> S{连接成功?}
     S -->|失败| T[连接失败]
@@ -77,8 +79,8 @@ flowchart TD
 
     H1 --> E1
     E1 --> J1[获取角色的rolenode信息]
-    J1 --> K1[根据rolenode获取对应的wsUrl]
-    K1 --> L1[建立WebSocket连接到rolenode]
+    J1 --> K1[根据rolenode从gate_nodes获取ip/port]
+    K1 --> L1[TCP直连到rolenode网关]
 
     L1 --> M1{连接成功?}
     M1 -->|失败| N1[连接失败]
@@ -131,8 +133,8 @@ graph TB
     end
 
     subgraph "RoleNode集群"
-        RoleNode1[RoleNode1<br/>:1249]
-        RoleNode2[RoleNode2<br/>:1249]
+        RoleNode1[RoleNode1 gate<br/>:7012]
+        RoleNode2[RoleNode2 gate<br/>:7022]
     end
 
     subgraph "游戏服务器"
@@ -158,7 +160,7 @@ graph TB
 
 ## 协议交互时序图
 
-### 正常客户端 OAuth 认证流程
+### 正式客户端 OAuth 认证流程
 
 ```mermaid
 sequenceDiagram
@@ -181,7 +183,7 @@ sequenceDiagram
     end
 
     Note over C: 3. 选择角色，连接游戏节点
-    C->>R: WebSocket连接到rolenode
+    C->>R: 经WebSocket网关连接到rolenode
     R-->>C: 连接建立成功
 
     C->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
@@ -202,7 +204,7 @@ sequenceDiagram
     participant R as RoleNode
 
     Note over RC: 1. 直接生成JWT Token（模拟OAuth结果）
-    RC->>RC: 本地生成JWT Token<br/>jwt.sign({account: "robot3"}, secret)
+    RC->>RC: 本地生成JWT Token<br/>jwt.sign({account: "robot3"}, secret, "HS512", 60)
 
     Note over RC: 2. 使用模拟Token获取角色
     RC->>A: HTTP GET /roles?token=xxx
@@ -213,8 +215,8 @@ sequenceDiagram
         A-->>RC: 返回新创建的角色
     end
 
-    Note over RC: 3. 选择角色，连接游戏节点
-    RC->>R: WebSocket连接到rolenode
+    Note over RC: 3. 选择角色，TCP直连网关
+    RC->>R: TCP socket.open 连接到rolenode网关
     R-->>RC: 连接建立成功
 
     RC->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
@@ -230,18 +232,19 @@ sequenceDiagram
 
 ### JWT Token
 
-**正常客户端**（通过 GamePass OAuth 获取）：
+**正式客户端**（通过 GamePass OAuth 获取）：
+
+JWT payload 的具体字段由 GamePass OAuth 服务决定。服务端 `jwt.verify`（`example/lualib/jwt.lua`）会校验签名和时效，业务代码仅使用 `account` 字段：
 
 ```json
 {
   "account": "user_account_id",
-  "sub": "user_subject_id",
   "iat": 1638360000,
-  "exp": 1638363600,
-  "iss": "gamepass_oauth_service",
-  "aud": "game_client"
+  "exp": 1638363600
 }
 ```
+
+> 上述为最小必要字段。GamePass 实际返回的 token 可能包含更多字段（如 `sub`、`iss`），`jwt.verify` 会忽略未知字段。
 
 **机器人客户端**（本地生成，仅用于测试）：
 
@@ -251,15 +254,19 @@ sequenceDiagram
 }
 ```
 
+`jwt.sign` 会自动补充 `iat` 和 `exp` 字段（见 `example/lualib/jwt.lua`）。支持的签名算法：`HS256`、`HS512`。
+
 ### Account 服务 API
 
 **获取角色列表：**
 
 ```
-GET /roles?token=jwt_token_string
+GET /roles?token=jwt_token_string[&server=s1]
 
-Response: { "code": 0, "roles": [...] }
+Response: { "code": 0, "roles": [{ "rid": 1, "server": "s1", "name": "...", "rolenode": "rolenode1" }] }
 ```
+
+> `server` 参数可选，传入时仅返回该区服的角色。服务端通过 `server2game` 校验区服是否存在。
 
 **创建角色：**
 
@@ -267,5 +274,7 @@ Response: { "code": 0, "roles": [...] }
 POST /create_role
 Body: { "token": "...", "server": "s1", "name": "角色名称" }
 
-Response: { "code": 0, "role": {...} }
+Response: { "code": 0, "role": { "rid": 1, "server": "s1", "name": "...", "rolenode": "rolenode1" } }
 ```
+
+> 示例配置 `max_role_count = 5`；当前 `account_router.lua` 用 `#rids > max_role_count` 判断，边界上可能允许创建第 6 个角色。不要把该示例检查当作生产级配额控制。

@@ -4,7 +4,7 @@
 
 GM（Game Master）命令系统提供了一套 HTTP RESTful API，用于执行游戏管理命令。所有接口返回 JSON 格式数据。
 
-**基础 URL**: `http://localhost:9092`
+**基础 URL**: `http://localhost:<gm_http_port>`（代码默认 `9090`，由各节点 `gm_http_port` 配置覆盖；以下示例使用 RoleNode1 的端口 `9092`）
 
 ---
 
@@ -194,8 +194,8 @@ curl -X POST http://localhost:9092/gm/execute \
 服务地址支持以下格式：
 
 1. **十六进制地址**：`:01000002`（以冒号开头的十六进制字符串）
-2. **服务名称**：`.gm` 或 `gm`（本地命名服务）
-3. **整数地址**：直接的服务地址整数值
+2. **服务名称**：接口代码会尝试用 `skynet.localname` 查找本地命名服务；当前以 `.` 开头的名称会先被去掉前缀，可能无法匹配实际注册的 `.gm` 等名称。指定服务时优先使用已核实的十六进制地址
+3. **整数地址**：POST JSON 的 `services` 数组可传整数地址；GET 查询参数始终是字符串，建议使用 `:01000002` 形式
 
 ---
 
@@ -253,7 +253,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=st
 - HTTP Header: `Authorization: Bearer <token>`
 - 请求参数（query 或 body）: `token=<token>`
 
-Token 在 `etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置。**未配置 token 时 `/gm/execute` 接口一律拒绝。**
+Token 在 `example/etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置。**未配置 token 或仍为占位符 `CHANGE_ME_TO_RANDOM_TOKEN` 时，`/gm/execute` 接口一律拒绝。**
 
 `/gm/list` 同样需要鉴权。
 
@@ -268,30 +268,30 @@ Token 在 `etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置。**未配
 curl -X POST http://localhost:9092/gm/execute \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"cmd": "hotfix", "hotfix_dir": "hotfix/20260831-patch1", "mode": "dry_run"}'
+  -d '{"cmd": "hotfix", "hotfix_dir": "example/hotfix/20260831-patch1", "mode": "dry_run"}'
 
 # 正式执行（需 confirm=true）
 curl -X POST http://localhost:9092/gm/execute \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"cmd": "hotfix", "hotfix_dir": "hotfix/20260831-patch1", "confirm": "true"}'
+  -d '{"cmd": "hotfix", "hotfix_dir": "example/hotfix/20260831-patch1", "confirm": "true"}'
 ```
 
 **参数**
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| hotfix_dir | string | 是 | 热更包目录路径（相对于工程根目录） |
+| hotfix_dir | string | 是 | 相对于 skynet `root`（示例为仓库根目录）的热更包路径，如 `example/hotfix/20260831-patch1`；CLI 的 `hotfix refresh` 参数则相对于 `example/` |
 | mode | string | 否 | `run`（默认）或 `dry_run`（仅预演） |
 | confirm | string | 否 | 执行模式下必须传 `"true"` |
 
 **响应（执行模式）**
 
-成功时返回 steps 数组；失败时返回 guidance 处置建议。详见 [docs/hotfix.md](hotfix.md)。
+外层仍为 `{code, cmd, results}`；检查每项 `results[].success`。成功时该项 `data.steps` 包含步骤列表；热更执行失败时该项 `data.guidance` 可包含处置建议。不要只根据外层 `code = 0` 判断热更成功。操作前请阅读[热更新文档](hotfix.md)中的路径与 `update_files` 限制。
 
 **响应（dry_run 模式）**
 
-返回执行计划：steps 列表、patchers 目标服务命中情况、warnings。
+预演成功时，`results[].data` 为执行计划：`steps` 列表、`patchers` 目标服务命中情况和 `warnings`。
 
 ### hotfix_history — 查看热更历史
 
@@ -315,14 +315,14 @@ curl -X POST http://localhost:9092/gm/execute \
 1. **权限控制**：`/gm/execute` 已实现 token 鉴权，详见上文「鉴权」一节
 2. **服务地址**：执行命令前请确认服务地址的正确性
 3. **参数验证**：某些命令的参数有特定格式要求，请参考具体命令的文档
-4. **并发执行**：当不指定 `services` 参数时，命令会在所有注册该命令的服务上并发执行
+4. **多服务执行**：不指定 `services` 时，GM 服务会逐个调用所有已注册该命令的服务；当前实现是顺序调用，并非并发
 5. **超时设置**：某些命令支持 `timeout` 参数来设置超时时间（单位：秒）
 
 ---
 
 ## Web 管理界面
 
-访问 `http://localhost:9092/` 可以打开 Web 管理界面，提供可视化的命令管理功能：
+访问 `http://localhost:<gm_http_port>/` 可以打开 Web 管理界面（页面源文件 `public/gm.html`），提供可视化的命令管理功能：
 
 - 命令列表浏览和搜索
 - 参数表单填写

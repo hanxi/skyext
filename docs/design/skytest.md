@@ -1,4 +1,6 @@
-# skytest 设计文档
+# skytest 测试框架与覆盖率
+
+> **状态：已实现。** 测试框架（`lualib/skytest/`）、C 加速 hook（`lualib-src/skytest_hook.c`）、覆盖率工具（`scripts/commands/cov.lua`）、CLI 入口（`./bin/skyext test`）均已合入主线并在 CI 中运行。
 
 ## 背景
 
@@ -48,29 +50,26 @@ Lua 的 `require` 把 `.` 当路径分隔符。`require "skyext.jwt.test"` 查�
 
 约定：需要辅助资源时，创建与 `.test.lua` 同名的 `.test/` 目录：
 
+当前仓库中唯一使用此约定的真实用例：
+
 ```
-lualib/skyext/cluster_rpc.lua               ← 源码
-lualib/skyext/cluster_rpc.test.lua          ← 测试入口
-lualib/skyext/cluster_rpc.test/             ← 测试资源目录（仅需要时创建）
-    echo_service.lua                        ← fixture 服务
-    proxy_service.lua                       ← fixture 服务
-    cluster_nodes.json                      ← 测试数据
-    init_data.lua                           ← 数据初始化脚本
+lualib/skytest/process.test.lua             ← 测试入口（验证子进程启动与清理）
+lualib/skytest/process.test/                ← 测试资源目录
+    fixture.lua                             ← fixture 服务（监听端口，验证可连接）
 ```
 
 `.test/` 目录同样对 `require` 不可见（原理同 `.test.lua`，见"为什么用 `.test.lua` 而不是 `_test.lua`？"）。
 
 `ls` 天然分组：
 ```
-cluster_rpc.lua
-cluster_rpc.test.lua      ← 测试
-cluster_rpc.test/          ← fixture（紧挨测试）
+process.test.lua           ← 测试
+process.test/              ← fixture（紧挨测试）
 ```
 
 框架行为：
 - `t.start_skynet()` 生成子进程 conf 时自动检查：若 `<name>.test/` 目录存在，追加到子进程的 `luaservice` 路径
-- 测试代码直接用服务名启动 fixture：`t.start_skynet({ start = "echo_service" })`
-- 测试代码内通过 `t.data_path("cluster_nodes.json")` 获取数据文件的绝对路径
+- 现有测试通过 `t.start_skynet({ start = "fixture", env = { fixture_port = port } })` 启动伴生服务
+- 测试代码内通过 `t.data_path("fixture.lua")` 获取 fixture 文件的绝对路径
 - `./bin/skyext test` 只扫 `*.test.lua`，不会把 `.test/` 目录下的文件当测试执行
 - 大多数测试没有 `.test/` 目录，零额外负担
 
@@ -109,22 +108,25 @@ cluster_rpc.test/          ← fixture（紧挨测试）
 
 测试文件以 `.test.lua` 结尾，放在被测文件同目录：
 
+当前仓库中的实际示例：
+
 ```
 源码                                    测试
 ──────────────────────────────────────────────────────────
-lualib/skyext/gm_router.lua            lualib/skyext/gm_router.test.lua
-lualib/skyext/snowflake.lua            lualib/skyext/snowflake.test.lua
-lualib/skyext/distributed_lock.lua     lualib/skyext/distributed_lock.test.lua
-lualib/skyext/httpc.lua                lualib/skyext/httpc.test.lua
-example/lualib/role_handler.lua        example/lualib/role_handler.test.lua
+lualib/skyext/errcode.lua              lualib/skyext/errcode.test.lua
+lualib/skyext/config.lua               lualib/skyext/config.test.lua
+lualib/skyext/time.lua                 lualib/skyext/time.test.lua
+lualib/skyext/util/string.lua          lualib/skyext/util/string.test.lua
+lualib/skytest/expect.lua              lualib/skytest/expect.test.lua
+example/lualib/jwt.lua                 example/lualib/jwt.test.lua
 ```
 
 `ls` 输出天然有序：
 ```
-gm_router.lua
-gm_router.test.lua       ← 紧挨源码
-snowflake.lua
-snowflake.test.lua        ← 紧挨源码
+errcode.lua
+errcode.test.lua          ← 紧挨源码
+config.lua
+config.test.lua           ← 紧挨源码
 ```
 
 规则：
@@ -176,14 +178,14 @@ scripts/                                # 统一 CLI（纯 Lua）
 ./bin/skyext test
 
 # 运行指定文件
-./bin/skyext test lualib/skyext/snowflake.test.lua
+./bin/skyext test lualib/skyext/errcode.test.lua
 
 # 运行指定目录
 ./bin/skyext test lualib/skyext/
 
-# 按路径过滤（对完整相对路径做子串匹配，如 "snowflake" 匹配 lualib/skyext/snowflake.test.lua）
-./bin/skyext test --match "snowflake"
-# 可用路径前缀缩小范围：--match "skyext/snow" 不会匹配 example/ 下的同名文件
+# 按路径过滤（对完整相对路径做子串匹配，如 "errcode" 匹配 lualib/skyext/errcode.test.lua）
+./bin/skyext test --match "errcode"
+# 可用路径前缀缩小范围：--match "skyext/errcode" 不会匹配 example/ 下的同名文件
 # 注：--match 过滤的是文件路径，不是 describe/it 名称（与 mocha --grep 不同）
 
 # 带覆盖率
@@ -221,61 +223,79 @@ test 命令完全用 Lua 实现（`scripts/commands/test.lua`），通过 `tool_
 
 ### 模块测试
 
-直接 require 被测模块，调用函数验证：
+直接 require 被测模块，调用函数验证。以下为仓库中实际存在的 `lualib/skyext/errcode.test.lua`：
 
 ```lua
--- lualib/skyext/snowflake.test.lua
+-- lualib/skyext/errcode.test.lua
 local t = require "skytest"
-local snowflake = require "skyext.snowflake"
+local errcode = require "skyext.errcode"
 
-t.describe("snowflake", function()
+t.describe("errcode", function()
 
-    t.it("generate unique ids", function()
-        local gen = snowflake.new(1)
-        local id1 = gen:next_id()
-        local id2 = gen:next_id()
-        t.expect(id1).to.be_type("number")
-        t.expect(id2).to.be_type("number")
-        t.expect(id1).to_not.equal(id2)
+    t.it("has standard error codes", function()
+        t.expect(errcode.OK).to.equal(0)
+        t.expect(errcode.PARAM_ERROR).to.equal(10)
+        t.expect(errcode.AUTH_FAILED).to.equal(11)
+        t.expect(errcode.DB_ERROR).to.equal(6)
     end)
 
-    t.it("different workers produce different ids", function()
-        local g1 = snowflake.new(1)
-        local g2 = snowflake.new(2)
-        t.expect(g1:next_id()).to_not.equal(g2:next_id())
+    t.it("has entity error codes", function()
+        t.expect(errcode.ENTITY_NOT_FOUND).to.equal(20)
+        t.expect(errcode.ENTITY_LOCK_FAILED).to.equal(21)
+        t.expect(errcode.ENTITY_LOAD_FAILED).to.equal(22)
+    end)
+
+    t.it("throws on invalid error code access", function()
+        t.expect(function()
+            local _ = errcode.NONEXISTENT_CODE
+        end).to.throw("Invalid error code")
     end)
 end)
 ```
 
 ### 集成测试（自包含）
 
-每个文件运行在独立 skynet 进程中，可自由使用 `skynet.setenv()` 声明配置、`skynet.newservice()` 拉起服务，进程退出自动清理一切。不需要 `after_all` 手动 kill service：
+每个文件运行在独立 skynet 进程中，可自由使用 `skynet.setenv()` 声明配置、`skynet.newservice()` 拉起服务，进程退出自动清理一切。不需要 `after_all` 手动 kill service。
+
+以下为仓库中实际存在的 `lualib/skytest/process.test.lua`，展示子进程启动与 fixture 集成：
 
 ```lua
--- lualib/skyext/gm_router.test.lua
-local skynet = require "skynet"
+-- lualib/skytest/process.test.lua
+local socket = require "skynet.socket"
 local t = require "skytest"
 
-t.describe("gm_router", function()
-
-    -- 直接测模块逻辑
-    t.it("unknown command returns error", function()
-        local gm_router = require "skyext.gm_router"
-        local r = gm_router.new()
-        local result = r:dispatch("nonexistent", {})
-        t.expect(result.error).to.exist()
+t.describe("skytest process", function()
+    t.it("starts a fixture without a shell and cleans it up", function()
+        local listener, _, port = socket.listen("127.0.0.1", 0)
+        socket.close(listener)
+        local pid = t.start_skynet({
+            start = "fixture",
+            env = { fixture_port = port },
+        })
+        t.expect(type(pid)).to.equal("number")
+        t.wait_for_port(port)
+        local fixture = assert(io.open(t.data_path("fixture.lua"), "rb"))
+        assert(fixture:close())
     end)
 end)
+```
+
+> 以下为**设计示意**，展示集成测试的完整模式（`before_all` 启动服务、HTTP 断言、多 describe）。仓库中尚无此文件，GM 服务名为 `gm`（非示意中的 `gm_http`），实际 GM API 参见 `docs/guide/gm_api.md`：
+
+```lua
+-- 设计示意（未落地）：GM 集成测试
+local skynet = require "skynet"
+local t = require "skytest"
 
 t.describe("gm HTTP integration", function()
     local GM
     local TOKEN = "test_token_" .. math.random(100000)
 
     t.before_all(function()
-        skynet.setenv("gm_port", "19090")
-        skynet.setenv("gm_token", TOKEN)
+        skynet.setenv("gm_http_port", "19090")
+        skynet.setenv("gm_auth_token", TOKEN)
 
-        skynet.newservice("gm_http")
+        skynet.newservice("gm")  -- 实际服务名
         GM = "http://127.0.0.1:19090"
         t.wait_for_port(19090)
     end)
@@ -285,34 +305,9 @@ t.describe("gm HTTP integration", function()
         t.expect(body.error).to.exist()
     end)
 
-    for _, cmd in ipairs({"stat", "gc", "mem", "list", "ping", "netstat"}) do
-        t.it(cmd .. " 命令成功", function()
-            local status, body = t.http.get_json(GM,
-                "/gm/execute?token=" .. TOKEN .. "&cmd=" .. cmd)
-            t.expect(status).to.equal(200)
-            t.expect(body.code).to.equal(0)
-        end)
-    end
-
-    t.it("不存在的命令返回错误", function()
-        local _, body = t.http.get_json(GM,
-            "/gm/execute?token=" .. TOKEN .. "&cmd=nonexistent")
-        t.expect(body.code).to_not.equal(0)
-    end)
-
-    t.it("POST JSON body 认证", function()
-        local status, body = t.http.post_json(GM, "/gm/execute", {
-            token = TOKEN, cmd = "stat"
-        })
-        t.expect(status).to.equal(200)
-        t.expect(body.code).to.equal(0)
-    end)
-
-    t.it("Bearer token 认证", function()
-        local status, body = t.http.request("POST", GM, "/gm/execute", {
-            headers = { Authorization = "Bearer " .. TOKEN },
-            json = { cmd = "gc" },
-        })
+    t.it("stat 命令成功", function()
+        local status, body = t.http.get_json(GM,
+            "/gm/execute?token=" .. TOKEN .. "&cmd=stat")
         t.expect(status).to.equal(200)
         t.expect(body.code).to.equal(0)
     end)
@@ -324,14 +319,15 @@ end)
 `skynet.setenv()` 只接受字符串。对于 table 类型配置（如 `log_config`），使用 `skyext.config` 的序列化机制：
 
 ```lua
+-- 设计示意
 local config = require "skyext.config"
 
 t.before_all(function()
-    skynet.setenv("gm_port", "19090")
+    skynet.setenv("gm_http_port", "19090")
     skynet.setenv("log_config", config.serialize({
         { name = "console" },
     }))
-    skynet.newservice("gm_http")
+    skynet.newservice("gm")
 end)
 ```
 
@@ -349,15 +345,15 @@ end)
 
 运行：
 ```bash
-./bin/skyext test lualib/skyext/gm_router.test.lua
+./bin/skyext test lualib/skytest/process.test.lua
 ```
 
 ### 多节点测试（cluster）
 
-cluster 等多节点场景需要启动额外的 skynet 进程。框架提供 `t.start_skynet()` 助手：
+> **设计示意，尚未落地。** 仓库中尚无 cluster 多节点测试。以下展示框架提供的 `t.start_skynet()` 助手在多节点场景下的预期用法：
 
 ```lua
--- lualib/skyext/cluster_rpc.test.lua
+-- 设计示意（未落地）：cluster 多节点测试
 local skynet = require "skynet"
 local cluster = require "skynet.cluster"
 local t = require "skytest"
@@ -365,13 +361,12 @@ local t = require "skytest"
 t.describe("cluster RPC", function()
 
     t.before_all(function()
-        -- 当前进程作为 node_a
         skynet.setenv("cluster_name", "node_a")
         skynet.setenv("cluster_port", "19200")
         cluster.open("node_a")
 
         -- 启动独立 skynet 进程作为 node_b
-        -- echo_service.lua 在 cluster_rpc.test/ 目录下，runner 自动加入 luaservice
+        -- echo_service.lua 需放在同名 .test/ 目录下，runner 自动加入 luaservice
         t.start_skynet({
             start = "echo_service",
             env = {
@@ -386,30 +381,16 @@ t.describe("cluster RPC", function()
         local r = cluster.call("node_b", "echo_service", "echo", "hello")
         t.expect(r).to.equal("hello")
     end)
-
-    t.it("节点不可达返回错误", function()
-        t.expect(function()
-            cluster.call("nonexistent", "svc", "cmd")
-        end).to.throw()
-    end)
 end)
 ```
 
-对应的 fixture 目录结构：
-```
-lualib/skyext/cluster_rpc.lua
-lualib/skyext/cluster_rpc.test.lua
-lualib/skyext/cluster_rpc.test/
-    echo_service.lua                    ← fixture 服务
-```
+当前已落地的子进程测试见 `lualib/skytest/process.test.lua`，验证了 `t.start_skynet()` 和 `.test/` fixture 机制。
 
-多数 cluster 测试的远端节点直接启动已有的生产服务（如 `gm_http`），不需要 fixture。仅当需要测试专用的轻量服务时才用 `.test/` 目录。
-
-`t.start_skynet(opts)` 内部：
+**`t.start_skynet(opts)` 内部流程：**
 1. 生成临时 conf（复用 `paths.conf.lua`，注入 `opts.env` 和 `opts.start`）
 2. 若 `.test/` 目录存在，追加到 conf 的 `luaservice`
 3. 通过 `tool_process.spawn` 启动 `bin/skynet tmp.conf`，获取子进程句柄
-4. 句柄和临时 conf 路径注册到清理列表（清理机制见"执行模型 → 子进程生命周期"）
+4. 句柄（含 `close` 方法）和临时 conf 路径注册到清理列表（清理机制见"执行模型 → 子进程生命周期"）
 5. 返回子进程 PID（`child:id()`）
 
 ### 断言 API
@@ -451,7 +432,7 @@ t.expect(fn).to.throw("pattern")           -- error message 需匹配此 Lua pat
 
 ### HTTP 助手
 
-基于 `skyext.httpc`，自动 JSON 编解码：
+基于 skynet 内置的 `http.httpc`，自动 JSON 编解码：
 
 ```lua
 local status, body = t.http.get(host, path)                    -- GET 原始响应
@@ -462,7 +443,7 @@ local status, body = t.http.request(method, host, path, opts)   -- 通用请求
 -- opts: { headers = {}, json = {}, body = "", timeout = 5 }
 ```
 
-> 注：`http.lua` 依赖 `skyext.httpc`，即测试框架依赖被测项目的 HTTP 客户端。这是有意的取舍——避免引入外部 HTTP 依赖，代价是 `httpc` 本身有 bug 时 HTTP 测试助手也受影响。如果未来发现 httpc bug 导致测试框架不可信，备选方案是在 `skytest.http` 内置一个最小的 socket + HTTP/1.1 实现（仅支持 GET/POST + Content-Length，几十行 Lua，不走 skynet 异步 HTTP）。
+> 注：`http.lua` 依赖 skynet 内置的 `http.httpc`（非 skyext 自有模块），即测试框架依赖 skynet 的 HTTP 客户端。这是有意的取舍——避免引入外部 HTTP 依赖，代价是 `httpc` 本身有 bug 时 HTTP 测试助手也受影响。如果未来发现 httpc bug 导致测试框架不可信，备选方案是在 `skytest.http` 内置一个最小的 socket + HTTP/1.1 实现（仅支持 GET/POST + Content-Length，几十行 Lua，不走 skynet 异步 HTTP）。
 
 错误行为：
 - 连接失败（服务未启动、端口未监听）：抛异常（`error()`），测试标记为失败。因此应在 `before_all` 中用 `t.wait_for_port()` 确保服务就绪后再调用 HTTP 助手。
@@ -480,7 +461,7 @@ t.start_skynet(opts)                        -- 启动子 skynet 进程（见"多
 -- opts: { start = "服务名", env = { key = "value" } }
 -- 内部通过 tool_process.spawn 启动，句柄注册到清理列表。
 -- 启动失败（如 conf 生成错误）立即抛异常。
--- t._cleanup() 在退出前调用 child:close()（SIGTERM → SIGKILL）并删除临时 conf。
+-- t._cleanup() 在退出前调用 child.handle:close()（SIGTERM → SIGKILL）并删除临时 conf。
 
 t.data_path(filename)                       -- 返回 .test/ 目录下文件的绝对路径
 -- 根据当前测试文件路径推算：若测试文件为 foo.test.lua，则返回 foo.test/<filename> 的绝对路径。
@@ -516,42 +497,34 @@ end)
 
 单文件输出：
 ```
-  snowflake
-    ✓ generate unique ids (0ms)
-    ✓ different workers produce different ids (0ms)
+  errcode
+    ✓ has standard error codes (0ms)
+    ✓ has entity error codes (0ms)
+    ✓ has MongoDB error codes (0ms)
+    ✓ throws on invalid error code access (0ms)
 
-  2 passing (1ms)
+  4 passing (1ms)
 ```
 
-`./bin/skyext test` 流式输出各文件结果，最后汇总：
+`./bin/skyext test` 会流式输出各文件结果并在最后汇总；以下截取两个测试文件示意格式（耗时随环境变化）：
 ```
-▶ lualib/skyext/snowflake.test.lua
-  snowflake
-    ✓ generate unique ids (0ms)
-    ✓ different workers produce different ids (0ms)
+▶ lualib/skyext/errcode.test.lua
+  errcode
+    ✓ has standard error codes (0ms)
+    ✓ has entity error codes (0ms)
+    ✓ has MongoDB error codes (0ms)
+    ✓ throws on invalid error code access (0ms)
 
-  2 passing (1ms)
+  4 passing (1ms)
 
-▶ lualib/skyext/gm_router.test.lua
-  gm_router
-    ✓ unknown command returns error (0ms)
+▶ lualib/skytest/process.test.lua
+  skytest process
+    ✓ starts a fixture without a shell and cleans it up (120ms)
 
-  gm HTTP integration
-    ✓ 无 token 返回错误 (3ms)
-    ✓ stat 命令成功 (2ms)
-    ✓ gc 命令成功 (1ms)
-    ✗ mem 命令成功 (2ms)
-      Expected body.code to equal 0, got 1
-      at lualib/skyext/gm_router.test.lua:45
-
-  5 passing (8ms)
-  1 failing
+  1 passing (121ms)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-2 files, 7 passing, 1 failing
-
-Failed:
-  lualib/skyext/gm_router.test.lua
+2 files, 5 passing, 0 failing
 ```
 
 ## 执行模型
@@ -563,9 +536,9 @@ Failed:
 ```
 ./bin/skyext test lualib/skyext/
   │
-  ├─ 扫描 *.test.lua → [snowflake.test.lua, gm_router.test.lua, ...]
+  ├─ 扫描 *.test.lua → [errcode.test.lua, config.test.lua, time.test.lua, ...]
   │
-  ├─ 文件 1: SKYTEST_FILE=lualib/skyext/snowflake.test.lua  ./bin/skynet $CONF
+  ├─ 文件 1: SKYTEST_FILE=lualib/skyext/errcode.test.lua  ./bin/skynet $CONF
   │   └─ skynet 进程（独立）
   │       └─ skytest_runner
   │           ├─ local file = os.getenv("SKYTEST_FILE")
@@ -574,16 +547,15 @@ Failed:
   │           ├─ 输出报告
   │           └─ os.exit(0)  ← 进程结束，一切自动释放
   │
-  ├─ 文件 2: SKYTEST_FILE=lualib/skyext/gm_router.test.lua  ./bin/skynet $CONF
+  ├─ 文件 2: SKYTEST_FILE=lualib/skyext/config.test.lua  ./bin/skynet $CONF
   │   └─ skynet 进程（独立）
   │       └─ skytest_runner
-  │           ├─ loadfile(file)  -- 同上，完整相对路径
-  │           ├─ before_all: skynet.setenv() + skynet.newservice("gm_http")
+  │           ├─ loadfile(file)
   │           ├─ 执行 describe/it
   │           ├─ 输出报告
-  │           └─ os.exit(1)  ← 进程结束，gm_http 服务 + 端口自动释放
+  │           └─ os.exit(0)  ← 进程结束，一切自动释放
   │
-  └─ 汇总：2 files, 7 passing, 1 failing
+  └─ 汇总：N files, M passing, 0 failing
 ```
 
 每个进程完全独立：
@@ -622,9 +594,9 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 
 `t.start_skynet()` 启动的子 skynet 进程有三层清理保障，从内到外：
 
-1. **Lua 层（正常退出）**：`t.start_skynet()` 将子进程句柄注册到清理列表。`skytest_runner` 退出前调用 `t._cleanup()`，遍历列表对每个句柄调用 `child:close()`（发送 SIGTERM，超时后 SIGKILL，等待退出），并删除临时 conf 文件。覆盖正常通过和断言失败的场景。
+1. **Lua 层（正常退出）**：`t.start_skynet()` 将 `{ handle = child, conf = conf_path }` 注册到清理列表。`skytest_runner` 退出前调用 `t._cleanup()`，遍历列表对每个条目调用 `child.handle:close()`（发送 SIGTERM，超时后 SIGKILL，等待退出），并 `os.remove` 临时 conf 文件。覆盖正常通过和断言失败的场景。
 
-2. **GC 兜底**：如果句柄在进程运行期间被 GC，`tool_process.child` 的 `__gc` 元方法会调用 `close()`；进程直接崩溃时不能依赖 GC，仍需要第 3 层兜底。
+2. **GC 兜底**：如果句柄在进程运行期间被 GC，`tool_process` 的 `__gc` 元方法会调用 `close()`；进程直接崩溃时不能依赖 GC，仍需要第 3 层兜底。
 
 3. **tool_process.run 层（外层兜底）**：test 命令通过 `tool_process.run()` 启动每个测试的 skynet 主进程，并将其放入独立进程组（`setpgid`）。超时后向整个进程组发 SIGTERM，5 秒内未退出则 SIGKILL。`t.start_skynet()` 通过 `tool_process.spawn` 启动的子进程继承同一进程组，因此也会被一并终止。
 
@@ -644,7 +616,7 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 
 - **文件间**：每个文件独立 skynet 进程，天然完全隔离
 - **文件内**：`it` 顺序执行，共享 `before_all` 建立的上下文
-- 测试文件通过 `loadfile` 加载（非 `require`），不进入 `package.loaded` 缓存。`loadfile` 的工作目录是项目根目录（`tool_process.run` 通过 `cwd` 参数设定），因此 `SKYTEST_FILE` 的相对路径（如 `lualib/skyext/snowflake.test.lua`）可直接传入
+- 测试文件通过 `loadfile` 加载（非 `require`），不进入 `package.loaded` 缓存。`loadfile` 的工作目录是项目根目录（`tool_process.run` 通过 `cwd` 参数设定），因此 `SKYTEST_FILE` 的相对路径（如 `lualib/skyext/errcode.test.lua`）可直接传入
 
 ### 覆盖率
 
@@ -652,8 +624,9 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 - 每个 skynet 进程设置 `SKYTEST_COV=1`
 - `skytest.cov` 的 debug hook 捕获同进程内所有代码的执行（包括 `newservice` 加载的服务代码）
 - `t.start_skynet()` 启动的子进程继承 `SKYTEST_COV=1` 环境变量，子进程也会独立写覆盖率数据
-- 每个进程独立写覆盖率数据到本次运行的临时目录（文件名含 PID，避免冲突），合并结果写入 `coverage/`
-- 所有文件跑完后，test 命令通过 `scripts/lib/lcov.lua` 在进程内合并各进程的 lcov 数据
+- 每个进程独立写覆盖率数据到本次运行的临时目录（文件名含 PID，避免冲突）
+- 所有文件跑完后，test 命令通过 `scripts/lib/lcov.lua` 在进程内合并各进程的 lcov 数据，生成 `coverage/lua_coverage_clean.info`（LCOV 格式）
+- 若系统安装了 `genhtml`（lcov 包），还会在 `coverage/html/` 下生成 HTML 报告；未安装时仅产出 LCOV 文件，跳过 HTML
 - `SKYTEST_COV_FLUSH_INTERVAL`：覆盖率数据自动 flush 间隔（秒），默认 10。在 `skytest.cov.config` 中读取，传给 collector 定时写盘
 
 ## 相关外部文件
@@ -725,17 +698,19 @@ test CLI 用 Lua 编写，通过 `tool_process`（C 模块）管理子进程和�
 
 ### 多 describe 支持
 
-一个 `.test.lua` 文件内支持多个平级 `t.describe()`（如 gm_router 示例中的"gm_router"和"gm HTTP integration"）。它们按声明顺序执行，共享文件级的 skynet 进程，但各自的 `before_all` / `after_all` 独立。
+一个 `.test.lua` 文件内支持多个平级 `t.describe()`（如 `lualib/skytest/expect.test.lua` 中包含 `expect.equal`、`expect.exist`、`expect.be_type` 等多个平级 describe）。它们按声明顺序执行，共享文件级的 skynet 进程，但各自的 `before_all` / `after_all` 独立。
 
-## 验证
+## 验证清单
 
-1. `make build` — 编译通过（产物在 `luaclib/skytest/hook.so`）
-2. `./bin/skyext test lualib/skyext/errcode.test.lua` — 单文件模块测试通过
-3. `./bin/skyext test lualib/skyext/` — 目录级测试通过，逐文件输出 mocha 风格报告 + 汇总
-4. `./bin/skyext test --cov lualib/skyext/` — 带覆盖率的测试，各进程独立写 lcov，合并后生成报告
-5. `./bin/skyext test lualib/skytest/process.test.lua` — fixture 集成测试启动子 skynet 并验证可连接
-6. `./bin/skyext test --cov` — 完整覆盖率流程
-7. 故意写一个失败测试 → test 命令退出码为 1
-8. 故意写一个语法错误的测试文件 → 单文件 skynet 进程退出码为 2，统一 CLI 退出码为 1，报告指出错误文件
-9. 故意写一个死循环测试 → `tool_process` 超时生效，文件计为失败，后续文件正常执行
-10. fixture 子进程测试 → `t.start_skynet` 启动子进程，测试完成后 `child:close()` 清理；进程异常退出则由外层进程组兜底
+以下是按需执行的验证项及预期结果，并非本次文档修订全部已运行的测试记录：
+
+1. `make build` — 构建成功后检查 `luaclib/skytest/hook.so`。
+2. `./bin/skyext test lualib/skyext/errcode.test.lua` — 单文件模块测试应通过。
+3. `./bin/skyext test lualib/skyext/` — 目录级测试应逐文件输出 mocha 风格报告与汇总。
+4. `./bin/skyext test --cov lualib/skyext/` — 应合并生成 LCOV 报告；安装 genhtml 时还应生成 HTML。
+5. `./bin/skyext test lualib/skytest/process.test.lua` — fixture 集成测试应启动子 skynet 并验证可连接。
+6. `./bin/skyext test --cov` — 执行完整覆盖率流程。
+7. 故意写一个失败测试 → test 命令退出码应为 1。
+8. 故意写一个语法错误的测试文件 → 单文件 skynet 进程退出码应为 2，统一 CLI 退出码应为 1，报告指出错误文件。
+9. 故意写一个死循环测试 → `tool_process` 超时应生效，文件计为失败，后续文件正常执行。
+10. fixture 子进程测试 → `t.start_skynet` 启动子进程，测试完成后 `t._cleanup()` 调用 `child.handle:close()` 清理；进程异常退出应由外层进程组兜底。

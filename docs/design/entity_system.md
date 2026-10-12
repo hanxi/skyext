@@ -1,39 +1,43 @@
-# Generic Entity System + Router 设计方案
+# 通用实体系统
 
-## Context
+> **状态：已实现。** 核心组件（types / router / entitymgr / reliable_msg / client_ext / entity_agent / entity_agentmgr）均已合入主线。`role` 类型已通过 entity 系统运行——`example/nodes/role/watchdog.lua` 直接创建 `entity_agentmgr("role")`，旧版 roleagent / rolemgr 已移除。登录流程中变量名 `roleagentmgr` 是历史命名，实际指向 `entity_agentmgr` 服务。
 
-当前 `roleagent` 系统与 "role" 实体强耦合。如果要支持公会(guild)、场景(scene)、怪物(monster)等其他实体，需要为每种实体复制一整套 agent/agentmgr/api 代码。本方案设计一套通用的 Entity 系统，使得任何实体类型只需定义配置和 handler 即可复用完整的生命周期管理、消息路由和持久化能力。
+## 概述
 
-**核心需求：**
-- Entity ID 稳定不变（snowflake ID，已有）
+原先 `roleagent` 系统与 role 实体强耦合。若要支持公会、场景、怪物等其他实体，需要为每种类型复制一整套 agent/agentmgr/api 代码。entity 系统将此架构泛化：新增实体类型需配置节点、业务数据库与 schema，并提供 handler；随后可复用生命周期管理和消息路由等基础组件。
+
+**核心能力：**
+- Entity ID 稳定不变（snowflake ID）
 - 节点重启路由不变（jchash + 固定节点列表）
-- 支持 `call`、`send`、`reliable_send`（持久化消息，保证送达）
+- 支持 `call`（同步）、`send`（异步）、`reliable_send`（持久化消息，实体加载时重试投递）
+- 可选客户端连接绑定（`client_enabled`）
 
 ---
 
 ## 架构总览
 
 ```
-任意 Service                    entity_agent:guild:1 (skynet service)
+任意 Service                    entity_agent:role:1 (skynet service)
      |                                  |
-     | router.call("guild", gid, cmd)   |
-     |--------------------------------->| entity_call(gid, cmd, ...)
-     |                                  |   -> entitymgr.ensure_loaded(gid)
+     | router.call("role", rid, cmd)    |
+     |--------------------------------->| entity_call(rid, cmd, ...)
+     |                                  |   -> entitymgr.ensure_loaded(rid)
      |  (local: skynet.call)            |   -> handler[cmd](entity, ...)
      |  (remote: cluster.call)          |
      |<---------------------------------| return result
 ```
 
-**关键组件：**
+**组件一览：**
 
 | 文件 | 职责 |
 |------|------|
 | `lualib/skyext/entity/types.lua` | 实体类型注册表，路由计算（jchash 选节点，modulo 选 agent） |
 | `lualib/skyext/entity/router.lua` | 公共 API：call / send / reliable_send，自动路由到正确节点 |
-| `lualib/skyext/entity/entitymgr.lua` | 单 agent 内实体生命周期（加载/卸载/缓存），复用 `dbmgr` + `distributed_lock` |
+| `lualib/skyext/entity/entitymgr.lua` | 单 agent 内实体生命周期（加载/卸载/缓存），复用 dbmgr + distributed_lock |
 | `lualib/skyext/entity/reliable_msg.lua` | 可靠消息持久化（MongoDB），加载时投递 pending 消息 |
+| `lualib/skyext/entity/client_ext.lua` | 客户端 fd 绑定/解绑，仅 `client_enabled` 类型启用 |
 | `service/entity_agent.lua` | 通用实体 agent 服务，按 type 参数化 |
-| `service/entity_agentmgr.lua` | agent 管理器 |
+| `service/entity_agentmgr.lua` | agent 管理器，负责模块扫描和 agent 创建 |
 
 ---
 
@@ -41,234 +45,213 @@
 
 | 组件 | 路径 | 用途 |
 |------|------|------|
-| jchash | `lualib-src/jchash.c` | 已编译，`jchash.hash(key, buckets)` → 稳定路由 |
-| distributed_lock | `lualib/skyext/distributed_lock.lua` | etcd 分布式锁，确保实体全局唯一加载 |
+| jchash | `lualib-src/jchash.c` | `jchash.hash(key, buckets)` 确定性路由 |
+| distributed_lock | `lualib/skyext/distributed_lock.lua` | etcd 分布式锁，用于协调跨节点实体加载 |
 | dbmgr | `lualib/skyext/dbmgr.lua` | MongoDB ORM 加载/存盘/卸载，含脏数据定时刷盘 |
 | cluster_discovery | `lualib/skyext/cluster_discovery.lua` | 服务注册/发现 |
 | id_generator | `lualib/skyext/id_generator.lua` | snowflake ID 生成（reliable_msg 消息 ID） |
-| mongo_conn | `lualib/skyext/mongo_conn.lua` + `service/mongo_conn.lua` | MongoDB 连接池，`CMD.find` 已返回数组 |
+| mongo_conn | `lualib/skyext/mongo_conn.lua` + `service/mongo_conn.lua` | MongoDB 连接池 |
 | cmd_api | `lualib/skyext/cmd_api.lua` | 服务消息分发 |
 | timer | `lualib/skyext/timer.lua` | 超时卸载定时器 |
 
 ---
 
-## 文件级实现细节
+## 实现细节
 
-### 1. `lualib/skyext/entity/types.lua` — 类型注册与路由计算
+### 1. types.lua — 类型注册与路由计算
 
-从 `config.get_table("entity_types")` 读取配置：
-
-```lua
--- 配置格式 (在 etc/nodes/common.app.lua 中定义)
-entity_types = {
-    guild = {
-        db_name = "entity",         -- MongoDB 数据库名
-        db_coll = "guild",          -- MongoDB 集合名
-        id_field = "gid",           -- 主键字段名
-        schema = "guild",           -- ORM schema 名
-        agent_count = 4,            -- 每节点 agent 数
-        unload_delay = 600,         -- 不活跃后卸载延迟(秒)
-        nodes = { "guildnode1", "guildnode2" },  -- 固定节点列表
-        client_enabled = false,     -- 是否支持客户端连接（默认 false）
-                                    -- true 时启用 client_ext：fd 绑定、sproto 协议分发、
-                                    -- 有 fd 时不启动卸载定时器（见 role_entity_migration.md）
-        modules_path = "guild_modules", -- 自动扫描该目录下所有模块
-    },
-}
-```
-
-**关键函数：**
-- `types.get(type_name)` → 返回类型配置
-- `types.calc_node(type_name, entity_id)` → `nodes[jchash.hash(id, #nodes) + 1]`
-- `types.calc_agent_index(type_name, entity_id)` → `entity_id % agent_count + 1`
-- `types.format_agent_service_name(type_name, index)` → `".entity_agent:guild:1"`
-
-**路由稳定性**：节点列表固定在配置中，jchash 确定性算法，节点重启路由不变。
-
-### 2. `lualib/skyext/entity/router.lua` — 消息路由 API
-
-```lua
-local entity_router = require "skyext.entity.router"
-
--- 同步调用 (有返回值)
-local result = entity_router.call("guild", gid, "get_info")
-
--- 异步发送 (fire-and-forget)
-entity_router.send("guild", gid, "on_member_login", rid)
-
--- 可靠发送 (持久化到 MongoDB，保证送达)
-entity_router.reliable_send("guild", gid, "add_item", { item_id = 1001, count = 5 })
-```
-
-**路由逻辑：**
-1. `types.calc_node()` → 目标节点
-2. `types.calc_agent_index()` → agent 索引 → service name
-3. 本节点 → `skynet.call/send`
-4. 远程 → `cluster.call/send`
-
-**reliable_send 流程：**
-1. `reliable_msg.save()` 持久化到 MongoDB
-2. 尝试 `send` 立即投递（`__deliver_reliable` 命令）
-3. 投递失败则留在 DB，实体加载时自动拉取
-
-### 3. `lualib/skyext/entity/entitymgr.lua` — 实体生命周期
-
-模式同 `rolemgr.lua`，每个 entity_agent 持有一个 entitymgr：
-
-**entity_obj 结构：**
-```lua
-{
-    type_name = "guild",
-    id = 12345,
-    data = <ORM-wrapped document>,
-    entity_mgr = <back-reference>,
-    unload_timer = nil,
-}
-```
-
-**核心流程：**
-- `ensure_loaded(entity_id)`:
-  1. 缓存命中 → 重置卸载定时器 → 返回
-  2. 缓存未命中 → `distributed_lock.try_lock("entity/guild/12345", ...)`
-  3. 锁成功 → `dbmgr.load()` → 创建 entity_obj → 初始化各数据模块（`mod.new(entity, data)`） → 依次调用各模块 `mod:on_load()` → 最后调用 `handler.on_load(entity)` → 处理 pending reliable messages → 启动卸载定时器
-  4. 锁被其他节点持有 → 报错（说明路由不一致，正常情况不会发生）
-- `unload(entity_id)`: 调用 `handler.on_unload(entity)` → 依次调用各模块 `mod:on_unload()` → `distributed_lock.unlock()` → `dbmgr.unload()` → 清缓存
-  
-**调用时序**：模块的生命周期回调围绕 handler 回调——加载时模块先于 handler 初始化（先有数据再处理业务），卸载时 handler 先于模块清理（先完成业务再释放数据）。
-- `touch(entity_id)`: 重置卸载定时器
-
-### 4. `lualib/skyext/entity/reliable_msg.lua` — 可靠消息
-
-MongoDB `entity.entity_msg` 集合，文档：
-```
-{ msg_id, target_type, target_id, cmd, args, status(0/1), create_time }
-```
-
-**函数：**
-- `save(target_type, target_id, cmd, args)` → insert → 返回 msg_id
-- `load_pending(target_type, target_id)` → `find({status=0})` 按 msg_id 排序
-- `mark_delivered(msg_id)` → `$set status=1`
-
-利用已有 `service/mongo_conn.lua` 的 `CMD.find`（cursor→array 已实现）。
-
-**清理策略：** 已投递的消息（`status=1`）通过 MongoDB TTL 索引自动清理，避免文档无限积累：
-```lua
--- entity_msg 集合的 TTL 索引，已投递消息 7 天后自动删除
-{ "create_time", expireAfterSeconds = 604800, partialFilterExpression = { status = 1 } }
-```
-该索引在 `etc/nodes/common.app.lua` 的 `mongo_config.entity.collections.entity_msg.indexes` 中声明，由 `mongo_index` 服务自动创建。
-
-### 5. `service/entity_agent.lua` — 通用实体 agent
-
-参数：`skynet.newservice("entity_agent", type_name, agent_index)`
-
-**CMD 表：**
-- `CMD.entity_call(entity_id, cmd, ...)` → `ensure_loaded` → `handler[cmd](entity, ...)` → return
-- `CMD.entity_send(entity_id, cmd, ...)` → `ensure_loaded` → `handler[cmd](entity, ...)`
-- `CMD.__deliver_reliable(entity_id, msg_id, cmd, args)` → `ensure_loaded` → handler → `mark_delivered`
-- `CMD.unload_entity(entity_id)` → `entitymgr.unload()`
-- `CMD.start(conf)` → 初始化
-
-Handler 模块通过 `require("entity_handler." .. type_name)` 加载。由于 handler 是纯业务逻辑，`entity_handler/` 目录应放在**游戏层** `lualib/`（如 `example/lualib/entity_handler/`），不放在引擎层。引擎仅提供 `example/lualib/entity_handler/example.lua` 作为接入示例。游戏层 `lualib/` 搜索优先级高于引擎层，`require` 时自然命中游戏层的 handler。
-
-**启动时自动加载模块**（见下方模块系统设计）。
-
-### 6. `service/entity_agentmgr.lua` — agent 管理器
-
-参数：`skynet.newservice("entity_agentmgr", type_name)`
-
-启动时：
-1. 读取 `agent_count`
-2. 调用 `discover_modules(modules_path)` 扫描模块目录（**每个进程只扫这一次**）
-3. 循环创建 N 个 entity_agent，将扫描结果通过 `CMD.start` 传入
-4. 注册 cluster_discovery
-
-### 7. 模块系统设计
-
-entity 系统内置模块自动发现和管理能力。业务代码只需按约定放置文件，配置中声明模块名，其余全部由框架自动完成。
-
-#### 配置
-
-`entity_types` 中只需配置 `modules_path`：
+从 `config.get_table("entity_types")` 读取配置。当前 `example/etc/nodes/common.app.lua` 中已配置 `role` 类型：
 
 ```lua
 entity_types = {
     role = {
-        ...
-        modules_path = "modules",       -- 自动扫描该目录下所有模块
+        db_name = "role",           -- MongoDB 数据库名
+        db_coll = "role",           -- MongoDB 集合名
+        id_field = "rid",           -- 主键字段名
+        schema = "role",            -- ORM schema 名
+        agent_count = 2,            -- 每节点 agent 数
+        unload_delay = 300,         -- 不活跃后卸载延迟(秒)
+        nodes = { "rolenode1", "rolenode2" },  -- 固定节点列表
+        client_enabled = true,      -- 启用客户端连接（fd 绑定、sproto 协议分发）
+                                    -- 有 fd 时不启动卸载定时器
+        modules_path = "modules",   -- 自动扫描该目录下所有模块
     },
+}
+```
+
+新增实体类型只需在此表中添加条目，例如：
+
+```lua
+entity_types = {
+    role = { ... },
     guild = {
-        ...
+        db_name = "entity",
+        db_coll = "guild",
+        id_field = "gid",
+        schema = "guild",
+        agent_count = 4,
+        unload_delay = 600,
+        nodes = { "guildnode1", "guildnode2" },
+        client_enabled = false,
         modules_path = "guild_modules",
     },
 }
 ```
 
-**不需要显式列出模块名。** entity_agent 启动时自动扫描 `modules_path` 目录，发现有 `init.lua` 或 `request.lua` 的子目录即为模块。新增模块只需创建目录和文件，无需改配置。
+**关键函数：**
+- `types.get(type_name)` — 返回类型配置，未知类型抛错
+- `types.all()` — 返回全部类型配置
+- `types.calc_node(type_name, entity_id)` — `nodes[jchash.hash(id, #nodes) + 1]`
+- `types.calc_agent_index(type_name, entity_id)` — `entity_id % agent_count + 1`
+- `types.format_agent_service_name(type_name, index)` — 如 `".entity_agent:role:1"`
 
-#### 自动发现机制
+**路由稳定性**：节点列表固定在配置中，jchash 确定性算法，节点重启路由不变；这不等于自动故障转移，所选节点不可用时调用可能失败。修改节点列表也会改变部分实体的路由，需要规划数据与锁的迁移。
 
-**`entity_agentmgr` 启动时扫描一次**，将结果传给所有 entity_agent。每个进程只扫一次，entity_agent 不依赖 lfs。
-
-扫描逻辑（在 agentmgr 中，使用项目已有的 `3rd/luafilesystem/`）：
-
-```lua
-local lfs = require "lfs"
-local skynet = require "skynet"
-
--- 基于 game_root + 节点 start 名拼接文件系统路径，不依赖 package.path
--- （agentmgr 是引擎层服务，package.path 不一定包含游戏层节点目录）
-local function resolve_modules_dir(modules_path, start_name)
-    local game_root = skynet.getenv("game_root") or "./"
-    local dir = game_root .. "nodes/" .. start_name .. "/" .. modules_path:gsub("%.", "/")
-    local attr = lfs.attributes(dir)
-    if attr and attr.mode == "directory" then
-        return dir
-    end
-    return nil
-end
-
--- 扫描目录，返回模块名列表
-local function discover_modules(modules_path, start_name)
-    local dir = resolve_modules_dir(modules_path, start_name)
-    if not dir then return {} end
-
-    local result = {}
-    for entry in lfs.dir(dir) do
-        if entry ~= "." and entry ~= ".." then
-            local full = dir .. "/" .. entry
-            if lfs.attributes(full, "mode") == "directory" then
-                local has_init = lfs.attributes(full .. "/init.lua")
-                local has_request = lfs.attributes(full .. "/request.lua")
-                if has_init or has_request then
-                    result[#result + 1] = entry
-                end
-            end
-        end
-    end
-    table.sort(result)  -- 确定性顺序
-    return result
-end
-```
-
-agentmgr 扫描后通过 `CMD.start` 传给每个 agent：
+### 2. router.lua — 消息路由 API
 
 ```lua
--- entity_agentmgr 中
-local start_name = skynet.getenv("start")
-local module_names = discover_modules(type_config.modules_path, start_name)
+local entity_router = require "skyext.entity.router"
 
-for i = 1, agent_count do
-    local agent = skynet.newservice("entity_agent", type_name, i)
-    skynet.call(agent, "lua", "start", {
-        modules = module_names,
-        modules_path = type_config.modules_path,
-        ...
-    })
-end
+-- 同步调用（有返回值）
+local result = entity_router.call("role", rid, "get_online_info")
+
+-- 异步发送（fire-and-forget）
+entity_router.send("role", rid, "on_event", event_data)
+
+-- 可靠发送（持久化到 MongoDB，实体加载时自动重试）
+entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5 })
 ```
 
-#### 模块文件约定
+**路由逻辑：**
+1. `types.calc_node()` 确定目标节点
+2. `types.calc_agent_index()` 确定 agent 索引，拼出 service name
+3. 通过 `config.get("cluster_node_name")` 判断本节点
+4. 本节点 → `skynet.call/send`；远程 → `cluster.call/send`
+
+**reliable_send 流程：**
+1. `reliable_msg.save()` 持久化到 MongoDB
+2. 尝试 `send` 立即投递（`__deliver_reliable` 命令）
+3. 即时 `send` 抛错时记录警告；已保存但未标记投递的消息会在实体加载时被拉取并重试（`save` 自身失败仍会抛错）
+
+这不是 exactly-once 保证：即时投递和加载时的异步重试可能重叠；处理器应自行保证幂等。目标节点不可用、数据库故障或处理器报错时，投递也可能失败，当前没有针对已加载实体的周期性重试机制；如果找不到对应 handler，现有实现会把消息标记为已投递并丢弃。
+
+### 3. entitymgr.lua — 实体生命周期
+
+每个 entity_agent 持有一个 entitymgr 实例，通过 `M.new(type_name, type_config, handler, data_modules)` 创建。
+
+**entity_obj 结构：**
+```lua
+{
+    type_name = "role",
+    id = 12345,
+    data = <ORM-wrapped document>,
+    entity_mgr = <back-reference>,
+    modules = { name = <module_instance>, ... },  -- 数据模块实例（若有）
+    fd = nil,           -- 客户端连接（仅 client_enabled 类型）
+    unload_timer = nil,
+}
+```
+
+**ensure_loaded(entity_id) 流程：**
+1. 缓存命中 → 重置卸载定时器 → 返回
+2. 缓存未命中 → `distributed_lock.try_lock(lock_key, lock_value)`
+   - lock_key 格式：`"entity/role/12345"`
+   - lock_value 编码节点名（如 `"rolenode1/role"`），供冲突时识别持锁节点
+3. 锁成功 → `dbmgr.load()` → 创建 entity_obj → `_init_modules`（`mod.new()`） → `_call_modules_on_load`（`mod:on_load()`） → `handler.on_load(entity)` → **异步** `skynet.fork` 投递 pending reliable messages → 启动卸载定时器
+4. 锁失败 → 返回 `false` 和锁信息（持锁节点标识）
+
+**unload(entity_id) 流程：**
+1. 取消卸载定时器
+2. `handler.on_unload(entity)` → `_call_modules_on_unload`（`mod:on_unload()`）
+3. `distributed_lock.unlock()` → `dbmgr.unload()` → 清缓存
+
+**调用时序**：加载时模块先于 handler 初始化（先有数据再处理业务），卸载时 handler 先于模块清理（先完成业务再释放数据）。
+
+**touch(entity_id)**：重置卸载定时器。若 `entity.fd` 存在（有客户端连接），跳过——有连接的实体不设卸载定时器。
+
+### 4. reliable_msg.lua — 可靠消息
+
+MongoDB `entity.entity_msg` 集合，文档结构：
+```
+{ msg_id, target_type, target_id, cmd, args, status(0/1), create_time }
+```
+
+**函数：**
+- `save(target_type, target_id, cmd, args)` — insert，返回 msg_id（snowflake ID）
+- `load_pending(target_type, target_id)` — 查询 `{status=0}` 按 msg_id 排序，逐条 cursor 迭代返回数组
+- `mark_delivered(msg_id)` — `findAndModify` 将 status 置 1
+
+**清理策略：** 已投递消息（`status=1`）通过 MongoDB TTL 索引自动清理（7 天），索引在 `common.app.lua` 的 `mongo_config.entity.collections.entity_msg.indexes` 中声明，由 `mongo_index` 服务自动创建：
+
+```lua
+{ "create_time", expireAfterSeconds = 604800,
+  partialFilterExpression = { status = 1 }, background = true },
+```
+
+### 5. client_ext.lua — 客户端连接管理
+
+仅在 `client_enabled = true` 的实体类型中由 entity_agent 加载。维护 fd → entity 映射。
+
+**核心函数：**
+- `init(entitymgr)` — 注入 entitymgr 引用，供 unbind 时触发 touch
+- `bind(fd, entity)` — 绑定 fd 到 entity，设置 `entity.fd`，取消卸载定时器
+- `unbind(fd)` — 解绑，清除 `entity.fd`，调用 `entitymgr:touch` 重启卸载定时器
+- `unbind_kick(fd)` — 解绑并通知 gate 踢掉连接
+- `get_entity(fd)` / `get_obj(fd)` — 按 fd 查找 entity 或返回 `{ entity = entity }` 上下文
+
+**客户端重连逻辑**（在 `entity_agent.lua` 的 `CMD.bind_client` 中实现）：
+1. 尝试在本节点加载 entity（`try_ensure_loaded`）
+2. 若 entity 被其他节点锁定，尝试通过 cluster 请求持锁节点执行 `unload_entity`；当前锁值为 `"rolenode1/role"` 形式，但代码直接把它作为 cluster 节点名使用，跨节点重连可能失败（见「已知问题」）
+3. 卸载成功后在本节点重新加载
+4. 已有旧 fd 连接时先 `unbind_kick` 踢掉旧连接
+5. 绑定新 fd，通知 watchdog forward 后续消息
+
+### 6. entity_agent.lua — 通用实体 agent
+
+参数：`skynet.newservice("entity_agent", type_name, agent_index)`
+
+启动时注册服务名（如 `.entity_agent:role:1`），若 `client_enabled` 则加载 client_ext。
+
+**CMD 表：**
+- `CMD.entity_call(entity_id, cmd, ...)` — `ensure_loaded` → `handler.handlers[cmd](entity, ...)` → return
+- `CMD.entity_send(entity_id, cmd, ...)` — 同上但无返回值
+- `CMD.__deliver_reliable(entity_id, msg_id, cmd, args)` — `ensure_loaded` → handler → `mark_delivered`
+- `CMD.unload_entity(entity_id)` — 强制卸载（供重连流程跨节点调用）
+- `CMD.bind_client(entity_id, fd)` — 客户端绑定（含重连逻辑，见上节）
+- `CMD.disconnect(fd)` — 客户端断开，触发 unbind + handler 回调
+- `CMD.start(conf)` — 初始化：加载数据模块和 sproto 协议、`require` handler、创建 entitymgr
+
+Handler 通过 `require("entity_handler." .. type_name)` 加载。handler 是游戏层代码，放在 `example/lualib/entity_handler/`，Lua `require` 搜索路径自然优先命中游戏层。
+
+### 7. entity_agentmgr.lua — agent 管理器
+
+参数：`skynet.newservice("entity_agentmgr", type_name)`
+
+启动流程：
+1. 读取 `agent_count`
+2. 调用 `discover_modules(modules_path, start_name)` 通过 luafilesystem 扫描模块目录（每个进程只扫一次）
+3. 循环创建 N 个 entity_agent，通过 `CMD.start` 传入扫描结果和 watchdog 地址
+4. 注册 cluster_discovery（`"entity:" .. type_name`）
+
+**模块扫描路径解析**：基于 `game_root` + 节点 `start` 名拼接文件系统路径：
+
+```lua
+game_root .. "nodes/" .. start_name .. "/" .. modules_path:gsub("%.", "/")
+```
+
+不依赖 `package.path`（agentmgr 是引擎层服务，package.path 不一定包含游戏层节点目录）。扫描逻辑：遍历目录下所有子目录，含 `init.lua` 或 `request.lua` 的子目录即为模块，按名称排序保证确定性顺序。
+
+---
+
+## 模块系统
+
+业务代码只需按约定放置文件，框架自动发现和管理。
+
+### 配置
+
+`entity_types` 中配置 `modules_path` 即可，**不需要显式列出模块名**。agentmgr 启动时自动扫描目录，将结果传给所有 entity_agent。当前 role 类型配置 `modules_path = "modules"`，对应目录 `example/nodes/role/modules/`，已有 `bag`、`role`、`mail` 三个模块。
+
+### 模块文件约定
 
 每个模块是 `modules_path` 下的一个子目录，包含两个可选文件（至少一个）：
 
@@ -278,7 +261,7 @@ end
     request.lua   -- 可选：客户端 sproto 协议处理器（仅 client_enabled 类型有意义）
 ```
 
-**`init.lua` — 数据模块**：管理 `entity.data.modules.<name>` 下的子数据。
+**init.lua — 数据模块**：管理 `entity.data.modules.<name>` 下的子数据。
 
 ```lua
 local M = {}
@@ -295,7 +278,7 @@ function M:on_unload() end
 return M
 ```
 
-**`request.lua` — 客户端协议处理器**：处理 sproto 请求。
+**request.lua — 客户端协议处理器**（仅 `client_enabled` 类型有意义）：
 
 ```lua
 local M = {}
@@ -303,76 +286,41 @@ local M = {}
 -- 统一签名: handler(request, fd, ctx)
 -- request = sproto 解码后的请求数据
 -- fd = 客户端 fd
--- ctx = { entity = entity_obj } 由 client_ext.get_obj(fd) 提供
+-- ctx = { entity = entity_obj }，由 client_ext.get_obj(fd) 提供
 function M.login_info(request, fd, ctx)
     local entity = ctx.entity
-    return {
-        info = { rid = entity.id, name = entity.data.name },
-    }
+    return { info = { rid = entity.id, name = entity.data.name } }
 end
 
 return M
 ```
 
-#### entity_agent 启动时自动处理
+### entity_agent 启动时自动加载
 
-```lua
--- entity_agent CMD.start 中，module_names 由 agentmgr 传入
-local modules_path = conf.modules_path
-local g_data_modules = {}
+agentmgr 传入 module_names 后，entity_agent 在 `CMD.start` 中对每个模块：
+1. 尝试 `require(modules_path .. "." .. name)`，若导出 `new` 函数则注册为数据模块
+2. 若 `client_enabled`，尝试 `require(modules_path .. "." .. name .. ".request")`，有内容则注册到 `sproto_api`
 
-for _, name in ipairs(conf.modules) do
-    local mod_path = modules_path .. "." .. name
+### ensure_loaded 时自动初始化
 
-    -- 探测数据模块 (有 init.lua 且导出 new 函数)
-    local ok, mod = pcall(require, mod_path)
-    if ok and type(mod) == "table" and mod.new then
-        g_data_modules[name] = mod
-    end
+加载实体时为每个数据模块：初始化 `entity.data.modules[name]`（若不存在则创建空表），调用 `mod.new(entity, data)` 创建 module_instance 存入 `entity.modules[name]`。
 
-    -- 探测客户端协议 (有 request.lua，且 client_enabled)
-    if type_config.client_enabled then
-        local ok2, request = pcall(require, mod_path .. ".request")
-        if ok2 and type(request) == "table" and next(request) then
-            sproto_api.register_module(name, client_ext, request)
-        end
-    end
-end
-```
-
-#### ensure_loaded 时自动初始化模块数据
-
-```lua
--- entitymgr.ensure_loaded 内部
-if next(g_data_modules) then
-    if entity.data.modules == nil then
-        entity.data.modules = {}
-    end
-    entity.modules = {}
-    for name, mod in pairs(g_data_modules) do
-        if entity.data.modules[name] == nil then
-            entity.data.modules[name] = {}
-        end
-        entity.modules[name] = mod.new(entity, entity.data.modules[name])
-    end
-end
-```
-
-#### 新增模块的完整流程
+### 新增模块流程
 
 1. 在 `modules_path` 下创建 `newmod/init.lua` 和/或 `newmod/request.lua`
-2. 如有 schema 变更，更新 `schema/<type>.sproto`
-3. 完毕。无需改配置、无需修改 handler、无需修改 entity_agent、无需代码生成。
+2. 如有 schema 变更，更新对应 sproto 文件
+3. 完毕。无需改配置、无需修改 handler、无需修改 entity_agent。
 
-### 8. Handler 模块约定 — `<game>/lualib/entity_handler/<type>.lua`
+---
 
-Handler 只写纯业务逻辑，**不涉及模块注册和数据初始化**：
+## Handler 约定
+
+Handler 放在游戏层 `example/lualib/entity_handler/<type>.lua`，只写纯业务逻辑：
 
 ```lua
 -- example/lualib/entity_handler/example.lua
 local M = {}
 
--- 服务端命令（通过 entity_router.call/send 调用）
 M.handlers = {}
 
 function M.handlers.get_info(entity)
@@ -388,15 +336,23 @@ end
 function M.on_load(entity) end
 function M.on_unload(entity) end
 
+-- 客户端连接回调（仅 client_enabled 类型，可选）
+function M.on_bind_client(entity, fd) end
+function M.on_unbind_client(entity) end
+
 return M
 ```
 
+当前已有两个 handler：
+- `example/lualib/entity_handler/example.lua` — 接入示例（get_info / set_name）
+- `example/lualib/entity_handler/role.lua` — 角色实体（含 get_online_info / kick / 客户端连接回调）
+
 ---
 
-## 修改的现有文件
+## 数据库配置
 
-### `etc/nodes/common.app.lua`
-添加 entity DB 配置和 entity_types 模板（空表）：
+`example/etc/nodes/common.app.lua` 中 reliable_msg 使用的 MongoDB 配置：
+
 ```lua
 mongo_config.entity = {
     connections = 4,
@@ -405,20 +361,21 @@ mongo_config.entity = {
         entity_msg = {
             indexes = {
                 { "target_type", "target_id", "status", background = true },
-                { "create_time", expireAfterSeconds = 604800, partialFilterExpression = { status = 1 }, background = true },
+                { "create_time", expireAfterSeconds = 604800,
+                  partialFilterExpression = { status = 1 }, background = true },
             },
         },
     },
 }
-entity_types = {}
 ```
 
-### `lualib/errcode.lua`（引擎层）
-添加 Entity 通用错误码（引擎保留范围 0-99），如 `ENTITY_NOT_FOUND`、`ENTITY_LOCK_FAILED` 等。游戏层业务错误码（100+）由游戏层 `errcode.lua` 扩展定义（见 `directory_restructure.md` 错误码分层设计）。
+注意各实体类型的业务数据库由各自 `db_name` / `db_coll` 配置决定（如 role 使用 `mongo_config.role`），`mongo_config.entity` 仅用于可靠消息。
 
 ---
 
-## 新文件清单
+## 文件清单
+
+**引擎层：**
 
 | 文件 | 说明 |
 |------|------|
@@ -426,30 +383,42 @@ entity_types = {}
 | `lualib/skyext/entity/router.lua` | call / send / reliable_send API |
 | `lualib/skyext/entity/entitymgr.lua` | 实体生命周期管理 |
 | `lualib/skyext/entity/reliable_msg.lua` | 可靠消息持久化 |
+| `lualib/skyext/entity/client_ext.lua` | 客户端 fd 绑定管理 |
 | `service/entity_agent.lua` | 通用实体 agent 服务 |
 | `service/entity_agentmgr.lua` | agent 管理器 |
-| `example/lualib/entity_handler/example.lua` | 示例 handler（展示接入方式，游戏层文件） |
 
-## 修改文件清单
+**游戏层（example）：**
+
+| 文件 | 说明 |
+|------|------|
+| `example/lualib/entity_handler/example.lua` | 接入示例 handler |
+| `example/lualib/entity_handler/role.lua` | 角色 handler（含客户端连接） |
+| `example/nodes/role/modules/bag/` | 角色背包模块（init + request） |
+| `example/nodes/role/modules/role/` | 角色基础模块（request） |
+| `example/nodes/role/modules/mail/` | 角色邮件模块（init + request） |
+
+**修改过的现有文件：**
 
 | 文件 | 修改内容 |
 |------|----------|
-| `etc/nodes/common.app.lua` | 添加 entity_types 和 entity DB 配置 |
-| `lualib/errcode.lua` | 添加 Entity 通用错误码（引擎保留范围 0-99） |
+| `example/etc/nodes/common.app.lua` | 添加 `entity_types` 配置和 `mongo_config.entity` |
+| `lualib/skyext/errcode.lua` | 添加 `ENTITY_NOT_FOUND`(20) / `ENTITY_LOCK_FAILED`(21) / `ENTITY_LOAD_FAILED`(22) |
 
 ---
 
-## 与现有 roleagent 的关系
+## 已知问题
 
-**新增并行系统，不修改现有 roleagent 代码。** roleagent 继续原样工作。未来可将 role 迁移为一种 entity type，但不在本次范围内。
+- `errcode.lua` 中 `LOCAK_FAILED = 4` 是拼写错误（应为 `LOCK_FAILED`），`entity_agent.lua` 的 `CMD.entity_call` 和 `CMD.bind_client` 引用了该常量。修复需同时改 `errcode.lua` 和所有引用处。
+- `entitymgr.make_lock_value` 把节点和类型拼成 `"rolenode1/role"`，但 `entity_agent.CMD.bind_client` 将竞争锁时返回的整个锁值直接传给 `cluster.call` 作为节点名；配置中的节点名是 `"rolenode1"`。跨节点重连需先正确解析持锁节点，不能将现有逻辑视为已验证可用。
 
 ---
 
-## 验证方案
+## 验证方法
 
-1. **启动测试**：配置一个 example entity type，启动 entity_agentmgr，验证 N 个 entity_agent 正常注册到 cluster_discovery
-2. **路由测试**：通过 `router.call("example", id, "get_info")` 验证消息路由到正确 agent
+1. **启动测试**：配置实体类型，启动 entity_agentmgr，验证 N 个 entity_agent 正常注册到 cluster_discovery
+2. **路由测试**：通过 `router.call("role", rid, "get_online_info")` 验证消息路由到正确 agent
 3. **路由稳定性**：重启节点，同一 entity_id 路由到同一节点
 4. **reliable_send**：发送消息 → 验证 MongoDB 有记录 → 加载 entity → 验证消息被处理且标记 delivered
 5. **分布式锁**：两节点同时 load 同一 entity，仅一个成功
 6. **卸载**：entity 空闲 `unload_delay` 秒后自动卸载，数据已存盘
+7. **客户端重连**：客户端断线后重连到另一节点，旧节点 entity 被卸载，新节点正常加载并绑定 fd

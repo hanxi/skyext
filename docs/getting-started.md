@@ -1,256 +1,127 @@
-# 开发指南
+# 快速上手
 
-## 目录
-1. [简介](#简介)
-2. [项目结构](#项目结构)
-3. [核心组件](#核心组件)
-4. [架构总览](#架构总览)
-5. [详细组件分析](#详细组件分析)
-6. [依赖关系分析](#依赖关系分析)
-7. [性能考虑](#性能考虑)
-8. [故障排查指南](#故障排查指南)
-9. [结论](#结论)
-10. [附录](#附录)
+本指南从空白检出开始，完成构建、启动示例节点和运行测试。以下 Unix 命令除非特别说明，均在 **skyext 仓库根目录** 执行。架构与目录职责见[架构概览](overview.md)。
 
-## 简介
-本指南面向 SkyExt 框架的开发者，覆盖从环境搭建、依赖安装、项目初始化到新功能开发规范、模块标准、代码组织原则的全流程说明。文档还包含协议定义与生成、测试方法（单元/集成/性能）、调试技巧、代码审查标准、版本控制与发布流程，以及常用工具的使用与常见问题排查。SkyExt 是基于 skynet 的分布式游戏服务器框架，采用微服务设计，支持账号节点与角色节点分离部署，内置 ORM、服务发现、JWT 认证、日志系统，并计划支持热更新与监控管理。
+## 准备环境
 
-## 项目结构
-SkyExt 采用分层与模块化组织：
-- app：应用入口，按节点类型划分（account、role、robot）
-- etc：配置中心，分为节点级与应用级配置
-- lualib：通用库（ORM、HTTP、日志、工具等）
-- proto/schema：协议与数据模式定义
-- service：后台服务（GM、MongoDB 索引、热更等）
-- tools：构建与辅助脚本
-- test：测试用例
-- 3rd：第三方依赖（sproto-orm、lua-cjson、luafilesystem、OpenSSL 等）
+| 用途 | 依赖 |
+| --- | --- |
+| 源码与编译 | Git、Make、C 编译器、OpenSSL 开发库；构建 skynet 所需的 autotools 等工具 |
+| 示例运行 | MongoDB 6、etcd（示例提供 Docker Compose 配置） |
+| 生成 ORM schema | `stylua` 命令（生成器最后会格式化产物） |
+| 测试及本地覆盖率 | 构建好的 skynet/Lua，部分测试需要 MongoDB 和 etcd；HTML 报告另需 `genhtml`（lcov） |
 
-```mermaid
-graph TB
-A["应用入口<br/>example/nodes/*"] --> B["核心启动器<br/>lualib/launcher.lua"]
-A --> C["配置加载<br/>lualib/skyext/config.lua"]
-A --> D["扩展初始化<br/>lualib/skyext.lua"]
-B --> E["GM 服务<br/>service/gm.lua"]
-A --> F["HTTP 服务<br/>lualib/skyext/http_server/*"]
-A --> G["数据库连接池<br/>lualib/skyext/dbmgr.lua"]
-A --> H["服务发现<br/>lualib/skyext/cluster_discovery.lua"]
-I["配置文件<br/>example/etc/*.conf.lua / example/etc/nodes/*.app.lua"] --> C
-J["构建与脚本<br/>Makefile / build.mk / tools/*"] --> A
+Linux、macOS 可使用 Unix 包装入口 `./bin/skyext`。CI 还构建 FreeBSD 和 Windows（MSYS2/MinGW64）；Windows CMD/PowerShell 的入口是 `bin\skyext.bat`，需先在对应环境构建 `bin\lua.exe` 和 `bin\skynet.exe`。具体平台依赖和编译参数可参照 [CI 构建配置](https://github.com/hanxi/skyext/blob/main/.github/workflows/build-release.yml)，尤其是 macOS 的 OpenSSL 路径和 Windows 的 skynet 兼容补丁。
+
+Linux（Debian/Ubuntu）的 CI 安装了以下构建依赖，可作为本地环境参考：
+
+```bash
+sudo apt-get update
+sudo apt-get install build-essential make pkg-config autoconf automake libtool \
+  git curl ca-certificates libreadline-dev libedit-dev libssl-dev rsync zip unzip
 ```
 
-## 核心组件
-- 配置系统：统一读取与序列化应用配置，支持字符串、数值、布尔、表类型；通过环境变量注入，避免重复加载。
-- 启动器：负责启动 GM、热更、MongoDB 索引等基础服务。
-- 扩展初始化：在 skynet 启动时加载配置与日志，并覆盖部分 table 操作以适配 ORM。
-- HTTP 服务：为 account 与 gm 提供 HTTP 接口，支持路由注册。
-- 错误码：集中定义业务错误码，便于统一处理与返回。
+需要使用本地 Docker Compose 示例时，还应安装 Docker 与 Compose 插件。Windows 和 macOS 请按对应平台安装等价依赖；`stylua` 需要另行安装并加入 `PATH`。
 
-## 架构总览
-SkyExt 的运行时由多个节点组成：
-- Account 节点：提供 HTTP 登录与账号管理，启动 GM 与 MongoDB 索引。
-- Role 节点：监听客户端连接，启动 watchdog 网关，承载角色逻辑。
-- GM 服务：提供指令注册、执行与管理能力，暴露 HTTP 接口。
-- 配置与扩展：在启动阶段加载应用配置与日志，确保后续模块可用。
+## 1. 获取源码并构建
 
-```mermaid
-sequenceDiagram
-participant Client as "客户端"
-participant Account as "Account 节点"
-participant GM as "GM 服务"
-participant Mongo as "MongoDB"
-participant Role as "Role 节点"
-Client->>Account : "HTTP 登录请求"
-Account->>GM : "调用 GM 指令(可选)"
-GM-->>Account : "返回结果"
-Account->>Mongo : "用户数据读写"
-Account-->>Client : "登录响应"
-Client->>Role : "建立连接(网关)"
-Role-->>Client : "会话建立完成"
+```bash
+git clone https://github.com/hanxi/skyext.git
+cd skyext
+make init           # 拉取 skynet 和 3rd/ 子模块
+make build          # 等同于 make -C example build
+./bin/lua -v        # 查看实际使用的 Lua 版本
+./bin/skyext --help
 ```
 
-## 详细组件分析
+当前子模块构建的 Lua 为 **5.5**。`make build` 会编译 skynet、引擎 C 模块与服务，并将 Lua/Skynet 程序放入 `bin/`。如果编译失败，先检查子模块是否已初始化、C 工具链与 OpenSSL 头文件/链接库是否可用。构建规则在根目录的 `build.mk`，示例游戏入口在 `example/Makefile`。
 
-### 配置加载与初始化流程
-- 启动时通过 core.conf 设置 Lua 搜索路径与服务路径。
-- skyext 在 init 中加载 config 与 log，并覆盖 table 相关函数以支持 ORM。
-- config.init 读取 app_config_path 指向的应用配置，解析并写入环境变量供各模块使用。
+## 2. 启动外部服务
 
-```mermaid
-flowchart TD
-Start(["进程启动"]) --> CoreConf["加载 core.conf.lua"]
-CoreConf --> SkyExtInit["skyext 初始化"]
-SkyExtInit --> LoadConfig["加载 config 模块"]
-LoadConfig --> InitConfig["config.init()"]
-InitConfig --> ReadAppConf["读取 app_config_path"]
-ReadAppConf --> ParseConf["解析配置并写入环境变量"]
-ParseConf --> LogInit["日志初始化"]
-LogInit --> Ready["就绪"]
+示例配置 `example/etc/nodes/common.app.lua` 默认访问本机 MongoDB `127.0.0.1:27017` 和三个 etcd 端点（`127.0.0.1:2379`、`2378`、`2377`）。使用项目自带的 Compose 配置：
+
+```bash
+docker compose -f example/tools/mongodb/docker-compose.yml up -d
+docker compose -f example/tools/etcd/docker-compose.yml up -d
 ```
 
-### 启动器与基础服务
-- launcher_node 启动 GM、热更服务，并创建 MongoDB 索引后退出索引服务。
-- Account 节点启动 HTTP 服务并注册路由；Role 节点启动 watchdog 网关监听端口。
+也可以连接已有实例，此时按实际地址修改应用配置；关闭示例依赖时对相应配置执行 `docker compose -f <路径> down`。**不要**在公共网络暴露示例 Compose 的未鉴权数据库/etcd 服务。
 
-```mermaid
-sequenceDiagram
-participant Node as "节点主进程"
-participant Launcher as "launcher"
-participant GM as "GM 服务"
-participant Hotfix as "热更服务"
-participant MongoIdx as "Mongo 索引服务"
-Node->>Launcher : "launcher.launcher_node()"
-Launcher->>GM : "newservice('gm')"
-Launcher->>Hotfix : "newservice('hotfix')"
-Launcher->>MongoIdx : "newservice('mongo_index')"
-Launcher->>MongoIdx : "create_indexes()"
-MongoIdx-->>Launcher : "成功"
-Launcher-->>Node : "完成"
+## 3. 生成协议和数据模式
+
+```bash
+./bin/skyext generate proto
+./bin/skyext generate schema
+# 或者：make -C example proto && make -C example schema
 ```
 
-### GM 指令系统
-- 支持批量注册指令、注销服务指令、列出指令、执行指令。
-- 指令可绑定到多个服务地址，支持按服务过滤执行。
-- 提供 HTTP 接口与 cmd_api 分发机制。
+- `generate proto` 从 `example/proto/**/*.sproto` 生成 `example/build/proto/sproto.spb`。
+- `generate schema` 从 `example/schema/**/*.sproto` 生成 `lualib/orm/schema_define.lua` 与 `lualib/orm/schema.lua`，最后调用 `stylua`。若报 `stylua failed`，先安装格式化工具并确认可从终端运行。
+- 修改协议或 schema 后重新生成相应产物，再运行相关测试；项目没有 `make autocode` 目标。
 
-```mermaid
-classDiagram
-class GM {
-+register_commands(service_address, commands)
-+unregister_service(service_address)
-+list_commands()
-+execute_command(cmd_name, params, target_services)
-}
-class CMD {
-+dispatch(CMD)
-}
-GM --> CMD : "使用"
+## 4. 启动示例节点
+
+分别在不同终端、**从仓库根目录**运行，命令会保持前台：
+
+```bash
+./bin/skyext serve account1  # Account：HTTP 端口 8080，GM 端口 9090
+./bin/skyext serve role1     # Role：客户端网关端口 7012，GM 端口 9092
 ```
 
-### 协议与模式生成
-- 协议生成：将 sproto 文件编译为二进制格式，供运行时校验与编解码。
-- 模式生成：基于 schema/*.sproto 生成 ORM 所需模式定义与元数据。
+也可以启动 `account2`、`role2`（端口由各自的 `example/etc/nodes/*.app.lua` 配置决定）。`./bin/skyext serve robot` 启动示例机器人；其 `gate_nodes` 默认列出两个 Role 节点，若只运行 `role1`，请按需要启动 `role2` 或调整机器人配置。
 
-```mermaid
-flowchart TD
-ProtoFiles["proto/*.sproto"] --> GenProto["./bin/skyext generate proto"]
-GenProto --> BuildProto["build/proto/sproto.spb"]
-SchemaFiles["schema/*.sproto"] --> GenSchema["./bin/skyext generate schema"]
-GenSchema --> ORMDef["lualib/orm/schema_define.lua"]
-ORMDef --> ORMMeta["lualib/orm/schema.lua"]
+CLI 的 `serve` 会自动切换到仓库根目录。直接使用 skynet 时**不能**在 `example/` 下启动，否则 `example/etc/core.conf.lua` 中的 `root = "./"` 会指向错误位置：
+
+```bash
+./bin/skynet example/etc/account1.conf.lua
 ```
 
-### 运行工具与脚本入口
-- Unix/macOS 使用 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`；二者调用项目构建的 Lua 解释器和统一 CLI `scripts/skyext.lua`，分发到 `scripts/commands/` 下的子命令。
-- Makefile 提供 proto、schema、format、lint、dist 等目标；其中 proto、schema、dist 分别调用 `generate proto`、`generate schema`、`package game`。
-- `package game` 生成示例游戏部署包 `example/skyext.zip`（Lua 字节码）；`package framework <platform>` 生成框架平台发布包 `release-assets/skyext-<platform>.zip`（保留源码），供 GitHub Actions 发布。
+## 5. 理解并修改配置
 
-## 依赖关系分析
-- 构建依赖：skynet、OpenSSL、lua-cjson、luafilesystem、sproto-orm。
-- 运行时依赖：etcd（服务发现与锁）、MongoDB（持久化）。
-- 模块耦合：
-  - account/role 依赖 launcher、config、http_server。
-  - gm 依赖 http_server、cmd_api、config。
-  - 配置模块依赖 skynet.getenv/setenv。
+配置分两层，分别由 skynet 和引擎加载：
 
-```mermaid
-graph LR
-Account["Account 节点"] --> Config["config.lua"]
-Account --> Launcher["launcher.lua"]
-Account --> HTTP["http_server"]
-Role["Role 节点"] --> Launcher
-Role --> HTTP
-GM["GM 服务"] --> HTTP
-GM --> Config
-Config --> SkynetEnv["skynet getenv/setenv"]
+| 层级 | 示例路径 | 作用 |
+| --- | --- | --- |
+| 节点启动配置 | `example/etc/account1.conf.lua` | 设置 `start`、`app_config_path`，并引用 `core.conf.lua` |
+| 核心与搜索路径 | `example/etc/core.conf.lua`、`example/etc/paths.conf.lua` | 定义仓库根目录、Lua/C 模块与服务搜索路径 |
+| 应用配置 | `example/etc/nodes/account1.app.lua`、`common.app.lua` | HTTP 端口、日志、MongoDB、etcd、登录密钥等业务参数 |
+
+`include "core.conf.lua"` 和 `include "common.app.lua"` 均按各自配置文件所在目录解析，不要替换成从仓库根目录拼接出的路径。服务启动时，`lualib/loader.lua` 加载 `skyext`，`lualib/skyext/init.lua` 再初始化配置与日志。业务代码通过 `require "skyext.config"` 获取配置：
+
+```lua
+local config = require "skyext.config"
+local mongo = config.get_table("mongo_config")
+local timeout = config.get_number("login_timeout_sec")
+local enabled = config.get_boolean("proto_checksum_enable")
+local secret = config.get("login_jwt_secret")
 ```
 
-## 性能考虑
-- 线程与并发：根据 core.conf 中的 thread 数调整并发度；HTTP agent_count 影响连接处理能力。
-- 数据库连接池：MongoDB connections 需根据负载调优，避免连接耗尽或过多上下文切换。
-- 日志策略：合理设置日志等级与分割策略，避免 IO 瓶颈。
-- 协议校验：启用 proto checksum 可减少非法包处理开销。
-- 内存与对象：ORM 对 table 操作的覆盖需谨慎，避免过度包装导致性能下降。
+`config.get*` 在配置不存在时返回 `nil`；应用配置中的 table 会序列化进 skynet 环境，再由 `get_table` 反序列化。示例中的 `login_jwt_secret = "your_access_secret"` 和 `gm_auth_token = "CHANGE_ME_TO_RANDOM_TOKEN"` **不是生产密钥**；在真实部署前务必更换，并保护 GM、Account、数据库与 etcd 的访问边界。
 
-## 故障排查指南
-- 启动失败：检查 core.conf 的路径与模块名是否正确；确认 app_config_path 存在且可解析。
-- 配置加载异常：查看 config.init 的错误信息；确认环境变量与嵌套表序列化正确。
-- 数据库连接问题：核对 mongo_config 的 host/port/authdb；检查集合索引是否创建成功。
-- 服务发现异常：验证 etcd_config 的 http_host 列表连通性；使用测试用例进行探测。
-- 协议不一致：启用 proto_checksum 并在日志中定位差异；重新生成 sproto.spb。
-- 常见错误码：参考 errcode 定义，快速定位业务错误场景。
+## 6. 测试、检查与打包
 
-## 结论
-SkyExt 提供了清晰的节点划分、统一的配置与启动流程、完善的 GM 指令系统与协议/模式生成工具链。遵循本文的开发规范与最佳实践，可以快速扩展功能、保证稳定性与可维护性。建议在新功能开发前明确模块职责、定义好协议与错误码，并通过测试与性能评估保障上线质量。
+```bash
+./bin/skyext test                           # 扫描并运行所有 *.test.lua
+./bin/skyext test lualib/skyext/errcode.test.lua
+./bin/skyext test --match errcode           # 按测试文件路径过滤
+./bin/skyext test --cov                     # 生成 LCOV；有 genhtml 时还生成 HTML
+make -C example lint                       # 示例游戏 luacheck
+# CI 在仓库根目录运行 luacheck . 和 stylua --check .
+./bin/skyext package game                  # example/skyext.zip（游戏部署包）
+./bin/skyext package framework linux       # release-assets/skyext-linux.zip（平台框架包）
+```
 
-## 附录
+测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。`--cov` 总会写入 `coverage/lua_coverage_clean.info`，检测到 `genhtml` 时另生成 `coverage/html/index.html`。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
 
-### 开发环境搭建与项目初始化
-- 初始化子模块与编译：
-  - make init
-  - make build
-- 启动外部依赖：
-  - 启动 etcd 集群
-  - 启动 MongoDB
-- 生成协议与模式：
-  - make proto
-  - make schema
-  - make autocode
-- 启动节点：
-  - 启动 account 节点（多实例）
-  - 启动 role 节点（多实例）
-  - 启动 robot 进行压测
+## 常见问题
 
-### 新功能开发规范与模块标准
-- 模块职责单一：每个模块聚焦一个领域（如 bag、mail、role），通过 request/init 拆分请求处理与初始化。
-- 协议先行：新增功能先在 schema 与 proto 中定义数据结构与消息，再使用工具生成代码。
-- 错误码统一：所有业务错误映射到 errcode，避免散乱状态码。
-- 配置外置：新特性参数放入 example/etc/nodes/*.app.lua，通过 config.get_* 获取。
-- 可观测性：关键路径添加日志，记录输入输出与耗时。
+| 现象 | 检查项 |
+| --- | --- |
+| `bin/skyext` 提示未构建 | 先运行 `make init && make build`；Windows 需构建本平台可执行文件。 |
+| `module ... not found` 或路径错误 | 确认子模块已拉取，生成步骤完成；直接运行 skynet 时工作目录必须是仓库根目录。 |
+| 生成 schema 失败 | 检查 `stylua` 是否已安装、可从 `PATH` 找到。 |
+| MongoDB/etcd 连接失败 | 检查 Compose 服务、端口与 `common.app.lua` 中的连接地址；容器环境需替换 `127.0.0.1`。 |
+| 客户端/机器人无法连接 | 核对 Account HTTP、Role 网关监听端口，以及 `robot.app.lua` 的 `gate_nodes`。 |
+| GM 接口不可用 | 核对对应节点 GM 端口与 `gm_auth_token`，详见 [GM HTTP API](guide/gm_api.md)。 |
 
-### 代码组织原则
-- app 层：节点入口与启动编排，不放置业务逻辑。
-- lualib 层：通用能力（ORM、HTTP、日志、工具）。
-- service 层：后台服务（GM、热更、索引）。
-- proto/schema：契约定义，保持向后兼容。
-- tools：构建与自动化脚本，保持幂等与可重复。
-
-### 协议定义流程
-- 在 schema 定义数据模型，在 proto 定义消息结构。
-- 运行 make proto 生成 sproto.spb。
-- 运行 make schema 生成 ORM 模式文件。
-- 在业务中使用生成的 API 进行编解码与持久化。
-
-### 测试方法与调试技巧
-- 单元测试：针对工具脚本与纯函数，使用 `./bin/skyext test` 执行测试。
-- 集成测试：通过 test/test_etcd 示例验证 etcd 交互与 cmd_api 分发。
-- 性能测试：使用 robot 节点模拟客户端流量，观察日志与资源占用。
-- 调试技巧：
-  - 开启详细日志（log_level 调高）
-  - 使用 GM 指令查询服务状态与执行诊断
-  - 结合 HTTP 接口与浏览器工具（public/gm.html）
-
-### 代码审查标准、版本控制与发布流程
-- 代码审查：
-  - 命名清晰、模块内聚、低耦合
-  - 错误处理完善，日志充分
-  - 配置项有默认值与注释
-- 版本控制：
-  - 分支策略：feature/xxx、hotfix/xxx
-  - 提交信息规范：模块+变更点
-- 发布流程：
-  - 全量构建与测试通过
-  - 生成 dist 包
-  - 灰度发布与回滚预案
-
-### 开发工具使用指南
-- 格式化与检查：
-  - make format（stylua）
-  - make lint（luacheck）
-- 构建与清理：
-  - make clean / make cleanall
-  - make dist（打包）
-- 工具脚本：
-  - ./bin/skyext — 统一 CLI 入口
-  - scripts/commands/ — 各子命令实现（test、serve、generate、package、hotfix、cov）
-
+下一步可阅读[登录流程](guide/login.md)、[热更新操作](guide/hotfix.md)与[架构概览](overview.md)。
