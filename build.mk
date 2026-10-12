@@ -31,6 +31,7 @@ OPENSSL_LDFLAGS ?=
 SKYNET_LIBS :=
 EXE_SUFFIX :=
 LUA_LIBS :=
+SKYNET_LINK_LIBS :=
 PLAT_HOST :=
 ifeq ($(PLAT), macosx)
 	SHARED := -fPIC -dynamiclib -Wl,-undefined,dynamic_lookup
@@ -43,6 +44,7 @@ else ifeq ($(PLAT), mingw)
 	SKYNET_LIBS := -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic -lm -lws2_32 -lgdi32
 	EXE_SUFFIX := ".exe"
 	LUA_LIBS := -L$(LUA_DIR) -llua54
+	SKYNET_LINK_LIBS := -L$(SKYEXT_ROOT)/skynet -lskynet
 	PLAT_HOST := --host=x86_64-w64-mingw32
 endif
 
@@ -102,7 +104,7 @@ $(SKYEXT_CSERVICE_PATH) :
 	mkdir -p $(SKYEXT_CSERVICE_PATH)
 
 $(SKYEXT_CSERVICE_PATH)/profiler.so : $(SKYEXT_ROOT)/service-src/service_profiler.c | $(SKYEXT_CSERVICE_PATH)
-	$(CC) $(CFLAGS) $(SHARED) -I$(SKYNET_SRC) $^ -o $@ $(SKYNET_LIBS)
+	$(CC) $(CFLAGS) $(SHARED) -I$(SKYNET_SRC) $^ -o $@ $(SKYNET_LINK_LIBS) $(SKYNET_LIBS)
 
 SKYEXT_CSERVICE = profiler
 
