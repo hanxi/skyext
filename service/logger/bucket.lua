@@ -30,7 +30,7 @@ end
 function bucket_mt:init(config)
     assert(not self.buckets, "init repeated")
     local buckets = {}
-    for _, conf in pairs(config) do
+    for _, conf in pairs(config or {}) do
         log.debug("bucket init", "conf", conf)
         local ok, bucket_obj = pcall(bucket.new, conf)
         if ok then
