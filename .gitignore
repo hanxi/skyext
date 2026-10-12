@@ -1,5 +1,6 @@
 bin/*
 !bin/skyext
+!bin/skyext.bat
 build/
 luaclib/
 cservice/
@@ -11,11 +12,13 @@ example/tools/etcd/etcd2_data
 example/tools/etcd/etcd3_data
 example/tools/mongodb/db
 example/build/
+/example/etc/.skytest_*.conf.lua
 example/luaclib/
 example/cservice/
 
 logs/
 dist/
+/release-assets/
 
 skyext.zip
 /skyext/

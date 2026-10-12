@@ -24,14 +24,16 @@ build: skyext_build \
 	$(foreach v, $(GAME_LUA_CLIB), $(GAME_LUACLIB_PATH)/$(v).so)
 	mkdir -p ../logs
 
+# 工具命令统一由构建出的 Lua 解释器执行
+SKYEXT_TOOL = $(BIN_PATH)/lua$(EXE_SUFFIX) $(SKYEXT_ROOT)/scripts/skyext.lua
+
 # 编译协议
-proto:
-	@mkdir -p build/proto
-	./tools/gen_proto.sh
+proto: skyext_build
+	$(SKYEXT_TOOL) generate proto
 
 # 编译 ORM 模式文件
-schema:
-	./tools/gen_schema.sh
+schema: skyext_build
+	$(SKYEXT_TOOL) generate schema
 
 # 格式化 lua 代码
 format:
@@ -45,7 +47,7 @@ lint:
 
 # 打包
 dist: build
-	./tools/dist.sh
+	$(SKYEXT_TOOL) package game
 
 # 清理游戏编译产物
 clean:

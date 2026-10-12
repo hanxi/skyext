@@ -91,8 +91,8 @@ return {
     desc = "修复角色背包溢出",
     gitsha_base = "abc1234",
     gitsha_update = "def5678",
-    time = "2026-08-31 10:00:00",  -- 由 tools/hotfix.sh refresh 自动回写
-    checksum = "a1b2c3d4...",       -- 由 tools/hotfix.sh refresh 自动计算
+    time = "2026-08-31 10:00:00",  -- 由 hotfix refresh 命令自动回写
+    checksum = "a1b2c3d4...",       -- 由 hotfix refresh 命令自动计算
 
     -- 可选字段
     fail_fast = true,   -- 默认 true；false 则步骤失败后继续执行后续步骤
@@ -138,8 +138,8 @@ mkdir hotfix/20260831-patch1
 # 编辑 hotfix.conf.lua、update_files、codeN.lua
 # ...
 
-# 生成 checksum 和 time（在 example/ 目录下执行）
-./tools/hotfix.sh refresh hotfix/20260831-patch1
+# 生成 checksum 和 time（在项目根目录执行）
+./bin/skyext hotfix refresh hotfix/20260831-patch1
 ```
 
 ### 5.2 部署文件到目标节点
@@ -196,7 +196,7 @@ curl -X POST http://localhost:9092/gm/execute \
 | 失败步骤 | 处置建议 |
 |----------|---------|
 | `load_config` | 检查 hotfix.conf.lua 必填字段(desc/checksum/gitsha_base/gitsha_update/time)，修正后重新执行 |
-| `verify_checksum` | 先在开发机执行 `./tools/hotfix.sh refresh <dir>` 重新生成 checksum；确认磁盘文件与热更包未被改动 |
+| `verify_checksum` | 先在开发机执行 `./bin/skyext hotfix refresh <dir>` 重新生成 checksum；确认磁盘文件与热更包未被改动 |
 | `clear_cache` | GM 通道异常，检查 `.gm` 服务是否正常运行；本包尚未注入任何代码，可安全重试 |
 | `reload_res` | res 未重载，配表与代码可能不一致；排查 sharetable 后重试或回退 update_files |
 | `reload_sproto` | sproto schema 重载失败，检查 sproto 文件格式；可安全重试 |

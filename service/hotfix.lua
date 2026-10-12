@@ -18,7 +18,7 @@ local GM_CMD = {}
 
 local STEP_GUIDANCE = {
     load_config = "检查 hotfix.conf.lua 必填字段(desc/checksum/gitsha_base/gitsha_update/time)，修正后重新执行",
-    verify_checksum = "先在开发机执行 ./tools/hotfix.sh refresh <dir> 重新生成 checksum；确认磁盘文件与热更包未被改动",
+    verify_checksum = "先在开发机执行 ./bin/skyext hotfix refresh <dir> 重新生成 checksum；确认磁盘文件与热更包未被改动",
     clear_cache = "GM 通道异常，检查 .gm 服务是否正常运行；本包尚未注入任何代码，可安全重试",
     reload_res = "res 未重载，配表与代码可能不一致；排查 sharetable 后重试或回退 update_files",
     reload_sproto = "sproto schema 重载失败，检查 sproto 文件格式；可安全重试",

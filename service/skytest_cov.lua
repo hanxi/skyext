@@ -3,6 +3,7 @@ local collector = require "skytest.cov.collector"
 local config = require "skytest.cov.config"
 local lcov_reporter = require "skytest.cov.lcov_reporter"
 local source_lines = require "skytest.cov.source_lines"
+local fs = require "skyext.util.fs"
 
 local CMD = {}
 local central_stats = {}
@@ -89,7 +90,7 @@ local function save_stats()
     local cfg = config.get()
     local output_dir = cfg.output_dir
 
-    os.execute(string.format("mkdir -p %q", output_dir))
+    fs.mkdir(output_dir)
 
     local report_stats = build_report_stats()
 

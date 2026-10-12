@@ -75,29 +75,10 @@ jobs:
       env:
         MONGO_HOST: mongo
         ETCD_ENDPOINTS: http://etcd:2379
-      run: ./bin/skyext test --cov
+      run: ./bin/lua scripts/skyext.lua test --cov
 
-    - name: Generate coverage report
-      run: |
-        COV_DIR="./coverage"
-        lcov_file="$COV_DIR/lua_coverage.info"
-
-        awk '
-          /^SF:/ { skip = ($0 !~ /^SF:\.\//) }
-          !skip { print }
-        ' "$lcov_file" > "$COV_DIR/lua_coverage_clean.info"
-
-        genhtml "$COV_DIR/lua_coverage_clean.info" \
-          --output-directory "$COV_DIR/html" \
-          --title "skyext coverage ($(date +%Y-%m-%d))" \
-          --legend \
-          --no-function-coverage
-
-        TOTAL=$(awk '/^DA:/{n++} END{print n+0}' "$COV_DIR/lua_coverage_clean.info")
-        COVERED=$(awk '/^DA:/{split($0,a,","); if(a[2]+0>0) n++} END{print n+0}' "$COV_DIR/lua_coverage_clean.info")
-        FILES=$(grep -c "^SF:" "$COV_DIR/lua_coverage_clean.info" || echo 0)
-        PCT=$(awk "BEGIN{printf \"%.1f\", $COVERED*100/$TOTAL}")
-        echo "## Coverage: ${PCT}% ($COVERED/$TOTAL lines, $FILES files)" >> "$GITHUB_STEP_SUMMARY"
+    - name: Summarize coverage
+      run: ./bin/lua scripts/skyext.lua cov summary coverage/lua_coverage_clean.info >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload coverage artifact
       uses: actions/upload-artifact@v4

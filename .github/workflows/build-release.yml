@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
     tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -36,7 +38,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           build-essential pkg-config autoconf automake libtool \
-          libssl-dev libreadline-dev libedit-dev rsync zip
+          libssl-dev libreadline-dev libedit-dev rsync zip unzip
 
     - name: Install dependencies (macOS)
       if: matrix.platform == 'macosx'
@@ -101,14 +103,82 @@ jobs:
         env PATH="$(pwd)/bin:/usr/bin:/bin" ./bin/lua.exe -e \
           'package.cpath = "./luaclib/?.so;./skynet/luaclib/?.so"; assert(require("crypto")); assert(package.loadlib("./skynet/luaclib/ltls.so", "luaopen_ltls_init_c"))'
 
+    - name: Smoke test CLI (Linux/macOS)
+      if: matrix.platform != 'windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -x bin/skyext
+        cd "$RUNNER_TEMP"
+        cli="$GITHUB_WORKSPACE/bin/skyext"
+        "$cli" --help | grep -F '用法: ./bin/skyext'
+        "$cli" test --help | grep -F -- '--match TEXT'
+        "$cli" generate --help | grep -F 'generate <proto|schema>'
+        "$cli" package --help | grep -F 'package framework <platform>'
+        "$cli" test --match "no matching tests" "$GITHUB_WORKSPACE/lualib/skyext/errcode.test.lua" | grep -Fx 'No test files found.'
+        if "$cli" unknown-command >/dev/null 2>&1; then
+          echo 'Unknown command unexpectedly succeeded' >&2
+          exit 1
+        else
+          test "$?" -eq 1
+        fi
+        PATH="$GITHUB_WORKSPACE/bin:$PATH" skyext --help >/dev/null
+
+    - name: Smoke test CLI (Windows CMD)
+      if: matrix.platform == 'windows'
+      shell: cmd
+      run: |
+        @echo off
+        set "PATH=%GITHUB_WORKSPACE%\bin;%SystemRoot%\System32;%SystemRoot%"
+        cd /d "%TEMP%"
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" --help > "%TEMP%\skyext-cli-help.txt"
+        if errorlevel 1 exit /b 1
+        findstr /C:"./bin/skyext" "%TEMP%\skyext-cli-help.txt" >NUL
+        if errorlevel 1 exit /b 1
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" generate --help > "%TEMP%\skyext-cli-generate.txt"
+        if errorlevel 1 exit /b 1
+        findstr /C:"generate <proto|schema>" "%TEMP%\skyext-cli-generate.txt" >NUL
+        if errorlevel 1 exit /b 1
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" package --help > "%TEMP%\skyext-cli-package.txt"
+        if errorlevel 1 exit /b 1
+        findstr /C:"package framework <platform>" "%TEMP%\skyext-cli-package.txt" >NUL
+        if errorlevel 1 exit /b 1
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" test --match "no matching tests" "%GITHUB_WORKSPACE%\lualib\skyext\errcode.test.lua" > "%TEMP%\skyext-cli-test.txt"
+        if errorlevel 1 exit /b 1
+        findstr /C:"No test files found." "%TEMP%\skyext-cli-test.txt" >NUL
+        if errorlevel 1 exit /b 1
+        call "%GITHUB_WORKSPACE%\bin\skyext.bat" unknown-command >NUL 2>&1
+        if not "%ERRORLEVEL%"=="1" exit /b 1
+
     - name: Package Linux/macOS
       if: matrix.platform != 'windows'
-      run: sh scripts/ci/package-release.sh "${{ matrix.platform }}"
+      run: ./bin/lua scripts/skyext.lua package framework "${{ matrix.platform }}"
 
     - name: Package Windows
       if: matrix.platform == 'windows'
       shell: msys2 {0}
-      run: sh scripts/ci/package-release.sh windows
+      run: ./bin/lua.exe scripts/skyext.lua package framework windows
+
+    - name: Verify packaged CLI (Linux/macOS)
+      if: matrix.platform != 'windows'
+      run: |
+        archive="release-assets/skyext-${{ matrix.platform }}.zip"
+        unzip -Z1 "$archive" | grep -Fx 'bin/skyext'
+        unzip -Z1 "$archive" | grep -Fx 'bin/skyext.bat'
+
+    - name: Verify packaged CLI (Windows)
+      if: matrix.platform == 'windows'
+      shell: pwsh
+      run: |
+        $archive = [System.IO.Compression.ZipFile]::OpenRead('release-assets/skyext-windows.zip')
+        try {
+          $names = $archive.Entries | ForEach-Object { $_.FullName }
+          foreach ($name in 'bin/skyext', 'bin/skyext.bat') {
+            if ($name -notin $names) { throw "Missing release entry: $name" }
+          }
+        } finally {
+          $archive.Dispose()
+        }
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -134,7 +204,7 @@ jobs:
         release: '14.4'
         sync: rsync
         prepare: |
-          pkg install -y gmake git autoconf automake libtool pkgconf openssl rsync zip
+          pkg install -y gmake git autoconf automake libtool pkgconf openssl rsync zip unzip
         run: |
           set -eu
           test "$(uname -s)" = FreeBSD
@@ -142,7 +212,23 @@ jobs:
             OPENSSL_CFLAGS=-I/usr/local/include \
             OPENSSL_LDFLAGS=-L/usr/local/lib \
             TLS_INC=/usr/local/include TLS_LIB=/usr/local/lib
-          sh scripts/ci/package-release.sh freebsd
+          test -x bin/skyext
+          ./bin/skyext --help > /tmp/skyext-cli-help.txt
+          grep -F '用法: ./bin/skyext' /tmp/skyext-cli-help.txt
+          ./bin/skyext generate --help > /tmp/skyext-cli-generate.txt
+          grep -F 'generate <proto|schema>' /tmp/skyext-cli-generate.txt
+          ./bin/skyext package --help > /tmp/skyext-cli-package.txt
+          grep -F 'package framework <platform>' /tmp/skyext-cli-package.txt
+          ./bin/skyext test --match "no matching tests" lualib/skyext/errcode.test.lua > /tmp/skyext-cli-test.txt
+          grep -Fx 'No test files found.' /tmp/skyext-cli-test.txt
+          if ./bin/skyext unknown-command >/dev/null 2>&1; then
+            exit 1
+          else
+            test "$?" -eq 1
+          fi
+          ./bin/lua scripts/skyext.lua package framework freebsd
+          unzip -Z1 release-assets/skyext-freebsd.zip | grep -Fx 'bin/skyext'
+          unzip -Z1 release-assets/skyext-freebsd.zip | grep -Fx 'bin/skyext.bat'
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

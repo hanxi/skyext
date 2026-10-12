@@ -2,12 +2,15 @@ local skynet = require "skynet"
 local socket = require "skynet.socket"
 local expect = require "skytest.expect"
 local reporter = require "skytest.reporter"
+local fs = require "skyext.util.fs"
+local process = require "tool_process"
+local lfs = require "lfs"
 
 local t = {}
 
 local root_suites = {}
 local current_suite = nil
-local child_pids = {}
+local child_processes = {}
 
 local function new_suite(name)
     return {
@@ -98,69 +101,57 @@ end
 
 function t.start_skynet(opts)
     opts = opts or {}
-    local root = os.getenv("SKYTEST_ROOT") or "."
-
+    local root = fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir())
     local test_file = os.getenv("SKYTEST_FILE") or ""
-    local test_dir = nil
     local base = test_file:match("(.+)%.test%.lua$")
-    if base then
-        local dir = base .. ".test"
-        local ok = os.execute(string.format("test -d %q", dir))
-        if ok then
-            test_dir = root .. "/" .. dir
-        end
+    local test_dir = base and fs.join(root, base .. ".test")
+    if test_dir and fs.mode(test_dir) ~= "directory" then
+        test_dir = nil
     end
 
     local conf_lines = {
-        string.format('root = "%s/"', root),
-        string.format("skyext_root = root"),
-        string.format('game_root = root .. "example/"'),
+        string.format("root = %q", root:gsub("\\", "/") .. "/"),
+        "skyext_root = root",
+        'game_root = root .. "example/"',
+        string.format("start = %q", opts.start or ""),
+        'app_config_loaded = "true"',
         'include "paths.conf.lua"',
         "thread = 4",
         "harbor = 0",
         'bootstrap = "snlua bootstrap"',
-        string.format('start = "%s"', opts.start or ""),
         'logservice = "snlua"',
         'logger = "logger"',
     }
 
     if test_dir then
-        table.insert(conf_lines, string.format('luaservice = luaservice .. "%s/?.lua;"', test_dir))
+        table.insert(conf_lines, string.format("luaservice = luaservice .. %q", test_dir:gsub("\\", "/") .. "/?.lua;"))
     end
 
     if opts.env then
         for k, v in pairs(opts.env) do
-            table.insert(conf_lines, string.format('%s = "%s"', k, tostring(v)))
+            assert(type(k) == "string" and k:match("^[%a_][%w_]*$"), "invalid skynet config key")
+            table.insert(conf_lines, string.format("%s = %q", k, tostring(v)))
         end
     end
 
-    local conf_path = os.tmpname()
-    local f = io.open(conf_path, "w")
-    f:write(table.concat(conf_lines, "\n") .. "\n")
-    f:close()
-
-    local env_str = ""
-    if os.getenv("SKYTEST_COV") then
-        env_str = "SKYTEST_COV=1 "
-        local cov_dir = os.getenv("SKYTEST_COV_OUTPUT_DIR")
-        if cov_dir then
-            env_str = env_str .. string.format("SKYTEST_COV_OUTPUT_DIR=%q ", cov_dir)
-        end
+    local conf_path = fs.join(
+        root,
+        "example",
+        "etc",
+        string.format(".skytest_child_%d_%d.conf.lua", os.time(), math.random(1, 2147483647))
+    )
+    assert(not fs.mode(conf_path), "temporary config already exists: " .. conf_path)
+    fs.write(conf_path, table.concat(conf_lines, "\n") .. "\n")
+    local ok, child = pcall(
+        process.spawn,
+        { fs.join(root, "bin", package.config:sub(1, 1) == "\\" and "skynet.exe" or "skynet"), conf_path }
+    )
+    if not ok then
+        assert(os.remove(conf_path))
+        error(child, 0)
     end
-
-    local cmd = string.format("%s%q %q & echo $!", env_str, root .. "/bin/skynet", conf_path)
-    local handle = io.popen(cmd)
-    local pid = handle:read("*l")
-    handle:close()
-
-    if pid then
-        pid = tonumber(pid)
-        if pid then
-            table.insert(child_pids, { pid = pid, conf = conf_path })
-        end
-    end
-
-    return pid
+    table.insert(child_processes, { handle = child, conf = conf_path })
+    return child:id()
 end
 
 function t.data_path(filename)
@@ -172,11 +163,7 @@ function t.data_path(filename)
     if not base then
         error("[skytest] cannot derive .test/ directory from " .. test_file)
     end
-    local dir = base .. ".test"
-    local h = io.popen("pwd")
-    local cwd = h:read("*l")
-    h:close()
-    return cwd .. "/" .. dir .. "/" .. filename
+    return fs.join(fs.absolute(base .. ".test"), filename)
 end
 
 local function run_suite(suite, depth, results)
@@ -273,12 +260,20 @@ function t.run()
 end
 
 function t._cleanup()
-    for _, child in ipairs(child_pids) do
-        os.execute("kill " .. child.pid .. " 2>/dev/null")
-        os.execute("kill -9 " .. child.pid .. " 2>/dev/null")
-        os.remove(child.conf)
+    local children = child_processes
+    child_processes = {}
+    local errors = {}
+    for _, child in ipairs(children) do
+        local ok, err = pcall(child.handle.close, child.handle)
+        if not ok then
+            errors[#errors + 1] = tostring(err)
+        end
+        local removed, remove_err = os.remove(child.conf)
+        if not removed then
+            errors[#errors + 1] = tostring(remove_err)
+        end
     end
-    child_pids = {}
+    assert(#errors == 0, table.concat(errors, "\n"))
 end
 
 return t

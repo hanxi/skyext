@@ -133,16 +133,17 @@ GM --> CMD : "使用"
 
 ```mermaid
 flowchart TD
-ProtoFiles["proto/*.sproto"] --> GenProto["tools/gen_proto.sh"]
+ProtoFiles["proto/*.sproto"] --> GenProto["./bin/skyext generate proto"]
 GenProto --> BuildProto["build/proto/sproto.spb"]
-SchemaFiles["schema/*.sproto"] --> GenSchema["tools/gen_schema.sh"]
+SchemaFiles["schema/*.sproto"] --> GenSchema["./bin/skyext generate schema"]
 GenSchema --> ORMDef["lualib/orm/schema_define.lua"]
 ORMDef --> ORMMeta["lualib/orm/schema.lua"]
 ```
 
 ### 运行工具与脚本入口
-- run.lua 作为工具脚本的统一入口，设置路径、解析参数、执行目标脚本。
-- Makefile 提供 proto、schema、autocode、format、lint、dist 等命令。
+- Unix/macOS 使用 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`；二者调用项目构建的 Lua 解释器和统一 CLI `scripts/skyext.lua`，分发到 `scripts/commands/` 下的子命令。
+- Makefile 提供 proto、schema、format、lint、dist 等目标；其中 proto、schema、dist 分别调用 `generate proto`、`generate schema`、`package game`。
+- `package game` 生成示例游戏部署包 `example/skyext.zip`（Lua 字节码）；`package framework <platform>` 生成框架平台发布包 `release-assets/skyext-<platform>.zip`（保留源码），供 GitHub Actions 发布。
 
 ## 依赖关系分析
 - 构建依赖：skynet、OpenSSL、lua-cjson、luafilesystem、sproto-orm。
@@ -221,7 +222,7 @@ SkyExt 提供了清晰的节点划分、统一的配置与启动流程、完善�
 - 在业务中使用生成的 API 进行编解码与持久化。
 
 ### 测试方法与调试技巧
-- 单元测试：针对工具脚本与纯函数，使用 run.lua 执行测试脚本。
+- 单元测试：针对工具脚本与纯函数，使用 `./bin/skyext test` 执行测试。
 - 集成测试：通过 test/test_etcd 示例验证 etcd 交互与 cmd_api 分发。
 - 性能测试：使用 robot 节点模拟客户端流量，观察日志与资源占用。
 - 调试技巧：
@@ -250,6 +251,6 @@ SkyExt 提供了清晰的节点划分、统一的配置与启动流程、完善�
   - make clean / make cleanall
   - make dist（打包）
 - 工具脚本：
-  - tools/run.lua 统一入口
-  - tools/gen_proto.sh / gen_schema.sh
+  - ./bin/skyext — 统一 CLI 入口
+  - scripts/commands/ — 各子命令实现（test、serve、generate、package、hotfix、cov）
 

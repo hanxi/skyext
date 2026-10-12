@@ -135,10 +135,11 @@ make schema
 
 ```
 skyext/
-├── bin/                   # 编译产物
-│   ├── skyext             # 统一 CLI（test / serve）
+├── bin/                   # 编译产物与统一 CLI 的平台入口
+│   ├── skyext             # Unix/macOS 入口（POSIX shell）
+│   ├── skyext.bat         # Windows CMD/PowerShell 入口
 │   ├── skynet             # skynet 二进制
-│   ├── lua                # Lua 5.5 解释器
+│   ├── lua                # Lua 5.5 解释器（也用于运行统一 CLI）
 │   └── luac               # Lua 编译器
 ├── lualib/                # 引擎 Lua 库
 │   ├── skyext/            # 引擎模块（require "skyext.*"）
@@ -194,8 +195,10 @@ skyext/
 │   └── skytest_hook.c     # 覆盖率 debug hook（C 加速）
 ├── service-src/           # 引擎 C 服务源码
 │   └── service_profiler.c
-├── scripts/               # 辅助脚本
-│   └── cov/               # 覆盖率脚本（merge、html、check）
+├── scripts/               # 统一 CLI 与辅助工具（纯 Lua）
+│   ├── skyext.lua         # 两个平台入口共用的 Lua CLI 实现
+│   ├── commands/          # 子命令实现（test、serve、generate、package、hotfix、cov）
+│   └── lib/               # CLI 内部库（lcov 解析等）
 ├── example/               # 示例游戏项目
 │   ├── nodes/             # 节点入口
 │   │   ├── account/       # 账号服务
@@ -308,7 +311,7 @@ cd example
 # 清理编译文件
 make clean
 
-# 打包发布
+# 打包示例游戏部署包
 make dist
 
 # 格式化代码
@@ -319,6 +322,15 @@ make lint
 
 # 查看所有可用命令
 make help
+```
+
+从仓库根目录调用统一 CLI（Windows CMD/PowerShell 将 `./bin/skyext` 换成 `bin\skyext.bat`）：
+
+```bash
+./bin/skyext generate proto
+./bin/skyext generate schema
+./bin/skyext package game                 # 示例游戏部署包 example/skyext.zip（Lua 字节码；等同于 make dist）
+./bin/skyext package framework linux      # 平台框架发布包 release-assets/skyext-linux.zip（保留源码；CI 使用）
 ```
 
 ## 🎮 游戏功能
@@ -361,14 +373,14 @@ make help
 
 [![Coverage](https://img.shields.io/badge/coverage-report-blue)](https://hanxi.github.io/skyext/coverage/)
 
-内置 skytest 测试框架和基于 C 加速的 Lua 代码覆盖率工具。测试文件以 `.test.lua` 结尾，放在被测文件旁边，每个文件在独立 skynet 进程中运行。
+内置 skytest 测试框架和基于 C 加速的 Lua 代码覆盖率工具。测试文件以 `.test.lua` 结尾，放在被测文件旁边，每个文件在独立 skynet 进程中运行。以下命令在仓库根目录执行；Unix/macOS 使用 `./bin/skyext`，Windows CMD/PowerShell 将其替换为 `bin\skyext.bat`。两个入口均使用项目构建的 Lua 解释器。
 
 ```bash
 # 运行所有测试
 ./bin/skyext test
 
 # 运行指定文件或目录
-./bin/skyext test lualib/skyext/snowflake.test.lua
+./bin/skyext test lualib/skyext/errcode.test.lua
 ./bin/skyext test lualib/skyext/
 
 # 按路径过滤
@@ -376,7 +388,6 @@ make help
 
 # 带覆盖率
 ./bin/skyext test --cov
-
 ```
 
 覆盖率报告输出到 `coverage/html/index.html`，标准 lcov 格式。推送到 main 分支时 CI 会自动更新 [在线报告](https://hanxi.github.io/skyext/coverage/)。

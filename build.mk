@@ -72,13 +72,16 @@ $(SKYEXT_LUACLIB_PATH)/traceback.so : $(SKYEXT_ROOT)/lualib-src/traceback.c | $(
 $(SKYEXT_LUACLIB_PATH)/lfs.so : $(SKYEXT_ROOT)/3rd/luafilesystem/src/lfs.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
+$(SKYEXT_LUACLIB_PATH)/tool_process.so : $(SKYEXT_ROOT)/lualib-src/tool_process.c | $(SKYEXT_LUACLIB_PATH)
+	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+
 $(SKYEXT_LUACLIB_PATH)/crypto.so : $(SKYEXT_ROOT)/lualib-src/crypto.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) $(SHARED) $^ -o $@ $(OPENSSL_LDFLAGS) -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-SKYEXT_LUA_CLIB = jchash cjson traceback lfs crypto profiler_c
+SKYEXT_LUA_CLIB = jchash cjson traceback lfs tool_process crypto profiler_c
 
 # mingw.mk 不构建 TLS_MODULE，待 Lua 导入库生成后单独编译。
 SKYEXT_TLS_MODULE =
@@ -143,7 +146,12 @@ clean:
 	rm -rf $(SKYEXT_LUACLIB_PATH)/skytest
 	rm -f $(SKYEXT_CSERVICE_PATH)/*.so
 	rm -rf $(SKYEXT_CSERVICE_PATH)/*.so.dSYM
-	rm -rf $(BIN_PATH)/*
+	@for path in "$(BIN_PATH)"/*; do \
+		case "$$path" in \
+			"$(BIN_PATH)/skyext"|"$(BIN_PATH)/skyext.bat") ;; \
+			*) rm -rf "$$path" ;; \
+		esac; \
+	done
 
 cleanall: clean
 	cd $(SKYEXT_ROOT)/skynet && $(MAKE) cleanall

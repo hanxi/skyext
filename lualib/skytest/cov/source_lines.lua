@@ -1,3 +1,5 @@
+local lfs = require "lfs"
+
 local M = {}
 
 local function scan_file(filepath)
@@ -20,27 +22,40 @@ end
 
 local function list_lua_files(dir, exclude_patterns)
     local files = {}
-    local handle = io.popen(string.format('find %q -name "*.lua" -type f 2>/dev/null', dir))
-    if not handle then
-        return files
-    end
-
-    for path in handle:lines() do
-        local skip = false
-        if exclude_patterns then
-            for _, pat in ipairs(exclude_patterns) do
-                if path:find(pat, 1, true) then
-                    skip = true
-                    break
-                end
+    local sep = package.config:sub(1, 1)
+    local function excluded(path)
+        for _, pat in ipairs(exclude_patterns or {}) do
+            if path:find(pat, 1, true) then
+                return true
             end
         end
-        if not skip then
-            files[#files + 1] = path
+        return false
+    end
+    local function visit(path)
+        if excluded(path) then
+            return
+        end
+        local mode = lfs.symlinkattributes(path, "mode")
+        if mode == "file" then
+            if path:match("%.lua$") then
+                files[#files + 1] = path
+            end
+        elseif mode == "directory" then
+            local names = {}
+            for name in lfs.dir(path) do
+                if name ~= "." and name ~= ".." then
+                    names[#names + 1] = name
+                end
+            end
+            table.sort(names)
+            for _, name in ipairs(names) do
+                visit(path:gsub("[/\\]$", "") .. sep .. name)
+            end
         end
     end
-    handle:close()
-    table.sort(files)
+    if lfs.attributes(dir, "mode") == "directory" then
+        visit(dir)
+    end
     return files
 end
 
@@ -52,7 +67,7 @@ function M.scan(source_dirs, exclude_patterns)
         for _, filepath in ipairs(files) do
             local lines = scan_file(filepath)
             if lines then
-                local source_key = "@./" .. filepath:gsub("^%./", "")
+                local source_key = "@./" .. filepath:gsub("^%./", ""):gsub("\\", "/")
                 baseline[source_key] = {}
                 for line in pairs(lines) do
                     baseline[source_key][line] = 0
@@ -67,18 +82,14 @@ end
 local cached_cwd_pattern
 local function get_cwd_pattern()
     if cached_cwd_pattern == nil then
-        local cwd = os.getenv("PWD") or ""
-        if cwd ~= "" then
-            cached_cwd_pattern = "^" .. cwd:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "/"
-        else
-            cached_cwd_pattern = false
-        end
+        local cwd = lfs.currentdir():gsub("\\", "/")
+        cached_cwd_pattern = "^" .. cwd:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "/"
     end
     return cached_cwd_pattern
 end
 
 local function normalize_source(source)
-    local s = source:gsub("^@", "")
+    local s = source:gsub("^@", ""):gsub("\\", "/")
     s = s:gsub("^%./", "")
     local pat = get_cwd_pattern()
     if pat then
