@@ -115,7 +115,7 @@ make -C example lint                       # 示例游戏 luacheck
 ./bin/skyext package framework linux       # release-assets/skyext-linux.zip（平台框架包）
 ```
 
-测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。游戏部署包会排除 `*.test.lua` 与测试运行器生成的临时配置；框架源码包也会排除临时测试配置，避免将构建机的绝对路径带入发布物。`--cov` 总会写入 `coverage/lua_coverage_clean.info`，统计引擎库、引擎服务与示例游戏库（不计生成的 `example/build/`）；检测到 `genhtml` 时另生成 `coverage/html/index.html`。Linux/GCC 下额外使用 `--cov-c` 时，需先清理旧二进制并以 `C_COVERAGE=1` 重建；该选项使用 `lcov` 收集 `lualib-src/`、`service-src/` 的 C 行覆盖率，写入独立的 `coverage/c_coverage.info`（有 `genhtml` 时生成 `coverage/html-c/index.html`），不统计 `skynet/` 或 `3rd/`。测试文件逐一运行，C 计数在每个 skynet 进程正常退出时累加；超时或异常终止的进程可能不写入计数。CI 分别检查 Lua 与 C 的行覆盖率门禁，并分别上传两种报告；Pages 部署成功后可在线查看 `/coverage/`（Lua）与 `/coverage-c/`（C）。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
+测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。游戏部署包会排除 `*.test.lua` 与测试运行器生成的临时配置；框架源码包也会排除临时测试配置，避免将构建机的绝对路径带入发布物。`--cov` 总会写入 `coverage/lua_coverage_clean.info`，统计引擎库、引擎服务与示例游戏库（不计生成的 `example/build/`）；检测到 `genhtml` 时另生成 `coverage/html/index.html`。Linux/GCC 下额外使用 `--cov-c` 时，需先清理旧二进制并以 `C_COVERAGE=1` 重建；该选项使用 `lcov` 收集 `lualib-src/`、`service-src/` 的 C 行覆盖率，写入独立的 `coverage/c_coverage.info`（有 `genhtml` 时生成 `coverage/html-c/index.html`），不统计 `skynet/` 或 `3rd/`。测试文件逐一运行，C 计数在每个 skynet 进程正常退出时累加；超时或异常终止的进程可能不写入计数。CI 分别检查 Lua 与 C 的行覆盖率门禁，并分别上传两种报告；Pages 部署成功后可在线查看 [Lua 报告](https://hanxi.github.io/skyext/coverage/)（`/coverage/`）与 [C 报告](https://hanxi.github.io/skyext/coverage-c/)（`/coverage-c/`）。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
 
 ## 常见问题
 
