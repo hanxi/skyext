@@ -49,12 +49,15 @@ else ifeq ($(PLAT), mingw)
 endif
 
 # 仅为主工程 C 模块插桩；skynet 和 3rd/ 保持正常构建。
+# -fprofile-update=atomic：skynet 在多个工作线程上并发执行 Lua 服务，gcov 计数
+# 非原子递增会丢失更新，破坏流守恒，导致 gcov 反推出负数行计数（lcov 2.x 报
+# negative 错误）。原子更新从根源消除该问题。
 C_COVERAGE ?= 0
 ifeq ($(C_COVERAGE),1)
 ifneq ($(PLAT),linux)
 $(error C_COVERAGE=1 requires Linux and GCC)
 endif
-SKYEXT_CFLAGS = $(CFLAGS) --coverage -O0 -fprofile-abs-path
+SKYEXT_CFLAGS = $(CFLAGS) --coverage -O0 -fprofile-abs-path -fprofile-update=atomic
 else
 SKYEXT_CFLAGS = $(CFLAGS)
 endif
