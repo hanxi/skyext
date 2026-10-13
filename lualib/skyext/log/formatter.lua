@@ -2,6 +2,7 @@ local time = require "skyext.time"
 local log_level = require "skyext.log.log_level"
 
 local pairs = pairs
+local ipairs = ipairs
 local tconcat = table.concat
 local sformat = string.format
 
@@ -37,7 +38,8 @@ local M = {}
 local last_time, last_time_str
 local function format_time(timestamp)
     local sec = timestamp // 1
-    local ms = timestamp * 1000 % 1000
+    -- 取整避免浮点时间戳在 %03d 上抛错（float 没有整数表示时 string.format 会报错）
+    local ms = (timestamp * 1000 % 1000) // 1
 
     local f
     if sec == last_time then
@@ -59,11 +61,15 @@ local json_encoder
 local grecord = {}
 local function json_format_record(record)
     local rec = grecord
+    -- 复用 table 减少 GC，但必须先清空：否则上一条日志的事件字段会残留到本条
+    for k in pairs(rec) do
+        rec[k] = nil
+    end
     rec.module = record.module
     rec.level = level_to_string(record.level)
     rec.line = record.line
     rec.msg = record.msg
-    for _, event in pairs(record.events) do
+    for _, event in ipairs(record.events) do
         rec[event[1]] = event[2]
     end
     rec.time = format_time(record.timestamp)
@@ -85,7 +91,7 @@ local function default_logmt(record)
     local line = record.line
     local msg = record.msg
     local events_tbl = {}
-    for _, event in pairs(record.events) do
+    for _, event in ipairs(record.events) do
         events_tbl[#events_tbl + 1] = event[1] .. ":" .. event[2]
     end
     local events_str = tconcat(events_tbl, " ")

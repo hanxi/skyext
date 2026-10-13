@@ -10,9 +10,9 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 引擎基础设施 | `lualib/orm/`、`lualib/skytest/`、`service/` | ORM、测试与覆盖率、GM/热更/数据库等 skynet 服务 |
 | 引擎原生扩展 | `lualib-src/`、`service-src/`、`build.mk` | C 模块、C 服务及构建规则 |
 | 游戏层（示例） | `example/nodes/`、`example/lualib/` | 节点入口、角色/账号逻辑、实体 handler 与业务模块 |
-| 游戏契约与配置 | `example/etc/`、`example/proto/`、`example/schema/` | 节点/应用配置、sproto 协议、ORM 数据模式 |
+| 游戏契约与配置 | `example/etc/`、`example/proto/`、`example/schema/`、`example/build/lualib/game/orm/` | 节点/应用配置、sproto/ORM 源模式及生成的游戏层 schema（构建产物） |
 
-游戏项目可以参考 `example/` 实现自身逻辑，并通过搜索路径使用引擎模块。引擎服务通过约定扩展点加载游戏侧代码，例如实体 agent 按实体类型加载 `entity_handler.<type>`；这不等于把业务模块放进 `lualib/skyext/`。`skynet/` 与 `3rd/` 是 Git submodule 依赖。
+游戏项目可以参考 `example/` 实现自身逻辑，并通过搜索路径使用引擎模块。引擎服务通过约定扩展点加载游戏侧代码，例如实体 agent 按实体类型加载 `entity_handler.<type>`；这不等于把业务模块放进 `lualib/skyext/`。`skynet/` 与 `3rd/` 是 Git submodule 依赖；ORM 运行时在主工程 `lualib/orm/`，内化的生成工具在 `scripts/tools/sproto_orm/`，解析器仍为 `3rd/sprotodump` 子模块。框架发布包不分发许可证尚未核实的解析器，重新生成模式需使用初始化子模块的源码检出。
 
 ## 节点与数据流
 
@@ -47,7 +47,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按类型路由、实体生命周期、业务模块扩展 |
 | 测试与覆盖率 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程，生成 lcov 报告 |
 
-**数据可靠性边界**：`dbmgr` 使用脏数据定时落盘，并在卸载时尝试保存；进程异常退出或数据库写入失败时不能据此推断数据已持久化。生产使用前需要结合自身的数据一致性要求、失败日志和恢复策略评估。示例 JWT/GM 密钥也必须更换并限制相关接口访问。
+**数据可靠性边界**：`dbmgr` 对脏数据制作快照，在 MongoDB 确认更新后才清除脏标记；写入失败、不确定或未匹配时保留脏对象及缓存，卸载不得先释放实体锁。进程异常退出时仍不能据此推断数据已持久化；可靠消息为至少一次投递，业务 handler 需以 `msg_id` 幂等处理。生产使用前应结合一致性、失败日志和恢复策略评估。示例 JWT/GM 密钥也必须更换并限制相关接口访问。
 
 ## 当前状态与延伸阅读
 

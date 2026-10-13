@@ -11,6 +11,8 @@ luaservice = luaservice .. skyext_root .. "skynet/service/?.lua;"
 -- Lua 库搜索路径（游戏库 → 引擎库 → skynet 库）
 lua_path = game_root .. "lualib/?.lua;"
 lua_path = lua_path .. game_root .. "lualib/?/init.lua;"
+lua_path = lua_path .. game_root .. "build/lualib/?.lua;"
+lua_path = lua_path .. game_root .. "build/lualib/?/init.lua;"
 lua_path = lua_path .. skyext_root .. "lualib/?.lua;"
 lua_path = lua_path .. skyext_root .. "lualib/?/init.lua;"
 lua_path = lua_path .. skyext_root .. "skynet/lualib/?.lua;"

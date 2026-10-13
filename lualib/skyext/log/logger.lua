@@ -13,6 +13,7 @@ local tostring = tostring
 local setmetatable = setmetatable
 
 local sformat = string.format
+local supper = string.upper
 
 local DEBUG = log_level.DEBUG
 local INFO = log_level.INFO
@@ -84,10 +85,12 @@ function logger:_pack_events(level, ...)
     end
 
     local events = {}
+    -- 这些 key 由日志记录本身占用（json 输出中时间戳字段名为 time），事件重名时自动加后缀
     local events_key_cnt = {
         module = 1,
         level = 1,
         timestamp = 1,
+        time = 1,
         line = 1,
         msg = 1,
     }
@@ -114,6 +117,12 @@ function logger:_raw_log(level, stack_depth, msg, ...)
     end
     local modname = self.name
     save_to_bucket(modname, level, timestamp, src, msg, events)
+end
+
+--- 判断某个级别的日志是否会被输出
+-- 调用方可以用它跳过昂贵的日志参数准备（堆栈回溯、序列化等）
+function logger:is_enabled(level)
+    return level <= self.level
 end
 
 function logger:_log(level, stack_depth, msg, ...)
@@ -143,67 +152,34 @@ function logger:warn(...)
 end
 
 function logger:error(...)
+    -- 被级别过滤时不要付出抓取堆栈的代价
+    if not self:is_enabled(ERROR) then
+        return
+    end
     local tcb = self.traceback(nil, 2)
     return self:_log(ERROR, ext_stack_depth, "traceback", tcb, ...)
 end
 
 local function log_traceback(self, log_lv, stack_depth, err_type, err_msg)
+    if not self:is_enabled(log_lv) then
+        return
+    end
     local tcb = self.traceback(nil, stack_depth + 1)
     return self:_log(log_lv, stack_depth, "stack traceback", "err_type", err_type, "err_msg", err_msg, "traceback", tcb)
 end
 
-local xpcall_counter = 0
-local pcall_counter = 0
-
--- 创建恢复对象
-local function create_restore_guard()
-    local original_xpcall_count = xpcall_counter
-    local original_pcall_count = pcall_counter
-    local guard = {}
-
-    -- 设置元表使对象可关闭
-    local mt = {}
-    mt.__close = function(self)
-        xpcall_counter = original_xpcall_count
-        pcall_counter = original_pcall_count
-    end
-
-    setmetatable(guard, mt)
-    return guard
-end
-
--- 检查是否在错误处理上下文中
-local function in_error_handling_context()
-    return xpcall_counter > 0 or pcall_counter > 0
-end
-
--- 封装的 pcall
-local origin_pcall = pcall
-function M.safe_pcall(func, ...)
-    pcall_counter = pcall_counter + 1
-    local _ <close> = create_restore_guard()
-    return origin_pcall(func, ...)
-end
-
--- 封装的 xpcall
-local origin_xpcall = xpcall
-function M.safe_xpcall(func, msgh, ...)
-    xpcall_counter = xpcall_counter + 1
-    local _ <close> = create_restore_guard()
-    return origin_xpcall(func, msgh, ...)
-end
-
 local do_error_stack_depth = 1
-local is_first_get_traceback = true
-local reset_is_first_get_traceback = setmetatable({}, {
+-- 避免 log_traceback 自身抛错时无限递归
+local logging_traceback = false
+local reset_logging_traceback = setmetatable({}, {
     __close = function()
-        is_first_get_traceback = true
+        logging_traceback = false
     end,
 })
 local function do_error(self, err_type, err_msg, err_lv)
-    if is_first_get_traceback and (not in_error_handling_context()) then
-        is_first_get_traceback = false
-        local _ <close> = reset_is_first_get_traceback
+    if not logging_traceback then
+        logging_traceback = true
+        local _ <close> = reset_logging_traceback
         log_traceback(self, FATAL, do_error_stack_depth, err_type, err_msg)
     end
     return error(err_msg, err_lv)
@@ -235,11 +211,34 @@ function logger:xpcall_msgh(msg)
     return msg
 end
 
--- 配置字段类型约束，如果 type 为 table，则为 table 映射值。
+-- 合法的日志级别数值集合，用于配置校验
+local level_names = {}
+for name, value in pairs(log_level) do
+    level_names[value] = name
+end
+
+--- 把配置里的日志级别归一化成内部数值
+-- 同时接受数值（如 app 配置中的 log_level = 4）与名字（如 "INFO"）
+local function coerce_level(v)
+    local tv = type(v)
+    if tv == "number" then
+        if level_names[v] then
+            return v
+        end
+    elseif tv == "string" then
+        local level = log_level[supper(v)]
+        if level then
+            return level
+        end
+    end
+    error(sformat("invalid value: %s for config: level", tostring(v)))
+end
+
+-- 配置字段类型约束：coerce 用于归一化与校验，type 为 lua 类型名
 -- field 代表映射到config中代表的字段
 local config_constraint = {
     name = { type = "string" },
-    level = { type = log_level },
+    level = { coerce = coerce_level },
     log_src = { type = "boolean" },
     log_table = { type = "boolean" },
     stack_level = { type = "number" },
@@ -247,16 +246,14 @@ local config_constraint = {
 }
 
 function logger:config(t)
+    assert(type(t) == "table", "log config must be a table")
     -- 检查配置字段约束
     for f, v in pairs(t) do
-        local c = assert(config_constraint[f], "invalid config type:" .. f)
-        local ct = c.type
-        if type(ct) == "table" then
-            v = assert(ct[v], "invalid value: " .. v .. " for config: " .. f)
-        else -- lua types
-            if type(v) ~= ct then
-                error("type mismatch for field: " .. f)
-            end
+        local c = assert(config_constraint[f], "invalid config field: " .. tostring(f))
+        if c.coerce then
+            v = c.coerce(v)
+        elseif type(v) ~= c.type then
+            error(sformat("type mismatch for field: %s, expect %s, got %s", f, c.type, type(v)))
         end
         self[f] = v
     end

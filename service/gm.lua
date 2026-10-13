@@ -291,16 +291,19 @@ end
 skynet.start(function()
     log.info("GM service starting")
 
-    -- 启动 HTTP 服务器
+    -- 启动 GM 专用 HTTP 服务器（独立实例，路由不与业务端口共用）
+    -- 默认只监听本机回环地址，需要对外暴露时显式配置 gm_http_host
+    local host = config.get("gm_http_host") or "127.0.0.1"
     local port = config.get_number("gm_http_port") or 9090
     local agent_count = config.get_number("gm_agent_count") or 2
-    local conf = {
+    local gm_http = http_server.new("gm")
+    gm_http:start({
+        host = host,
         port = port,
         agent_count = agent_count,
-    }
-    http_server.start(conf)
-    http_server.register_router("skyext.gm_router")
-    log.info("GM HTTP server started", "port", port, "agent_count", agent_count)
+    })
+    gm_http:register_router("skyext.gm_router")
+    log.info("GM HTTP server started", "host", host, "port", port, "agent_count", agent_count)
 
     cmd_api.dispatch(CMD)
     skynet.register(".gm")

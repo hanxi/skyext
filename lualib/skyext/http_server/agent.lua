@@ -1,4 +1,4 @@
-return function(agent_id)
+return function(server_name, agent_id)
     local skynet = require "skynet"
     local socket = require "skynet.socket"
     local sockethelper = require "http.sockethelper"
@@ -150,11 +150,12 @@ return function(agent_id)
 
     skynet.start(function()
         cmd_api.dispatch_socket(CMD, SOCKET)
-        log.info("http agent start", "agent_id", agent_id)
+        log.info("http agent start", "server", server_name, "agent_id", agent_id)
     end)
 
     function CMD.register_router(router_name)
         local router = require(router_name)
+        assert(type(router) == "table", "invalid router module: " .. router_name)
         for method, handlers in pairs(router) do
             for path, handler in pairs(handlers) do
                 local method_routers = routers[method]
@@ -165,5 +166,7 @@ return function(agent_id)
                 method_routers[path] = handler
             end
         end
+        log.info("http agent router registered", "server", server_name, "agent_id", agent_id, "router", router_name)
+        return true
     end
 end

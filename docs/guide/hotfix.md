@@ -25,7 +25,7 @@
 
 ### ORM Schema 热更
 
-ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文件，再重载 schema，再热更代码。**ORM Schema 热更只允许新增字段，不允许删除和修改字段。** `reload_orm_schema` 为 `true` 时，`clearcache` 必须为 `true`，因为 ORM Schema 也是一个 Lua 代码文件 `lualib/orm/schema.lua`。需在 `hotfix.conf.lua` 中手动设置 `reload_orm_schema = true`。
+ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文件，再重载 schema，再热更代码。**ORM Schema 热更只允许新增字段，不允许删除和修改字段。** `reload_orm_schema` 为 `true` 时，`clearcache` 必须为 `true`，因为 ORM Schema 是游戏构建目录下的 Lua 文件 `example/build/lualib/game/orm/schema.lua`（模块名 `game.orm.schema`）。需在 `hotfix.conf.lua` 中手动设置 `reload_orm_schema = true`。注意活跃服务的 `package.loaded["game.orm.schema"]` 仍可能保留旧模块：`clearcache` 不等于清除 `package.loaded`；操作前应为目标服务设计安全的模块替换和已加载实体迁移，并用集成测试验证，不能只凭热更接口返回成功判断 schema 已生效。
 
 ### 代码热更
 

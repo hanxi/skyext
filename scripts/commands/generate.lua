@@ -30,7 +30,12 @@ return function(ctx, _, args)
     end
     assert((kind == "proto" or kind == "schema") and not args[2], "用法: generate <proto|schema>")
     local fs = ctx.fs
-    package.path = package.path .. ";" .. fs.join(ctx.root, "3rd/sproto-orm/tools/sprotodump/?.lua")
+    local parser = fs.join(ctx.root, "3rd/sprotodump")
+    assert(
+        fs.mode(fs.join(parser, "core.lua")) == "file",
+        "missing sprotodump: git submodule update --init 3rd/sprotodump"
+    )
+    package.path = package.path .. ";" .. fs.join(parser, "?.lua")
     fs.with_dir(ctx.game, function()
         if kind == "proto" then
             fs.mkdir("build/proto")
@@ -41,20 +46,20 @@ return function(ctx, _, args)
             run_script(fs.join(ctx.game, "tools/proto2spb.lua"), files)
             assert(fs.mode("build/proto/sproto.spb") == "file", "protocol output not generated")
         else
-            fs.mkdir("../lualib/orm")
+            local output = "build/lualib/game/orm"
+            fs.mkdir(output)
             local files = sproto_files(fs, "schema")
             for i, file in ipairs(files) do
                 files[i] = "schema/" .. file
             end
-            table.insert(files, 1, "../lualib/orm/schema_define.lua")
-            run_script(fs.join(ctx.root, "3rd/sproto-orm/tools/sproto2lua.lua"), files)
-            assert(fs.mode("../lualib/orm/schema_define.lua") == "file", "schema definitions not generated")
-            run_script(fs.join(ctx.root, "3rd/sproto-orm/tools/gen_schema.lua"), {
-                "../lualib/orm/schema.lua",
-                "../lualib/orm/schema_define.lua",
-            })
-            assert(fs.mode("../lualib/orm/schema.lua") == "file", "schema not generated")
-            local code = ctx.process.run({ "stylua", fs.join(ctx.root, "lualib/orm") }, { cwd = ctx.root })
+            local definition = output .. "/schema_define.lua"
+            local schema = output .. "/schema.lua"
+            table.insert(files, 1, definition)
+            run_script(fs.join(ctx.root, "scripts/tools/sproto_orm/sproto2lua.lua"), files)
+            assert(fs.mode(definition) == "file", "schema definitions not generated")
+            run_script(fs.join(ctx.root, "scripts/tools/sproto_orm/gen_schema.lua"), { schema, definition })
+            assert(fs.mode(schema) == "file", "schema not generated")
+            local code = ctx.process.run({ "stylua", fs.join(ctx.game, output) }, { cwd = ctx.root })
             assert(code == 0, "stylua failed (install stylua to format generated schema)")
         end
     end)

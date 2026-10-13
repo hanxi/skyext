@@ -2,7 +2,6 @@ local skynet = require "skynet"
 local cmd_api = require "skyext.cmd_api"
 local types = require "skyext.entity.types"
 local entitymgr_mod = require "skyext.entity.entitymgr"
-local reliable_msg = require "skyext.entity.reliable_msg"
 local log = require "skyext.log"
 local errcode = require "skyext.errcode"
 
@@ -19,103 +18,79 @@ local g_watchdog
 local CMD = {}
 
 function CMD.entity_call(entity_id, cmd, ...)
-    local ok, entity = entitymgr:ensure_loaded(entity_id)
-    if not ok then
-        return errcode.LOCAK_FAILED
-    end
     local handler_func = handler.handlers[cmd]
     if not handler_func then
         error(string.format("unknown entity command: %s.%s", type_name, cmd))
     end
-    return handler_func(entity, ...)
+    local args = table.pack(...)
+    local result = table.pack(entitymgr:with_entity(entity_id, function(entity)
+        return handler_func(entity, table.unpack(args, 1, args.n))
+    end))
+    if not result[1] then
+        return errcode.LOCK_FAILED
+    end
+    return table.unpack(result, 2, result.n)
 end
 
 function CMD.entity_send(entity_id, cmd, ...)
-    local ok, entity = entitymgr:ensure_loaded(entity_id)
-    if not ok then
-        log.error("entity_send ensure_loaded failed", "type", type_name, "id", entity_id, "err", entity)
-        return
-    end
     local handler_func = handler.handlers[cmd]
     if not handler_func then
         log.error("unknown entity command", "type", type_name, "cmd", cmd)
         return
     end
-    handler_func(entity, ...)
+    local args = table.pack(...)
+    local ok, err = entitymgr:with_entity(entity_id, function(entity)
+        handler_func(entity, table.unpack(args, 1, args.n))
+    end)
+    if not ok then
+        log.error("entity_send failed", "type", type_name, "id", entity_id, "err", err)
+    end
 end
 
-function CMD.__deliver_reliable(entity_id, msg_id, cmd, args)
-    local ok, entity = entitymgr:ensure_loaded(entity_id)
+function CMD.__deliver_reliable(entity_id)
+    local ok, err = entitymgr:deliver_pending(entity_id)
     if not ok then
-        log.error("deliver_reliable ensure_loaded failed", "type", type_name, "id", entity_id)
-        return
+        log.error("reliable delivery deferred", "type", type_name, "id", entity_id, "err", err)
     end
-    local handler_func = handler.handlers and handler.handlers[cmd]
-    if handler_func then
-        local ok2, err = xpcall(handler_func, debug.traceback, entity, table.unpack(args or {}))
-        if ok2 then
-            reliable_msg.mark_delivered(msg_id)
-        else
-            log.error(
-                "deliver_reliable handler failed",
-                "type",
-                type_name,
-                "id",
-                entity_id,
-                "cmd",
-                cmd,
-                "msg_id",
-                msg_id,
-                "err",
-                err
-            )
-        end
-    else
-        log.warn("deliver_reliable no handler", "type", type_name, "cmd", cmd)
-        reliable_msg.mark_delivered(msg_id)
-    end
+    return ok
 end
 
 function CMD.unload_entity(entity_id)
-    entitymgr:unload(entity_id)
+    return entitymgr:unload(entity_id)
 end
 
 function CMD.bind_client(entity_id, fd)
-    local ok, lock_info = entitymgr:try_ensure_loaded(entity_id)
+    local ok, reason, holder_node = entitymgr:try_ensure_loaded(entity_id)
     if not ok then
-        if not lock_info then
-            return errcode.LOCAK_FAILED
+        if reason ~= "lock held" or not holder_node then
+            return errcode.LOCK_FAILED
         end
         local cluster = require "skynet.cluster"
-        local holder_node = lock_info
         local holder_agent = types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
-        local ret = pcall(cluster.call, holder_node, holder_agent, "unload_entity", entity_id)
-        if not ret then
+        local called, released = pcall(cluster.call, holder_node, holder_agent, "unload_entity", entity_id)
+        if not called or not released then
             return errcode.IN_OTHER_NODE
         end
-        ok = entitymgr:try_ensure_loaded(entity_id)
-        if not ok then
-            return errcode.LOCAK_FAILED
+    end
+
+    local bound, result = entitymgr:with_entity(entity_id, function(entity)
+        if entity.fd then
+            client_ext.unbind_kick(entity.fd, entity)
         end
+        client_ext.bind(fd, entity)
+        if g_watchdog then
+            skynet.call(g_watchdog, "lua", "forward", fd, skynet.self())
+        end
+        if handler.on_bind_client then
+            handler.on_bind_client(entity, fd)
+        end
+        return errcode.OK
+    end)
+    if not bound then
+        log.error("bind_client failed", "type", type_name, "id", entity_id, "err", result)
+        return errcode.LOCK_FAILED
     end
-
-    local entity = entitymgr:get(entity_id)
-
-    if entity.fd then
-        client_ext.unbind_kick(entity.fd)
-    end
-
-    client_ext.bind(fd, entity)
-
-    if g_watchdog then
-        skynet.call(g_watchdog, "lua", "forward", fd, skynet.self())
-    end
-
-    if handler.on_bind_client then
-        handler.on_bind_client(entity, fd)
-    end
-
-    return errcode.OK
+    return result
 end
 
 function CMD.disconnect(fd)
@@ -123,11 +98,20 @@ function CMD.disconnect(fd)
         return
     end
     local entity = client_ext.get_entity(fd)
-    if entity then
+    if not entity then
+        return
+    end
+    local ok = entitymgr:with_loaded_entity(entity.id, function(active)
+        if active ~= entity or client_ext.get_entity(fd) ~= active then
+            return
+        end
         client_ext.unbind(fd)
         if handler.on_unbind_client then
-            handler.on_unbind_client(entity)
+            handler.on_unbind_client(active)
         end
+    end)
+    if not ok and client_ext.get_entity(fd) == entity then
+        client_ext.unbind(fd)
     end
 end
 

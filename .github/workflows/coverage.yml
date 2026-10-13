@@ -27,6 +27,11 @@ jobs:
         image: mongo:6-jammy
         ports:
           - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -qx 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
       etcd:
         image: gcr.io/etcd-development/etcd:v3.6.5
         env:
@@ -41,7 +46,7 @@ jobs:
         apt-get update
         apt-get install -y --no-install-recommends \
           build-essential make pkg-config autoconf automake libtool \
-          git curl ca-certificates \
+          git curl ca-certificates unzip \
           libreadline-dev libedit-dev libssl-dev \
           lcov
 
@@ -57,28 +62,66 @@ jobs:
         submodules: recursive
         fetch-depth: 1
 
-    - name: Build
-      run: make build
+    - name: Install StyLua (schema generation)
+      run: |
+        curl -fLsS -o /tmp/stylua.zip \
+          https://github.com/JohnnyMorganz/StyLua/releases/download/v2.5.2/stylua-linux-x86_64.zip
+        echo 'bcb0d855e91f102f28a370e850f8566b3b44b79e6274d806ea5246837c0fd5ab  /tmp/stylua.zip' | sha256sum -c -
+        unzip -q /tmp/stylua.zip -d /usr/local/bin
+        stylua --version
+
+    - name: Build and generate example schema
+      run: |
+        make build
+        test -s example/build/lualib/game/orm/schema.lua
+        ./bin/skyext generate proto
+        test -s example/build/proto/sproto.spb
+
+    - name: Verify game package contains generated schema
+      run: |
+        ./bin/skyext package game
+        unzip -Z1 example/skyext.zip | grep -Fx 'example/build/lualib/game/orm/schema.lua'
+        unzip -Z1 example/skyext.zip | grep -Fx 'lualib/orm/init.lua'
+        if unzip -Z1 example/skyext.zip | grep -E '\.test\.lua$|^example/etc/\.skytest_'; then
+          echo 'Game package contains test sources or a temporary test config' >&2
+          exit 1
+        fi
 
     - name: Wait for services
+      shell: bash
       run: |
+        set -euo pipefail
+        mongo_ready=false
         for i in $(seq 1 30); do
-          (echo > /dev/tcp/mongo/27017) 2>/dev/null && break
+          if (echo > /dev/tcp/mongo/27017) 2>/dev/null; then
+            mongo_ready=true
+            break
+          fi
           sleep 1
         done
+        test "$mongo_ready" = true
+        etcd_ready=false
         for i in $(seq 1 30); do
-          curl -sf http://etcd:2379/health >/dev/null 2>&1 && break || true
+          if curl -fsS http://etcd:2379/health | grep -Eq '"health"[[:space:]]*:[[:space:]]*"true"'; then
+            etcd_ready=true
+            break
+          fi
           sleep 1
         done
+        test "$etcd_ready" = true
 
-    - name: Run tests with coverage
+    - name: Run tests with coverage and MongoDB/etcd integration
       env:
+        SKYTEST_INTEGRATION: '1'
         MONGO_HOST: mongo
         ETCD_ENDPOINTS: http://etcd:2379
-      run: ./bin/lua scripts/skyext.lua test --cov
+      run: ./bin/skyext test --cov
+
+    - name: Enforce minimum line coverage
+      run: ./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35
 
     - name: Summarize coverage
-      run: ./bin/lua scripts/skyext.lua cov summary coverage/lua_coverage_clean.info >> "$GITHUB_STEP_SUMMARY"
+      run: ./bin/skyext cov summary coverage/lua_coverage_clean.info >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload coverage artifact
       uses: actions/upload-artifact@v4

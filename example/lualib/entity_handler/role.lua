@@ -14,7 +14,7 @@ end
 function M.handlers.kick(entity)
     if entity.fd then
         local client_ext = require "skyext.entity.client_ext"
-        client_ext.unbind_kick(entity.fd)
+        client_ext.unbind_kick(entity.fd, entity)
     end
     return true
 end

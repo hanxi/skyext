@@ -38,16 +38,10 @@ local function doc_concat(doc, sep, i, j)
 end
 
 local function mark_dirty(doc)
-    if not doc.__dirty then
+    while doc do
         doc.__dirty = true
-        local parent = doc.__parent
-        while parent do
-            if parent.__dirty then
-                break
-            end
-            parent.__dirty = true
-            parent = parent.__parent
-        end
+        doc.__revision = doc.__revision + 1
+        doc = doc.__parent
     end
 end
 
@@ -60,10 +54,8 @@ local function doc_change_value(doc, k, v)
     if v ~= doc[k] then
         doc.__changed_keys[k] = true -- mark changed (even nil)
         local lv = doc.__stage[k]
-        if v == nil then
-            if getmetatable(lv) == ormdoc_type then
-                lv.__parent = false -- remove old value's parent
-            end
+        if getmetatable(lv) == ormdoc_type then
+            lv.__parent = false
         end
         doc.__stage[k] = v -- current value
         mark_dirty(doc)
@@ -130,105 +122,78 @@ local function doc_insert(doc, index, v)
         v = index
         index = len + 1
     end
+    assert(math.tointeger(index) and index >= 1 and index <= len + 1, "position out of bounds")
 
-    for i = len, index, -1 do
-        doc[i].__parent = false
-        doc[i + 1] = doc[i]
-    end
+    local displaced = doc.__stage[index]
+    local revision = doc.__revision
     doc[index] = v
+    for i = len, index + 1, -1 do
+        doc.__stage[i + 1] = doc.__stage[i]
+        doc.__changed_keys[i + 1] = true
+    end
+    if displaced ~= nil then
+        doc.__stage[index + 1] = displaced
+        doc.__changed_keys[index + 1] = true
+        if getmetatable(displaced) == ormdoc_type then
+            displaced.__parent = doc
+        end
+    end
+    if doc.__revision == revision then
+        mark_dirty(doc)
+    end
 end
 
 -- refer to table.remove()
 local function doc_remove(doc, index)
     local len = doc_len(doc)
     index = index or len
+    if len == 0 and index == 0 then
+        return nil
+    end
+    assert(math.tointeger(index) and index >= 1 and index <= len + 1, "position out of bounds")
+    if index > len then
+        return nil
+    end
 
     local v = doc[index]
-    doc[index] = nil -- trig a clone of doc._lastversion[index] in doc_change()
-
+    doc[index] = nil
     for i = index + 1, len do
-        doc[i].__parent = false
-        doc[i - 1] = doc[i]
+        doc.__stage[i - 1] = doc.__stage[i]
+        doc.__changed_keys[i - 1] = true
     end
-    doc[len] = nil
-
+    doc.__stage[len] = nil
+    doc.__changed_keys[len] = true
     return v
 end
 
-local function default_pairs(t)
-    return doc_pairs(t)
+local array_bson_mt = {
+    __len = function(t)
+        return rawlen(t)
+    end,
+}
+
+local function copy_bson(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    assert(not seen[value], "cannot encode circular table")
+    seen[value] = true
+    local result = {}
+    local is_doc = getmetatable(value) == ormdoc_type
+    local schema_type = is_doc and value.__schema.type
+    for k, v in pairs(value) do
+        local key = schema_type == "map" and tostring(k) or k
+        result[key] = copy_bson(v, seen)
+    end
+    if schema_type == "array" or getmetatable(value) == array_bson_mt then
+        setmetatable(result, array_bson_mt)
+    end
+    seen[value] = nil
+    return result
 end
 
-local function is_atom_type(v)
-    local tp = type(v)
-    if tp == "number" or tp == "string" or tp == "boolean" then
-        return true
-    end
-    return false
-end
-
-local bson_next
-local function is_skip_next(doc, v)
-    if is_atom_type(v) or (bson_next(v) ~= nil) then
-        return false
-    end
-    return true
-end
-
-local function skip_default_next(doc, k)
-    local k1, v1 = next(doc.__stage, k)
-    if k1 == nil then
-        return k1, v1
-    end
-
-    if not is_skip_next(doc, v1) then
-        return k1, v1
-    end
-
-    return skip_default_next(doc, k1)
-end
-
-bson_next = function(doc, k)
-    if k ~= nil then
-        k = doc.__schema:_parse_k(k)
-    end
-
-    local k1, v1 = skip_default_next(doc, k)
-    if k1 == nil then
-        return k1, v1
-    end
-
-    if type(k1) ~= "string" then
-        k1 = tostring(k1)
-    end
-    return k1, v1
-end
-
-local function bson_pairs(t)
-    return bson_next, t, nil
-end
-
-local table_pairs = default_pairs
-
-local function start_serialize()
-    assert(table_pairs == default_pairs)
-    table_pairs = bson_pairs
-end
-
-local function stop_serialize()
-    assert(table_pairs == bson_pairs)
-    table_pairs = default_pairs
-end
-
--- 处理序列化 map 时把 key 改为 string 类型
-function orm.with_bson_encode_context(f, ...)
-    start_serialize()
-    local ok, ret = pcall(f, ...)
-    stop_serialize()
-    if not ok then
-        error(ret)
-    end
-    return ret
+function orm.to_bson(value)
+    return copy_bson(value, {})
 end
 
 _new_doc = function(schema, init)
@@ -252,6 +217,7 @@ _new_doc = function(schema, init)
     local doc = init or {}
     doc.__dirty = false
     doc.__all_dirty = false
+    doc.__revision = 0
     doc.__parent = false
     doc.__changed_keys = {}
     doc.__stage = doc_stage
@@ -260,10 +226,7 @@ _new_doc = function(schema, init)
     local mt = {
         __index = doc_stage,
         __newindex = doc_change,
-        __pairs = function(t)
-            -- 正常使用时是 default_pairs , 序列化 bson 时是 bson_pairs
-            return table_pairs(t)
-        end,
+        __pairs = doc_pairs,
         __ipairs = doc_ipairs,
         __metatable = ormdoc_type, -- avoid copy by ref
 
@@ -326,124 +289,37 @@ function orm.check_type(doc)
     return mt == ormdoc_type
 end
 
-local function unset_all_dirty(tab, visited)
-    if not visited then
-        visited = {}
-    end
-
-    if visited[tab] then
-        return
-    end
-
-    visited[tab] = true
-
-    tab.__all_dirty = false
-    for k, v in pairs(tab) do
-        if getmetatable(v) == ormdoc_type then
-            unset_all_dirty(v, visited)
+function orm.snapshot_mongo(doc)
+    assert(getmetatable(doc) == ormdoc_type, "only support orm")
+    local update = { ["$set"] = {}, ["$unset"] = {} }
+    for k in pairs(doc.__changed_keys) do
+        if doc.__stage[k] == nil then
+            update["$unset"][k] = true
         end
     end
+    for k, v in pairs(doc.__stage) do
+        if doc.__changed_keys[k] or (getmetatable(v) == ormdoc_type and v.__dirty) then
+            update["$set"][k] = copy_bson(v, {})
+        end
+    end
+    if next(update["$set"]) == nil then
+        update["$set"] = nil
+    end
+    if next(update["$unset"]) == nil then
+        update["$unset"] = nil
+    end
+    return next(update) ~= nil, update, doc.__revision
 end
 
-local function _commit_mongo(doc, result, path_array, depth)
-    doc.__dirty = false
-    local changed_keys = doc.__changed_keys
-    local stage = doc.__stage
-    local dirty = false
-
-    path_array = path_array or {}
-    depth = depth or 1
-
-    if next(changed_keys) ~= nil then
-        dirty = true
-        for k in next, changed_keys do
-            local v = stage[k]
-            changed_keys[k] = nil
-            if result then
-                if doc.__schema.type == "array" then
-                    path_array[depth] = k - 1
-                else
-                    path_array[depth] = k
-                end
-
-                local key = table.concat(path_array, ".", 1, depth)
-                path_array[depth] = nil
-
-                if v == nil then
-                    result["$unset"][key] = true
-                else
-                    if not is_skip_next(doc, v) then
-                        result["$set"][key] = v
-                    end
-                end
-                result._n = result._n + 1
-            end
-        end
+function orm.ack_mongo(doc, revision, version)
+    assert(getmetatable(doc) == ormdoc_type, "only support orm")
+    assert(type(version) == "number", "version must be a number")
+    local unchanged = doc.__revision == revision
+    if unchanged then
+        _clear_dirty(doc)
     end
-
-    for k, v in pairs(stage) do
-        if getmetatable(v) == ormdoc_type and v.__dirty then
-            if doc.__schema.type == "array" then
-                path_array[depth] = k - 1
-            else
-                path_array[depth] = k
-            end
-
-            if result then
-                local change
-                if v.__all_dirty then
-                    change = _commit_mongo(v, nil, path_array, depth + 1)
-                else
-                    local n = result._n
-                    _commit_mongo(v, result, path_array, depth + 1)
-                    if n ~= result._n then
-                        change = true
-                    end
-                end
-
-                if change then
-                    if v.__all_dirty then
-                        local key = table.concat(path_array, ".", 1, depth)
-                        if result["$set"][key] == nil then
-                            if not is_skip_next(doc, v) then
-                                result["$set"][key] = v
-                                result._n = result._n + 1
-                            end
-                        end
-                    end
-                    dirty = true
-                end
-                unset_all_dirty(v)
-            else
-                local change = _commit_mongo(v, nil, path_array, depth + 1)
-                dirty = dirty or change
-            end
-
-            path_array[depth] = nil -- 统一在循环末尾清理路径
-        end
-    end
-    return dirty
-end
-
-function orm.commit_mongo(doc)
-    local result = {
-        ["$set"] = {},
-        ["$unset"] = {},
-        _n = 0,
-    }
-    _commit_mongo(doc, result)
-    result._n = nil
-    if next(result["$set"]) == nil then
-        result["$set"] = nil
-    end
-    if next(result["$unset"]) == nil then
-        result["$unset"] = nil
-    end
-    local is_dirty = true
-    if next(result) == nil then
-        is_dirty = false
-    end
-    return is_dirty, result
+    rawset(doc.__stage, "_version", version)
+    return unchanged
 end
 
 function orm.is_dirty(doc)

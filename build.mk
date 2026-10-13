@@ -125,7 +125,6 @@ endif
 # ---------- 拷贝第三方 Lua 库 ----------
 
 copy:
-	cp -rf $(SKYEXT_ROOT)/3rd/sproto-orm/orm $(SKYEXT_ROOT)/lualib/
 	cp -f $(SKYEXT_ROOT)/3rd/binaryheap.lua/src/binaryheap.lua $(SKYEXT_ROOT)/lualib/
 
 # ---------- 引擎 build target ----------

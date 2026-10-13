@@ -182,8 +182,8 @@ return function(ctx, _, args)
             if options.cov then
                 env.SKYTEST_COV = "1"
                 env.SKYTEST_COV_OUTPUT_DIR = run_dir
-                env.SKYTEST_COV_SOURCE_DIRS = os.getenv("SKYTEST_COV_SOURCE_DIRS") or "lualib/,example/lualib/"
-                env.SKYTEST_COV_EXCLUDE = os.getenv("SKYTEST_COV_EXCLUDE") or "skynet/,.test.lua"
+                env.SKYTEST_COV_SOURCE_DIRS = os.getenv("SKYTEST_COV_SOURCE_DIRS") or "lualib/,service/,example/lualib/"
+                env.SKYTEST_COV_EXCLUDE = os.getenv("SKYTEST_COV_EXCLUDE") or "skynet/,.test.lua,example/build/"
             end
             local code, timed_out = ctx.process.run({ binary, config }, {
                 cwd = ctx.root,

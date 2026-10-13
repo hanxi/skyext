@@ -1,22 +1,62 @@
 local skynet = require "skynet"
 local service = require "skynet.service"
-local watchdog = require "skyext.http_server.watchdog"
-local log = require "skyext.log"
+local watchdog_main = require "skyext.http_server.watchdog"
 
+-- HTTP 服务器以「命名实例」方式创建：
+-- 每个名字对应独立的 watchdog、agent 与路由表，
+-- 同一节点内的多个 HTTP 端口（如对外的业务端口与内网 GM 端口）不会互相串路由。
 local M = {}
 
-function M.start(conf)
-    local watchdog = service.new("http_watchdog", watchdog)
-    skynet.call(watchdog, "lua", "start", conf)
+local server = {}
+server.__index = server
+
+-- 同一个 Lua 虚拟机内的实例缓存，name -> server
+local g_servers = {}
+
+local function check_name(name)
+    if type(name) ~= "string" or not name:match("^[%a_][%w_]*$") then
+        error("invalid http server name: " .. tostring(name), 3)
+    end
 end
 
-function M.register_router(router_name)
-    local watchdog = service.query("http_watchdog")
-    if not watchdog then
-        log.error("http_watchdog not exist", "router_name", router_name)
-        return
+-- 创建（或取回）命名 HTTP 服务器实例
+function M.new(name)
+    check_name(name)
+    local s = g_servers[name]
+    if s then
+        return s
     end
-    skynet.call(watchdog, "lua", "register_router", router_name)
+    s = setmetatable({
+        name = name,
+        service_name = "http_watchdog_" .. name,
+    }, server)
+    g_servers[name] = s
+    return s
+end
+
+-- 启动监听。conf: { host = "0.0.0.0", port = 8080, agent_count = 8 }
+-- port 传 0 时由系统分配，返回值中的 port 为实际监听端口。
+function server:start(conf)
+    assert(type(conf) == "table", "http server conf must be a table")
+    assert(not self.addr, "http server already started: " .. self.name)
+
+    local addr = service.new(self.service_name, watchdog_main, self.name)
+    local info = skynet.call(addr, "lua", "start", conf)
+    self.addr = addr
+    self.port = info.port
+    self.host = info.host
+    return info
+end
+
+-- 注册路由模块，必须在 start 之后调用；返回时所有 agent 都已完成注册
+function server:register_router(router_name)
+    assert(type(router_name) == "string" and router_name ~= "", "invalid router name")
+    local addr = assert(self.addr, "http server not started: " .. self.name)
+    return skynet.call(addr, "lua", "register_router", router_name)
+end
+
+function server:address()
+    return self.addr
 end
 
 return M

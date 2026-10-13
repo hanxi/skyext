@@ -97,8 +97,8 @@ process.test/              ← fixture（紧挨测试）
 | `./bin/skyext test` CLI | 发现 `*.test.lua`，逐文件启动 skynet 进程，汇总结果 |
 | `SKYTEST_COV=1` | 启用覆盖率的环境变量 |
 | `SKYTEST_COV_OUTPUT_DIR` | 覆盖率输出目录 |
-| `SKYTEST_COV_SOURCE_DIRS` | 覆盖率源码目录 |
-| `SKYTEST_COV_EXCLUDE` | 覆盖率排除模式 |
+| `SKYTEST_COV_SOURCE_DIRS` | 覆盖率源码目录，默认 `lualib/,service/,example/lualib/` |
+| `SKYTEST_COV_EXCLUDE` | 覆盖率排除模式，默认排除 `skynet/`、`*.test.lua`、`example/build/` |
 | `SKYTEST_COV_FLUSH_INTERVAL` | 覆盖率 flush 间隔 |
 | `coverage/` | 覆盖率输出目录 |
 | `[skytest.cov]` | 日志前缀 |
@@ -625,7 +625,7 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 - `skytest.cov` 的 debug hook 捕获同进程内所有代码的执行（包括 `newservice` 加载的服务代码）
 - `t.start_skynet()` 启动的子进程继承 `SKYTEST_COV=1` 环境变量，子进程也会独立写覆盖率数据
 - 每个进程独立写覆盖率数据到本次运行的临时目录（文件名含 PID，避免冲突）
-- 所有文件跑完后，test 命令通过 `scripts/lib/lcov.lua` 在进程内合并各进程的 lcov 数据，生成 `coverage/lua_coverage_clean.info`（LCOV 格式）
+- 所有文件跑完后，test 命令通过 `scripts/lib/lcov.lua` 在进程内合并各进程的 lcov 数据，生成 `coverage/lua_coverage_clean.info`（LCOV 格式）；默认统计引擎 Lua 库、服务与示例游戏库，不计生成的 `example/build/` 代码
 - 若系统安装了 `genhtml`（lcov 包），还会在 `coverage/html/` 下生成 HTML 报告；未安装时仅产出 LCOV 文件，跳过 HTML
 - `SKYTEST_COV_FLUSH_INTERVAL`：覆盖率数据自动 flush 间隔（秒），默认 10。在 `skytest.cov.config` 中读取，传给 collector 定时写盘
 
@@ -666,15 +666,18 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
 
 ### `.github/workflows/coverage.yml`
 
-核心流程为 `./bin/skyext test --cov`。CI 环境下外部服务地址通过 OS 环境变量注入：
+核心流程为 `make build`（先安装固定版本 StyLua，生成游戏层 schema）、`./bin/skyext generate proto`、`./bin/skyext test --cov` 和 `./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35`。CI 等待 MongoDB 和 etcd 就绪后，显式启用真实连接集成测试；本地默认跳过，需自行启动服务并设置 `SKYTEST_INTEGRATION=1`。测试为当前运行创建随机名称的 Mongo 数据库和 etcd key 前缀，结束后删除测试数据库并释放锁。`MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 可覆盖默认本机地址：
 
 ```yaml
-    - name: Run tests with coverage
-      run: ./bin/lua scripts/skyext.lua test --cov
+    - name: Run tests with coverage and MongoDB/etcd integration
       env:
+        SKYTEST_INTEGRATION: '1'
         MONGO_HOST: mongo
         ETCD_ENDPOINTS: http://etcd:2379
+      run: ./bin/skyext test --cov
 ```
+
+`persistence.integration.test.lua` 在同一 Skynet 进程内建立两个互不共享模块状态的锁/DB 实例，使用真实 MongoDB/etcd 检查竞争、租约撤销、fence 递增、CAS 拒绝旧持有者；`reliable_msg.integration.test.lua` 使用真实 MongoDB 检查并发分配、按 `seq` 分页和重复确认。两者都不替代多进程节点交接与故障注入测试。
 
 ### `.gitignore`
 

@@ -29,9 +29,9 @@ local URL_RANGE = API_PREFIX .. "/kv/range"
 local URL_DELETERANGE = API_PREFIX .. "/kv/deleterange"
 local URL_TXN = API_PREFIX .. "/kv/txn"
 local URL_GRANT = API_PREFIX .. "/lease/grant"
-local URL_REVOKE = API_PREFIX .. "/kv/lease/revoke"
+local URL_REVOKE = API_PREFIX .. "/lease/revoke"
 local URL_KEEPALIVE = API_PREFIX .. "/lease/keepalive"
-local URL_TIMETOLIVE = API_PREFIX .. "/kv/lease/timetolive"
+local URL_TIMETOLIVE = API_PREFIX .. "/lease/timetolive"
 local URL_LEASES = API_PREFIX .. "/lease/leases"
 local URL_WATCH = API_PREFIX .. "/watch"
 
@@ -741,6 +741,11 @@ function _M.txn(self, compare, success, failure, opts)
                 requestRange.key = encode_base64(get_real_key(self.key_prefix, requestRange.key))
                 rule.requestRange = requestRange
             end
+            if rule.requestDeleteRange then
+                local requestDeleteRange = tab_clone(rule.requestDeleteRange)
+                requestDeleteRange.key = encode_base64(get_real_key(self.key_prefix, requestDeleteRange.key))
+                rule.requestDeleteRange = requestDeleteRange
+            end
             new_rules[i] = rule
         end
         success = new_rules
@@ -763,6 +768,11 @@ function _M.txn(self, compare, success, failure, opts)
                 local requestRange = tab_clone(rule.requestRange)
                 requestRange.key = encode_base64(get_real_key(self.key_prefix, requestRange.key))
                 rule.requestRange = requestRange
+            end
+            if rule.requestDeleteRange then
+                local requestDeleteRange = tab_clone(rule.requestDeleteRange)
+                requestDeleteRange.key = encode_base64(get_real_key(self.key_prefix, requestDeleteRange.key))
+                rule.requestDeleteRange = requestDeleteRange
             end
             new_rules[i] = rule
         end

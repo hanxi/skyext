@@ -17,10 +17,10 @@ $(GAME_LUACLIB_PATH) :
 
 # ---------- 总构建 ----------
 
-.PHONY: build proto schema format lint dist
+.PHONY: build proto schema format lint dist game_clean
 
 # 编译
-build: skyext_build \
+build: schema \
 	$(foreach v, $(GAME_LUA_CLIB), $(GAME_LUACLIB_PATH)/$(v).so)
 	mkdir -p ../logs
 
@@ -49,6 +49,8 @@ lint:
 dist: build
 	$(SKYEXT_TOOL) package game
 
-# 清理游戏编译产物
-clean:
+# 清理游戏编译产物，并保留 build.mk 的引擎清理规则
+clean: game_clean
+
+game_clean:
 	rm -f $(GAME_LUACLIB_PATH)/*.so

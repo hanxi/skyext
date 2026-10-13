@@ -1,11 +1,7 @@
 SERVICE_ARGS = ...
 
-local raw_error = error
-function _G.error(...)
-    print(...)
-    print(debug.traceback())
-    raw_error(...)
-end
+-- 不要覆盖 _G.error：snlua 以 traceback 函数作为消息处理器调用本文件，
+-- loader 顶层抛出的错误天然带有完整堆栈（见 service_snlua.c 的 init_cb）。
 
 local args = {}
 for word in string.gmatch(SERVICE_ARGS, "%S+") do
@@ -83,13 +79,13 @@ if SERVICE_PATH then
         .. package.path
 end
 
--- 加载 skytest 覆盖率（未部署或未开启时静默跳过）
-pcall(require, "skytest.cov")
-
--- 加载 skyext
-local ok, err = pcall(require, "skyext")
-if not ok then
-    error(err)
+-- 加载 skytest 覆盖率（未部署时静默跳过；模块本身的错误不吞掉）
+local cov_ok, cov_err = pcall(require, "skytest.cov")
+if not cov_ok and not string.find(tostring(cov_err), "module 'skytest.cov' not found", 1, true) then
+    error(cov_err, 0)
 end
+
+-- 加载 skyext（失败时直接抛出，由 snlua 的 traceback 处理器输出完整堆栈）
+require "skyext"
 
 main(select(2, table.unpack(args)))

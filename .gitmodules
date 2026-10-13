@@ -1,9 +1,6 @@
 [submodule "skynet"]
 	path = skynet
 	url = https://github.com/cloudwu/skynet.git
-[submodule "3rd/sproto-orm"]
-	path = 3rd/sproto-orm
-    url = https://github.com/hanxi/sproto-orm.git
 [submodule "3rd/lua-cjson"]
 	path = 3rd/lua-cjson
 	url = https://github.com/cloudwu/lua-cjson.git
@@ -13,4 +10,6 @@
 [submodule "3rd/luafilesystem"]
 	path = 3rd/luafilesystem
 	url = https://github.com/lunarmodules/luafilesystem.git
-
+[submodule "3rd/sprotodump"]
+	path = 3rd/sprotodump
+	url = https://github.com/lvzixun/sprotodump.git

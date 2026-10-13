@@ -38,20 +38,26 @@ function M.sys_error(...)
     return default_logger:sys_error(...)
 end
 
+function M.is_enabled(...)
+    return default_logger:is_enabled(...)
+end
+
+--- 按应用配置初始化默认 logger
+-- 不再覆盖 _G.assert / _G.error / _G.pcall / _G.xpcall，
+-- 需要“报错同时打印堆栈”的场景请显式使用 log.sys_assert / log.sys_error / log.xpcall_msgh。
 function M.init()
     local config = require "skyext.config"
-    xpcall(default_logger.config, default_logger.error, {
+    local conf = {
         level = config.get_number("log_level"),
         log_src = config.get_boolean("log_src"),
         log_table = config.get_boolean("log_print_table"),
-    })
-
-    _G.raw_assert = assert
-    _G.raw_error = error
-    _G.assert = M.sys_assert
-    _G.error = M.sys_error
-    _G.pcall = logger.safe_pcall
-    _G.xpcall = logger.safe_xpcall
+    }
+    -- 配置非法时不能静默吞掉（旧实现用错 self 且错误处理函数本身会再抛错），
+    -- 这里退回默认配置并把原因打出来
+    local ok, err = pcall(default_logger.config, default_logger, conf)
+    if not ok then
+        default_logger:error("invalid log config, fallback to default", "err", tostring(err))
+    end
 end
 
 return M

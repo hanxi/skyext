@@ -53,7 +53,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 | `lualib-src/`、`service-src/`、`build.mk` | C 扩展、服务与构建规则 |
 | `example/nodes/`、`example/lualib/` | 示例游戏的节点入口与业务代码 |
 | `example/etc/`、`example/proto/`、`example/schema/` | 示例配置、协议与数据模式 |
-| `scripts/`、`bin/skyext`、`bin/skyext.bat` | 跨平台 CLI 及其 Lua 实现 |
+| `scripts/tools/sproto_orm/`、`scripts/`、`bin/skyext`、`bin/skyext.bat` | 内化的 ORM 生成工具、跨平台 CLI 及其 Lua 实现 |
 | `skynet/`、`3rd/` | Git submodule 依赖 |
 | `docs/` | 使用指南、设计记录与规划 |
 
@@ -68,13 +68,14 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 ./bin/skyext test                      # 运行所有 .test.lua 测试
 ./bin/skyext test --cov                # 生成 LCOV；有 genhtml 时还生成 HTML
 ./bin/skyext test lualib/skyext/       # 只运行指定目录
+SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 MongoDB/etcd 集成测试
 ./bin/skyext generate proto            # 编译 sproto
 ./bin/skyext generate schema           # 生成 ORM schema（需要 stylua）
 ./bin/skyext package game              # 示例游戏包：example/skyext.zip
 ./bin/skyext package framework linux   # 框架包：release-assets/skyext-linux.zip
 ```
 
-测试文件与被测模块放在一起，使用 `*.test.lua` 命名；`--cov` 会生成 `coverage/lua_coverage_clean.info`，若安装了 `genhtml`，还会生成 `coverage/html/index.html`。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、格式检查和多平台打包。覆盖率[在线报告](https://hanxi.github.io/skyext/coverage/)只有在仓库启用 GitHub Pages 且部署成功后才可访问；CI 构建产物也提供报告下载。
+测试文件与被测模块放在一起，使用 `*.test.lua` 命名；真实 MongoDB/etcd 集成测试仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。集成测试验证两个独立锁实例的竞争、租约撤销、Mongo fencing、旧持有者写入拒绝，以及真实 MongoDB 上的可靠消息序号、分页和重复确认；完整的多进程节点交接仍需部署环境验证。`--cov` 会生成 `coverage/lua_coverage_clean.info`，若安装了 `genhtml`，还会生成 `coverage/html/index.html`。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、35% 行覆盖率门禁、格式检查和多平台打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`；运行时 ORM 位于主工程 `lualib/orm/`。生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。覆盖率[在线报告](https://hanxi.github.io/skyext/coverage/)只有在仓库启用 GitHub Pages 且部署成功后才可访问；CI 构建产物也提供报告下载。
 
 ## 文档导航
 

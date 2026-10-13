@@ -40,13 +40,14 @@ local function package_framework(ctx, args)
             or name == ".DS_Store"
             or name:match("^%._")
             or name:match("^%.env")
+            or name:match("^%.skytest_.*%.conf%.lua$")
         then
             return false
         end
         if name == "build-output" or name == "release-assets" or name == "coverage" or name == "logs" then
             return false
         end
-        if relative == "example/dist" or relative == "example/skyext.zip" then
+        if relative == "example/dist" or relative == "example/skyext.zip" or relative == "3rd/sprotodump" then
             return false
         end
         return true
@@ -138,7 +139,7 @@ local function package_game(ctx, args)
             if item.mode == "file" then
                 if item.relative:match("%.so$") then
                     add(item.relative, item.path, "file")
-                elseif item.relative:match("%.lua$") then
+                elseif item.relative:match("%.lua$") and not item.relative:match("%.test%.lua$") then
                     add_compiled(item.relative, item.path)
                 end
             end
@@ -166,7 +167,11 @@ local function package_game(ctx, args)
                 local relative = "example/" .. item.relative
                 if item.relative:match("%.so$") then
                     add(relative, item.path, "file")
-                elseif item.relative:match("%.lua$") then
+                elseif
+                    item.relative:match("%.lua$")
+                    and not item.relative:match("%.test%.lua$")
+                    and not item.relative:match("^etc/%.skytest_.*%.conf%.lua$")
+                then
                     add_compiled(relative, item.path)
                 end
             end
@@ -196,10 +201,12 @@ local function package_game(ctx, args)
             "bin",
             "skynet/lualib",
             "skynet/service",
-            "3rd/sproto-orm/tools",
         }) do
             add_tree(fs.join(root, directory), directory, function(relative)
                 local path = directory .. "/" .. relative
+                if path:match("%.test%.lua$") or path:match("^example/etc/%.skytest_.*%.conf%.lua$") then
+                    return false
+                end
                 for excluded_path in pairs(excluded) do
                     if path == excluded_path or path:sub(1, #excluded_path + 1) == excluded_path .. "/" then
                         return false

@@ -8,6 +8,8 @@ local g_gate_service
 local g_login_service
 local g_entity_agentmgr_service
 local g_clients = {}
+local g_started = false
+local g_starting = false
 
 function SOCKET.open(fd, addr)
     assert(not g_clients[fd], fd .. " exists")
@@ -55,9 +57,35 @@ function SOCKET.data(fd, msg)
 end
 
 function CMD.start(conf)
-    skynet.call(g_login_service, "lua", "start", { watchdog = skynet.self(), roleagentmgr = g_entity_agentmgr_service })
-    skynet.call(g_entity_agentmgr_service, "lua", "start", { watchdog = skynet.self() })
-    skynet.call(g_gate_service, "lua", "open", conf)
+    if g_started then
+        log.warn("watchdog already started, ignore duplicate start")
+        return true
+    end
+    assert(not g_starting, "watchdog is starting")
+    g_starting = true
+
+    -- 先把依赖服务全部拉起来（agentmgr 的 start 返回即代表所有 entity_agent 已就绪），
+    -- 最后才打开 gate 端口对外接受连接
+    local ok, err = xpcall(function()
+        skynet.call(
+            g_login_service,
+            "lua",
+            "start",
+            { watchdog = skynet.self(), roleagentmgr = g_entity_agentmgr_service }
+        )
+        skynet.call(g_entity_agentmgr_service, "lua", "start", { watchdog = skynet.self() })
+        skynet.call(g_gate_service, "lua", "open", conf)
+    end, debug.traceback)
+
+    g_starting = false
+    if not ok then
+        log.error("watchdog start failed", "err", err)
+        error(err, 0)
+    end
+
+    g_started = true
+    log.info("watchdog started", "port", conf and conf.port)
+    return true
 end
 
 function CMD.close_client(fd)

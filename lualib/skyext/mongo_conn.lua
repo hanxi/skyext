@@ -11,11 +11,11 @@ local M = {}
 
 local mongo_config = config.get_table("mongo_config")
 
--- 处理 orm 的情况
+-- 处理 orm 的情况：orm.to_bson 返回脱离 ORM 的普通表（map key 已转成 string），
+-- 普通表原样通过，因此 query/update 仍然可以直接传普通 Lua 表。
 local _bson_encode = bson.encode
-local _with_bson_encode_context = orm.with_bson_encode_context
 local function bson_encode(doc)
-    return _with_bson_encode_context(_bson_encode, doc)
+    return _bson_encode(orm.to_bson(doc))
 end
 
 local conn_mt = {}
@@ -51,6 +51,16 @@ function coll_mt:find(doc, projection)
     return conn_obj:call("find", self.coll, doc, projection)
 end
 
+-- 带 sort/skip/limit 的查询，返回文档数组。
+-- opts = { projection = {...}, sort = {...}, skip = n, limit = n }
+-- sort 支持两种写法：
+--   单字段 { seq = 1 }
+--   多字段（有序）{ { target_id = 1 }, { seq = 1 } } —— 必须用数组形式，Lua 表的 pairs 无序
+function coll_mt:find_many(doc, opts)
+    local conn_obj = self.db:_route()
+    return conn_obj:call("find_many", self.coll, doc, opts)
+end
+
 function coll_mt:find_one(doc, projection)
     local conn_obj = self.db:_route()
     return conn_obj:call("find_one", self.coll, doc, projection)
@@ -76,16 +86,29 @@ function coll_mt:safe_update(query, update, upsert, multi)
     return conn_obj:call("raw_safe_update", self.coll, to_lightuserdata(bson_obj))
 end
 
+-- 建索引，幂等。
+-- 单参数（推荐，支持复合索引）：create_index { { a = 1 }, { b = 1 }, name = "a_b", unique = true }
+-- 兼容写法（单字段）：create_index({ a = 1 }, { unique = true })
+function coll_mt:create_index(keys, options)
+    local conn_obj = self.db:_route()
+    return conn_obj:call("create_index", self.coll, keys, options)
+end
+
 local db_mt = {}
 db_mt.__index = db_mt
+
+-- 提供给测试注入假的 db 对象（只需实现 _route）
+local function new_collection(db_obj, coll)
+    return setmetatable({
+        db = db_obj,
+        coll = coll,
+    }, coll_mt)
+end
 
 function db_mt:get_collection(coll)
     local collection = self.collections[coll]
     if not collection then
-        collection = setmetatable({
-            db = self,
-            coll = coll,
-        }, coll_mt)
+        collection = new_collection(self, coll)
         self.collections[coll] = collection
     end
     return collection
@@ -147,5 +170,8 @@ function M.get_collection(name, coll)
     local db_obj = get_db(name)
     return db_obj:get_collection(coll)
 end
+
+-- 仅供测试：用自定义 db 对象（需实现 :_route() 返回带 :call(cmd, ...) 的连接）构造 collection
+M._new_collection = new_collection
 
 return M

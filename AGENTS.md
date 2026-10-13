@@ -9,7 +9,8 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 | 路径 | 归属与用途 |
 | --- | --- |
 | `lualib/skyext/` | 引擎 Lua 模块，统一使用 `skyext.*` 命名空间 |
-| `lualib/orm/`、`lualib/skytest/`、`lualib/loader.lua` | ORM、测试/覆盖率与服务加载器 |
+| `lualib/orm/`、`lualib/skytest/`、`lualib/loader.lua` | ORM 运行时、测试/覆盖率与服务加载器 |
+| `scripts/tools/sproto_orm/`、`example/build/lualib/game/orm/` | 主工程内生成工具、Git 忽略的游戏层 schema 生成物 |
 | `service/`、`public/` | 引擎服务与静态资源 |
 | `lualib-src/`、`service-src/`、`build.mk` | 引擎 C 扩展/服务及构建规则 |
 | `example/nodes/`、`example/lualib/` | 节点入口与游戏业务代码 |
@@ -24,7 +25,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 - 引擎 Lua 模块使用 `require "skyext.config"`、`require "skyext.log"`、`require "skyext.gm_api"` 等完整命名空间，不要在引擎代码中使用 `require "config"` 一类裸模块名。
 - 例外：skynet 自带模块（如 `skynet`、`skynet.db.mongo`）、`orm.*`、服务局部库和游戏层自有模块。`service/logger/` 的局部裸 `require` 会通过 `SERVICE_PATH` 解析，不必机械地加 `skyext.` 前缀。
 - Lua 风格遵循现有代码：`local M = {} ... return M`、`require "skyext.config"`；记录日志用 `skyext.log`，错误码放在 `skyext.errcode` 或游戏层对应模块中。
-- `lualib/loader.lua` 的 `package.path` 从高到低依次为：服务独有库 → 节点根目录 → 节点独有库 → `example/lualib/` → 引擎 `lualib/` → `skynet/lualib/`。新模块先确认所属层级，避免同名遮蔽。
+- `lualib/loader.lua` 的 `package.path` 从高到低依次为：服务独有库 → 节点根目录 → 节点独有库 → `example/lualib/` → 游戏生成物 `example/build/lualib/` → 引擎 `lualib/` → `skynet/lualib/`。新模块先确认所属层级，避免同名遮蔽。
 - 每个服务的启动链是 `lualib/loader.lua` → `require "skyext"`（解析至 `lualib/skyext/init.lua`）→ 服务自身的 `main.lua`。初始化回调加载应用配置与日志。
 - Lua C 子模块遵循其导出符号：例如 `require "traceback.c"` 从 `traceback.so` 查找 `luaopen_traceback_c`。
 
@@ -49,13 +50,14 @@ include "paths.conf.lua"
 make init                                   # 初始化子模块（仓库根目录）
 make build                                  # 构建引擎与示例
 ./bin/skyext generate proto                 # 生成 sproto
-./bin/skyext generate schema                # 生成 ORM schema，需要 stylua
+./bin/skyext generate schema                # 生成 example/build/lualib/game/orm/，需要 stylua
 ./bin/skyext test                           # 运行 *.test.lua 测试
 ./bin/skyext test --cov                     # 生成 LCOV；有 genhtml 时生成 HTML
+./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35
 make -C example lint                       # 示例游戏的 luacheck
 ```
 
-Unix/macOS 的 CLI 为 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`（先构建本平台二进制）。`make proto` / `make schema` 是 `example/Makefile` 的目标，不是顶层 Makefile 的目标；不要使用不存在的 `make autocode`。CI 在仓库根目录使用 `luacheck .`、`stylua --check .`，还会执行测试、覆盖率和平台构建。
+Unix/macOS 的 CLI 为 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`（先构建本平台二进制）。`make proto` / `make schema` 是 `example/Makefile` 的目标，不是顶层 Makefile 的目标；不要使用不存在的 `make autocode`。CI 在仓库根目录使用 `luacheck .`、`stylua --check .`，还会执行测试、35% 行覆盖率门禁和平台构建。生成器使用独立的 `3rd/sprotodump` 子模块（许可证尚未核实，框架包中不包含），勿将游戏 schema 写入引擎的 `lualib/orm/`。
 
 测试文件与源码相邻，命名 `*.test.lua`；需要 MongoDB 或 etcd 的测试先启动相应服务。若改变 API、配置或构建规则，更新对应使用指南及测试；可通过 `./bin/skyext --help` 核对命令选项。
 

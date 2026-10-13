@@ -81,7 +81,9 @@ mongo_config = {
         collections = {
             entity_msg = {
                 indexes = {
-                    { "target_type", "target_id", "status", background = true },
+                    -- pending 消息按 seq 升序分页读取，seq 必须在索引末尾
+                    { "target_type", "target_id", "status", "seq", background = true },
+                    { "msg_id", unique = true, background = true },
                     {
                         "create_time",
                         expireAfterSeconds = 604800,

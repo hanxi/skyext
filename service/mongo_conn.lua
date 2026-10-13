@@ -42,6 +42,41 @@ function CMD.find(coll, doc, projection)
     return all
 end
 
+-- opts = { projection = {...}, sort = {...} | { {k1=1}, {k2=-1} }, skip = n, limit = n }
+function CMD.find_many(coll, doc, opts)
+    opts = opts or {}
+    local col_obj = g_db[coll]
+    local it = col_obj:find(doc, opts.projection)
+    local sort = opts.sort
+    if sort then
+        if sort[1] ~= nil then
+            -- 数组形式：保证多字段排序的先后顺序
+            it:sort(table.unpack(sort))
+        else
+            it:sort(sort)
+        end
+    end
+    if opts.skip then
+        it:skip(opts.skip)
+    end
+    if opts.limit then
+        it:limit(opts.limit)
+    end
+    local all = {}
+    while it:hasNext() do
+        all[#all + 1] = it:next()
+    end
+    return all
+end
+
+function CMD.create_index(coll, keys, options)
+    local col_obj = g_db[coll]
+    if options then
+        return col_obj:createIndex(keys, options)
+    end
+    return col_obj:createIndex(keys)
+end
+
 function CMD.find_one(coll, doc, projection)
     log.debug("find_one", "coll", coll, "doc", doc, "projection", projection)
     local col_obj = g_db[coll]

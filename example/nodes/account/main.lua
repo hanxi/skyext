@@ -7,12 +7,13 @@ local log = require "skyext.log"
 local function launcher_accountnode()
     local port = config.get_number("account_http_port") or 8080
     local agent_count = config.get_number("account_agent_count") or 8
-    local conf = {
+    local account_http = http_server.new("account")
+    account_http:start({
+        host = config.get("account_http_host") or "0.0.0.0",
         port = port,
         agent_count = agent_count,
-    }
-    http_server.start(conf)
-    http_server.register_router("account_router")
+    })
+    account_http:register_router("account_router")
 end
 
 skynet.start(function()

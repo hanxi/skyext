@@ -6,6 +6,8 @@ GM（Game Master）命令系统提供了一套 HTTP RESTful API，用于执行�
 
 **基础 URL**: `http://localhost:<gm_http_port>`（代码默认 `9090`，由各节点 `gm_http_port` 配置覆盖；以下示例使用 RoleNode1 的端口 `9092`）
 
+GM HTTP 服务是独立的命名实例，与节点的业务 HTTP 端口（如 Account 的 `account_http_port`）互不共用路由：业务端口不会暴露 `/gm/*`，GM 端口也不会暴露业务接口。监听地址默认只绑定 `127.0.0.1`，需要对外暴露时显式配置 `gm_http_host`（务必同时配置好 `gm_auth_token` 并限制来源）。
+
 ---
 
 ## 接口列表

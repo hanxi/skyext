@@ -21,8 +21,8 @@
      |                                  |
      | router.call("role", rid, cmd)    |
      |--------------------------------->| entity_call(rid, cmd, ...)
-     |                                  |   -> entitymgr.ensure_loaded(rid)
-     |  (local: skynet.call)            |   -> handler[cmd](entity, ...)
+     |                                  |   -> entitymgr.with_entity(rid, handler)
+     |  (local: skynet.call)            |   -> 按 ID 串行执行并检查租约
      |  (remote: cluster.call)          |
      |<---------------------------------| return result
 ```
@@ -133,7 +133,7 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 2. 尝试 `send` 立即投递（`__deliver_reliable` 命令）
 3. 即时 `send` 抛错时记录警告；已保存但未标记投递的消息会在实体加载时被拉取并重试（`save` 自身失败仍会抛错）
 
-这不是 exactly-once 保证：即时投递和加载时的异步重试可能重叠；处理器应自行保证幂等。目标节点不可用、数据库故障或处理器报错时，投递也可能失败，当前没有针对已加载实体的周期性重试机制；如果找不到对应 handler，现有实现会把消息标记为已投递并丢弃。
+这不是 exactly-once 保证：ack 失败、进程中断等会导致消息重投。实体入口按 ID 串行化，即时通知只触发对已持久化 pending 消息的拉取；handler 成功后先保存实体，再确认消息。已加载实体投递失败时每 5 秒重试；缺少 handler 时保留 pending 并阻止本页后续消息，需根据日志中的消息标识补齐 handler，或核对业务状态后人工处理。**不能直接删除或确认未处理的消息来解除阻塞。**业务逻辑必须以 `msg_id` 幂等。
 
 ### 3. entitymgr.lua — 实体生命周期
 
@@ -148,22 +148,25 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
     entity_mgr = <back-reference>,
     modules = { name = <module_instance>, ... },  -- 数据模块实例（若有）
     fd = nil,           -- 客户端连接（仅 client_enabled 类型）
+    handle = <包含 fence 和失效回调的租约句柄>,
+    invalid = false,    -- 失去租约后隔离，不再接受请求
     unload_timer = nil,
+    unload_retry = nil,  -- 卸载失败的独立重试定时器
+    delivery_retry = nil,
 }
 ```
 
 **ensure_loaded(entity_id) 流程：**
-1. 缓存命中 → 重置卸载定时器 → 返回
-2. 缓存未命中 → `distributed_lock.try_lock(lock_key, lock_value)`
-   - lock_key 格式：`"entity/role/12345"`
-   - lock_value 编码节点名（如 `"rolenode1/role"`），供冲突时识别持锁节点
-3. 锁成功 → `dbmgr.load()` → 创建 entity_obj → `_init_modules`（`mod.new()`） → `_call_modules_on_load`（`mod:on_load()`） → `handler.on_load(entity)` → **异步** `skynet.fork` 投递 pending reliable messages → 启动卸载定时器
-4. 锁失败 → 返回 `false` 和锁信息（持锁节点标识）
+1. 同一实体 ID 的加载、handler、消息投递、客户端请求及卸载经 `skynet.queue` 串行化；命中有效缓存后重置卸载定时器
+2. 未命中 → `distributed_lock.try_lock(lock_key, node_name, expired_cb)`；例如锁键 `"entity/role/12345"`、持有者值 `"rolenode1"`，成功返回带 etcd create revision (`fence`) 的句柄
+3. `dbmgr.load(..., handle)` 通过一次 Mongo `findAndModify` 原子认领 fencing token 并读取最新文档，旧持有者后续写入必须同时匹配 `_fence` 与 `_version`；首次创建文档依赖实体 ID 字段的 **唯一索引** 防止并发创建重复行（示例 `role.rid` 已配置），业务集合也必须配置。初始化模块和 handler 后异步处理 pending 消息，启动卸载定时器
+4. 租约失效回调立即隔离实体并断开客户端；旧实体不能重获原锁继续执行，也不能清理脏缓存；锁竞争返回独立的 `"lock held"` 原因及持锁节点名
 
 **unload(entity_id) 流程：**
-1. 取消卸载定时器
-2. `handler.on_unload(entity)` → `_call_modules_on_unload`（`mod:on_unload()`）
-3. `distributed_lock.unlock()` → `dbmgr.unload()` → 清缓存
+1. 取消闲置卸载与消息重试定时器，标记 `unloading` 并拒绝新请求
+2. `handler.on_unload(entity)` → `_call_modules_on_unload`（`mod:on_unload()`）；重试时跳过已成功的钩子
+3. `dbmgr.unload()` 确认最后一次持久化并清除缓存 **之后** 才按 create revision 比较并解锁；卸载完成或中途失败时均断开仍绑定的客户端。保存或解锁失败时保留实体与句柄，并通过独立定时器以 5 秒为初始间隔退避重试（实体配置 `unload_retry_delay` 可覆盖初始秒数，最长 300 秒）。数据已落库但解锁失败时只重试解锁，不重复落库或执行钩子
+4. 租约已失效时仅允许丢弃无脏数据的缓存，脏缓存隔离等待人工恢复，不得写库或覆盖新持有者的数据；已经落库的实体若租约失效可直接释放内存对象
 
 **调用时序**：加载时模块先于 handler 初始化（先有数据再处理业务），卸载时 handler 先于模块清理（先完成业务再释放数据）。
 
@@ -173,13 +176,26 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 
 MongoDB `entity.entity_msg` 集合，文档结构：
 ```
-{ msg_id, target_type, target_id, cmd, args, status(0/1), create_time }
+{ msg_id, seq, target_type, target_id, cmd, args, status(0/1), create_time, delivered_time }
 ```
 
+另有计数器集合 `entity.entity_msg_seq`：`{ _id = "<target_type>:<target_id>", seq }`。
+
 **函数：**
-- `save(target_type, target_id, cmd, args)` — insert，返回 msg_id（snowflake ID）
-- `load_pending(target_type, target_id)` — 查询 `{status=0}` 按 msg_id 排序，逐条 cursor 迭代返回数组
-- `mark_delivered(msg_id)` — `findAndModify` 将 status 置 1
+- `save(target_type, target_id, cmd, args)` — 先用 `findAndModify($inc + upsert + new)` 原子分配
+  该目标维度的自增 `seq`，再 insert；返回 `msg_id, seq`。写库失败直接抛错，不会让调用方
+  误以为已经持久化。
+- `load_pending(target_type, target_id, opts)` — 查询 `{status=0}` **按 `seq` 升序**，
+  用 `seq > last_seq` 的 keyset 方式分页（`opts = { page_size, max_count, after_seq }`），
+  返回数组。不要按 `msg_id` 排序：`id_generator` 的本地缓存池用哈希表发放预取 ID，
+  snowflake ID 的大小并不反映 save 的先后。
+- `mark_delivered(msg_id)` — `findAndModify({ query = { msg_id, status = 0 }, update = { $set = ... } })`
+  将 status 置 1 并记录 `delivered_time`；幂等，首次 ack 返回 `true`，重复 ack 返回 `false`，
+  写库失败返回 `false, err`（消息保持 pending，下次加载重投）。
+
+**语义：** at-least-once。handler 执行成功之后才 ack；handler 抛错、节点宕机或 ack 写库失败时
+消息保持 pending；已加载实体定时重试，重新加载时也会重投，因此**业务 handler 必须幂等**，
+可用 `msg_id` 作为去重键。确认发生在实体状态成功持久化之后。`seq` 在计数器更新和消息 insert 之间并非事务性发布：并发生产者若在分配较小序号后延迟插入，后来的消息可能先被看到并处理。当前保证“对已落库 pending 消息按 seq 排序”，**不保证跨节点并发生产者的严格全序投递**；需要该语义时应引入 Mongo 事务或持久发布水位。
 
 **清理策略：** 已投递消息（`status=1`）通过 MongoDB TTL 索引自动清理（7 天），索引在 `common.app.lua` 的 `mongo_config.entity.collections.entity_msg.indexes` 中声明，由 `mongo_index` 服务自动创建：
 
@@ -196,13 +212,15 @@ MongoDB `entity.entity_msg` 集合，文档结构：
 - `init(entitymgr)` — 注入 entitymgr 引用，供 unbind 时触发 touch
 - `bind(fd, entity)` — 绑定 fd 到 entity，设置 `entity.fd`，取消卸载定时器
 - `unbind(fd)` — 解绑，清除 `entity.fd`，调用 `entitymgr:touch` 重启卸载定时器
-- `unbind_kick(fd)` — 解绑并通知 gate 踢掉连接
-- `get_entity(fd)` / `get_obj(fd)` — 按 fd 查找 entity 或返回 `{ entity = entity }` 上下文
+- `unbind_kick(fd, expected_entity)` — 仅在 fd 仍绑定预期实体时解绑并通知 gate 踢掉连接，避免异步卸载断开已重新绑定的 fd
+- `get_entity(fd)` / `get_obj(fd)` — 按 fd 查找 entity；后者仅返回有效租约的 `{ entity = entity }` 上下文
+- `with_request(fd, callback)` — 在该实体的串行化门内校验连接和租约；返回 `true, ...` 表示请求已执行，`false, reason` 表示连接解绑、实体失效等原因而未执行
+- `reject_client(fd, reason)` — 带 session 的请求被拒且协议 response 没有 `errcode`/`code` 字段时，断开连接而非让客户端等待超时；有可编码的错误码字段时直接回错误响应。无 session 的单向通知只记日志
 
 **客户端重连逻辑**（在 `entity_agent.lua` 的 `CMD.bind_client` 中实现）：
 1. 尝试在本节点加载 entity（`try_ensure_loaded`）
-2. 若 entity 被其他节点锁定，尝试通过 cluster 请求持锁节点执行 `unload_entity`；当前锁值为 `"rolenode1/role"` 形式，但代码直接把它作为 cluster 节点名使用，跨节点重连可能失败（见「已知问题」）
-3. 卸载成功后在本节点重新加载
+2. 若 entity 被其他节点锁定，从独立的 owner 返回值取得节点名，经 cluster 请求持锁节点执行 `unload_entity`；对方必须先保存再解锁
+3. 对方确认卸载后，在本节点重新加载并认领更高 fencing token
 4. 已有旧 fd 连接时先 `unbind_kick` 踢掉旧连接
 5. 绑定新 fd，通知 watchdog forward 后续消息
 
@@ -213,9 +231,9 @@ MongoDB `entity.entity_msg` 集合，文档结构：
 启动时注册服务名（如 `.entity_agent:role:1`），若 `client_enabled` 则加载 client_ext。
 
 **CMD 表：**
-- `CMD.entity_call(entity_id, cmd, ...)` — `ensure_loaded` → `handler.handlers[cmd](entity, ...)` → return
+- `CMD.entity_call(entity_id, cmd, ...)` — 在 `with_entity` 门内加载、检查租约并调用 handler
 - `CMD.entity_send(entity_id, cmd, ...)` — 同上但无返回值
-- `CMD.__deliver_reliable(entity_id, msg_id, cmd, args)` — `ensure_loaded` → handler → `mark_delivered`
+- `CMD.__deliver_reliable(entity_id, ...)` — 即时唤醒 pending 队列，从 Mongo 按 seq 拉取，持久化实体状态后再 ack
 - `CMD.unload_entity(entity_id)` — 强制卸载（供重连流程跨节点调用）
 - `CMD.bind_client(entity_id, fd)` — 客户端绑定（含重连逻辑，见上节）
 - `CMD.disconnect(fd)` — 客户端断开，触发 unbind + handler 回调
@@ -228,10 +246,10 @@ Handler 通过 `require("entity_handler." .. type_name)` 加载。handler 是游
 参数：`skynet.newservice("entity_agentmgr", type_name)`
 
 启动流程：
-1. 读取 `agent_count`
-2. 调用 `discover_modules(modules_path, start_name)` 通过 luafilesystem 扫描模块目录（每个进程只扫一次）
-3. 循环创建 N 个 entity_agent，通过 `CMD.start` 传入扫描结果和 watchdog 地址
-4. 注册 cluster_discovery（`"entity:" .. type_name`）
+1. `skynet.start` 注册命令，等待 watchdog 调用 `CMD.start({watchdog = ...})`
+2. 读取 `agent_count`，调用 `discover_modules(modules_path, start_name)` 通过 luafilesystem 扫描模块目录
+3. 顺序创建并启动 N 个 entity_agent，全部就绪后注册 cluster_discovery（`"entity:" .. type_name`）
+4. watchdog 等 agent 管理器 ready 后才打开 gate 端口
 
 **模块扫描路径解析**：基于 `game_root` + 节点 `start` 名拼接文件系统路径：
 
@@ -360,7 +378,8 @@ mongo_config.entity = {
     collections = {
         entity_msg = {
             indexes = {
-                { "target_type", "target_id", "status", background = true },
+                { "target_type", "target_id", "status", "seq", background = true },
+                { "msg_id", unique = true, background = true },
                 { "create_time", expireAfterSeconds = 604800,
                   partialFilterExpression = { status = 1 }, background = true },
             },
@@ -408,8 +427,9 @@ mongo_config.entity = {
 
 ## 已知问题
 
-- `errcode.lua` 中 `LOCAK_FAILED = 4` 是拼写错误（应为 `LOCK_FAILED`），`entity_agent.lua` 的 `CMD.entity_call` 和 `CMD.bind_client` 引用了该常量。修复需同时改 `errcode.lua` 和所有引用处。
-- `entitymgr.make_lock_value` 把节点和类型拼成 `"rolenode1/role"`，但 `entity_agent.CMD.bind_client` 将竞争锁时返回的整个锁值直接传给 `cluster.call` 作为节点名；配置中的节点名是 `"rolenode1"`。跨节点重连需先正确解析持锁节点，不能将现有逻辑视为已验证可用。
+- per-target `seq` 分配与消息 insert 未使用多文档事务：单目标并发发送不保证跨节点严格全序投递，详见上文。
+- `persistence.integration.test.lua` 已用真实 MongoDB/etcd 验证两个独立锁/DB 实例的租约撤销、fence 接管和旧 token 写入被拒绝；仍需部署多进程节点交接、网络分区和真实客户端重连的故障注入测试。
+- 租约失效后如 ORM 缓存仍有未确认的修改，会隔离并保留脏缓存，须制定人工恢复/对账流程，不能自动丢弃或直接由后继覆盖。schema 热更的旧模块缓存与活跃对象迁移也尚未验证（见 `docs/guide/hotfix.md`）。
 
 ---
 

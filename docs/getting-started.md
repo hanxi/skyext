@@ -8,7 +8,7 @@
 | --- | --- |
 | 源码与编译 | Git、Make、C 编译器、OpenSSL 开发库；构建 skynet 所需的 autotools 等工具 |
 | 示例运行 | MongoDB 6、etcd（示例提供 Docker Compose 配置） |
-| 生成 ORM schema | `stylua` 命令（生成器最后会格式化产物） |
+| 生成 ORM schema | 已初始化的 `3rd/sprotodump` 子模块、`stylua` 命令（生成器最后会格式化产物） |
 | 测试及本地覆盖率 | 构建好的 skynet/Lua，部分测试需要 MongoDB 和 etcd；HTML 报告另需 `genhtml`（lcov） |
 
 Linux、macOS 可使用 Unix 包装入口 `./bin/skyext`。CI 还构建 FreeBSD 和 Windows（MSYS2/MinGW64）；Windows CMD/PowerShell 的入口是 `bin\skyext.bat`，需先在对应环境构建 `bin\lua.exe` 和 `bin\skynet.exe`。具体平台依赖和编译参数可参照 [CI 构建配置](https://github.com/hanxi/skyext/blob/main/.github/workflows/build-release.yml)，尤其是 macOS 的 OpenSSL 路径和 Windows 的 skynet 兼容补丁。
@@ -56,7 +56,8 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 ```
 
 - `generate proto` 从 `example/proto/**/*.sproto` 生成 `example/build/proto/sproto.spb`。
-- `generate schema` 从 `example/schema/**/*.sproto` 生成 `lualib/orm/schema_define.lua` 与 `lualib/orm/schema.lua`，最后调用 `stylua`。若报 `stylua failed`，先安装格式化工具并确认可从终端运行。
+- `generate schema` 从 `example/schema/**/*.sproto` 生成 `example/build/lualib/game/orm/schema_define.lua` 与 `schema.lua`，最后调用 `stylua`。服务通过 `require "game.orm.schema"` 加载游戏层生成物；`example/build/` 被 Git 忽略，不要把 schema 写回引擎的 `lualib/orm/`。若报 `stylua failed`，先安装格式化工具并确认可从终端运行。
+- 协议解析器位于独立子模块 `3rd/sprotodump`，ORM 生成工具位于主工程 `scripts/tools/sproto_orm/`，运行时位于 `lualib/orm/`。框架发布包不包含许可证尚未核实的 `sprotodump`；要重新生成 schema/proto，请使用已初始化该子模块的源码检出。
 - 修改协议或 schema 后重新生成相应产物，再运行相关测试；项目没有 `make autocode` 目标。
 
 ## 4. 启动示例节点
@@ -111,7 +112,7 @@ make -C example lint                       # 示例游戏 luacheck
 ./bin/skyext package framework linux       # release-assets/skyext-linux.zip（平台框架包）
 ```
 
-测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。`--cov` 总会写入 `coverage/lua_coverage_clean.info`，检测到 `genhtml` 时另生成 `coverage/html/index.html`。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
+测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。游戏部署包会排除 `*.test.lua` 与测试运行器生成的临时配置；框架源码包也会排除临时测试配置，避免将构建机的绝对路径带入发布物。`--cov` 总会写入 `coverage/lua_coverage_clean.info`，统计引擎库、引擎服务与示例游戏库（不计生成的 `example/build/`）；检测到 `genhtml` 时另生成 `coverage/html/index.html`。CI 通过 `./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35` 要求整体行覆盖率不低于 35%。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
 
 ## 常见问题
 
@@ -119,7 +120,7 @@ make -C example lint                       # 示例游戏 luacheck
 | --- | --- |
 | `bin/skyext` 提示未构建 | 先运行 `make init && make build`；Windows 需构建本平台可执行文件。 |
 | `module ... not found` 或路径错误 | 确认子模块已拉取，生成步骤完成；直接运行 skynet 时工作目录必须是仓库根目录。 |
-| 生成 schema 失败 | 检查 `stylua` 是否已安装、可从 `PATH` 找到。 |
+| 生成 schema 失败 | 检查 `3rd/sprotodump` 是否已初始化，`stylua` 是否已安装且在 `PATH` 中。 |
 | MongoDB/etcd 连接失败 | 检查 Compose 服务、端口与 `common.app.lua` 中的连接地址；容器环境需替换 `127.0.0.1`。 |
 | 客户端/机器人无法连接 | 核对 Account HTTP、Role 网关监听端口，以及 `robot.app.lua` 的 `gate_nodes`。 |
 | GM 接口不可用 | 核对对应节点 GM 端口与 `gm_auth_token`，详见 [GM HTTP API](guide/gm_api.md)。 |
