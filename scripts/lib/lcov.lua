@@ -11,9 +11,14 @@ function M.parse(path)
             sources[source] = sources[source] or {}
         elseif line:sub(1, 3) == "DA:" then
             assert(source, "DA without SF in " .. path)
-            local number, hits = line:match("^DA:(%d+),(%d+)")
+            local number, hits = line:match("^DA:(%d+),(-?%d+)")
             assert(number and hits, "invalid DA in " .. path .. ": " .. line)
             number, hits = tonumber(number), tonumber(hits)
+            -- gcov 并发合并数据可能产生负计数；lcov 2.x 的官方处理
+            -- （--ignore-errors negative）是按 0 计，这里保持同一语义
+            if hits < 0 then
+                hits = 0
+            end
             sources[source][number] = (sources[source][number] or 0) + hits
         elseif line == "end_of_record" then
             source = nil

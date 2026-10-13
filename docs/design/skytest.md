@@ -629,7 +629,7 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 - 若系统安装了 `genhtml`（lcov 包），还会在 `coverage/html/` 下生成 HTML 报告；未安装时仅产出 LCOV 文件，跳过 HTML
 - `SKYTEST_COV_FLUSH_INTERVAL`：覆盖率数据自动 flush 间隔（秒），默认 10。在 `skytest.cov.config` 中读取，传给 collector 定时写盘
 
-Linux/GCC 下可用 `C_COVERAGE=1` 插桩构建主工程 C 模块，再通过 `--cov-c` 调用 gcov/lcov。命令在测试前清零计数并采集初始数据（包含未运行的 C 文件），测试后再次 capture，并由 `scripts/lib/lcov.lua` 合并、过滤出 `lualib-src/`、`service-src/` 写入 `coverage/c_coverage.info`（只保留行数据，规避 lcov 2.x 读取 tracefile 时的函数计数一致性报错，行为在 lcov 1.x/2.x 下一致）；有 `genhtml` 时单独生成 `coverage/html-c/`。C 报告和上述 Lua 报告彼此独立，不计 skynet 和第三方子模块。测试进程非正常退出时，该进程的 C 计数可能丢失。
+Linux/GCC 下可用 `C_COVERAGE=1` 插桩构建主工程 C 模块，再通过 `--cov-c` 调用 gcov/lcov。命令在测试前清零计数并采集初始数据（包含未运行的 C 文件）；测试期间为每个测试进程注入独立的 `GCOV_PREFIX` 数据树（位于仓库之外，避免根目录 capture 递归重复扫描），避免多进程（含 fixture 派生的子 skynet）并发合并同一份 `.gcda` 损坏计数器（负数计数，lcov 2.x 报 negative 错误）；测试后逐目录 capture（`--external`），capture 前先把构建树中的 `.gcno` 镜像进数据树（lcov 2.x 的 geninfo 要求 `.gcno` 与 `.gcda` 同目录，1.x 则按 gcda 内记录的绝对路径寻找）；个别目录数据损坏（如进程被 SIGKILL）时告警并跳过该目录。合并由 `scripts/lib/lcov.lua` 完成，负计数按 0 处理（与 lcov 2.x `--ignore-errors negative` 语义一致），过滤出 `lualib-src/`、`service-src/` 写入 `coverage/c_coverage.info`（只保留行数据，规避 lcov 2.x 读取 tracefile 时的函数计数一致性报错，行为在 lcov 1.x/2.x 下一致）；有 `genhtml` 时单独生成 `coverage/html-c/`。C 报告和上述 Lua 报告彼此独立，不计 skynet 和第三方子模块。测试进程非正常退出时，仅丢失该进程隔离目录中的 C 计数，不影响整体报告。
 
 ## 相关外部文件
 

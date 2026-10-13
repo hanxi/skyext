@@ -178,12 +178,96 @@ local function c_source_filter(root)
     end
 end
 
+-- 多个进程退出时并发合并同一份 .gcda 会损坏计数器（负数计数，lcov 2.x 报
+-- negative 错误）。因此每个测试进程通过 GCOV_PREFIX 把 gcov 数据写入相互隔离
+-- 的目录，再逐目录 capture：某个目录的数据损坏（如进程被 SIGKILL）时只丢弃
+-- 该目录，不影响整体结果。
+local function c_capture(ctx, directory, output)
+    local ok, code = pcall(ctx.process.run, {
+        "lcov",
+        "--capture",
+        "--directory",
+        directory,
+        "--external",
+        "--quiet",
+        "--output-file",
+        output,
+    }, { cwd = ctx.root })
+    if ok and code == 0 then
+        return true
+    end
+    io.stderr:write("警告: 跳过 " .. directory .. " 的 C 覆盖率数据（gcda 损坏或缺少 gcno）\n")
+    return false
+end
+
+local function c_build_tree_has_gcda(fs, root)
+    for _, dir in ipairs({ "luaclib", "luaclib/skytest", "cservice" }) do
+        local path = fs.join(root, dir)
+        if fs.mode(path) == "directory" then
+            for _, name in ipairs(fs.entries(path)) do
+                if name:match("%.gcda$") then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- lcov 2.x 的 geninfo 要求 .gcno 与 .gcda 同目录（1.x 会按 gcda 内记录的绝对
+-- 路径寻找）。GCOV_PREFIX 数据树的布局是「树前缀 + gcda 绝对路径」，因此在
+-- capture 前把构建树中的 .gcno 镜像拷贝到数据树对应位置，两个版本行为一致。
+local function c_mirror_gcno(fs, root, tree)
+    for _, dir in ipairs({ "luaclib", "luaclib/skytest", "cservice" }) do
+        local source_dir = fs.join(root, dir)
+        if fs.mode(source_dir) == "directory" then
+            local target_dir = fs.join(tree .. root, dir)
+            local created = false
+            for _, name in ipairs(fs.entries(source_dir)) do
+                if name:match("%.gcno$") then
+                    if not created then
+                        fs.mkdir(target_dir)
+                        created = true
+                    end
+                    fs.copy(fs.join(source_dir, name), fs.join(target_dir, name))
+                end
+            end
+        end
+    end
+end
+
+local function c_gcda_dirs(fs, root, gcov_root)
+    local dirs = {}
+    -- 未继承 GCOV_PREFIX 的进程（正常不应出现）会写入构建树，一并捕获
+    if c_build_tree_has_gcda(fs, root) then
+        dirs[#dirs + 1] = root
+    end
+    if fs.mode(gcov_root) == "directory" then
+        for _, name in ipairs(fs.entries(gcov_root)) do
+            local path = fs.join(gcov_root, name)
+            if fs.mode(path) == "directory" then
+                dirs[#dirs + 1] = path
+            end
+        end
+    end
+    return dirs
+end
+
 local function c_coverage(ctx, dir, run_dir)
     local fs = ctx.fs
-    local current = fs.join(run_dir, "current.info")
     local clean = fs.join(dir, "c_coverage.info")
-    run_lcov(ctx, { "lcov", "--capture", "--directory", ctx.root, "--output-file", current })
-    local merged = lcov.merge({ fs.join(run_dir, "initial.info"), current }, c_source_filter(ctx.root))
+    local traces = { fs.join(run_dir, "initial.info") }
+    local dirs = c_gcda_dirs(fs, ctx.root, fs.join(run_dir, "gcov"))
+    for index, source in ipairs(dirs) do
+        if source ~= ctx.root then
+            c_mirror_gcno(fs, ctx.root, source)
+        end
+        local output = fs.join(run_dir, string.format("capture%03d.info", index))
+        if c_capture(ctx, source, output) then
+            traces[#traces + 1] = output
+        end
+    end
+    local merged = lcov.merge(traces, c_source_filter(ctx.root))
     local files, total, hit = lcov.stats(merged)
     assert(total > 0 and hit > 0, "no C coverage data; rebuild with make build C_COVERAGE=1")
     lcov.write(clean, merged)
@@ -238,7 +322,9 @@ return function(ctx, _, args)
 
     local cov_dir = fs.join(ctx.root, os.getenv("SKYTEST_COV_OUTPUT_DIR") or "coverage")
     local run_dir = options.cov and fs.temporary_dir()
-    local c_run_dir = options.cov_c and fs.temporary_dir()
+    -- gcov 数据树必须位于仓库之外：否则根目录 capture 会递归扫到它们（重复计数，
+    -- 且 lcov 2.x 因树内缺 .gcno 直接报错）
+    local c_run_dir = options.cov_c and fs.temporary_dir(os.getenv("TMPDIR") or "/tmp")
 
     local ok, result = xpcall(function()
         if options.cov_c then
@@ -246,7 +332,7 @@ return function(ctx, _, args)
         end
         local passed, failed, errors = 0, 0, 0
         local failed_files = {}
-        for _, file in ipairs(files) do
+        for index, file in ipairs(files) do
             print("▶ " .. file)
             local env = { SKYTEST_FILE = file }
             if options.cov then
@@ -254,6 +340,13 @@ return function(ctx, _, args)
                 env.SKYTEST_COV_OUTPUT_DIR = run_dir
                 env.SKYTEST_COV_SOURCE_DIRS = os.getenv("SKYTEST_COV_SOURCE_DIRS") or "lualib/,service/,example/lualib/"
                 env.SKYTEST_COV_EXCLUDE = os.getenv("SKYTEST_COV_EXCLUDE") or "skynet/,.test.lua,example/build/"
+            end
+            if options.cov_c then
+                -- 每个测试进程写入独立的 gcov 数据树，避免 .gcda 并发合并损坏
+                local prefix = fs.join(c_run_dir, "gcov", string.format("t%03d", index))
+                fs.mkdir(prefix)
+                env.GCOV_PREFIX = prefix
+                env.GCOV_PREFIX_STRIP = "0"
             end
             local code, timed_out = ctx.process.run({ binary, config }, {
                 cwd = ctx.root,
