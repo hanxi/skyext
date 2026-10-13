@@ -48,6 +48,17 @@ else ifeq ($(PLAT), mingw)
 	PLAT_HOST := --host=x86_64-w64-mingw32
 endif
 
+# 仅为主工程 C 模块插桩；skynet 和 3rd/ 保持正常构建。
+C_COVERAGE ?= 0
+ifeq ($(C_COVERAGE),1)
+ifneq ($(PLAT),linux)
+$(error C_COVERAGE=1 requires Linux and GCC)
+endif
+SKYEXT_CFLAGS = $(CFLAGS) --coverage -O0 -fprofile-abs-path
+else
+SKYEXT_CFLAGS = $(CFLAGS)
+endif
+
 # ---------- 引擎 C 模块（产物输出到引擎 luaclib/）----------
 
 SKYEXT_LUACLIB_PATH = $(SKYEXT_ROOT)/luaclib
@@ -59,7 +70,7 @@ $(BIN_PATH) :
 	mkdir -p $(BIN_PATH)
 
 $(SKYEXT_LUACLIB_PATH)/jchash.so : $(SKYEXT_ROOT)/lualib-src/jchash.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/cjson.so : $(SKYEXT_ROOT)/3rd/lua-cjson/lua_cjson.c \
                                    $(SKYEXT_ROOT)/3rd/lua-cjson/strbuf.c \
@@ -67,19 +78,19 @@ $(SKYEXT_LUACLIB_PATH)/cjson.so : $(SKYEXT_ROOT)/3rd/lua-cjson/lua_cjson.c \
 	$(CC) $(CFLAGS) $(SHARED) -I$(SKYEXT_ROOT)/3rd/lua-cjson $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/traceback.so : $(SKYEXT_ROOT)/lualib-src/traceback.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/lfs.so : $(SKYEXT_ROOT)/3rd/luafilesystem/src/lfs.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/tool_process.so : $(SKYEXT_ROOT)/lualib-src/tool_process.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/crypto.so : $(SKYEXT_ROOT)/lualib-src/crypto.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(OPENSSL_CFLAGS) $(SHARED) $^ -o $@ $(OPENSSL_LDFLAGS) -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(OPENSSL_CFLAGS) $(SHARED) $^ -o $@ $(OPENSSL_LDFLAGS) -lssl -lcrypto $(LUA_LIBS) $(SKYNET_LIBS)
 
 $(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 SKYEXT_LUA_CLIB = jchash cjson traceback lfs tool_process crypto profiler_c
 
@@ -96,7 +107,7 @@ endif
 
 $(SKYEXT_LUACLIB_PATH)/skytest/hook.so : $(SKYEXT_ROOT)/lualib-src/skytest_hook.c | $(SKYEXT_LUACLIB_PATH)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
 # ---------- 引擎 C 服务（产物输出到引擎 cservice/）----------
 
@@ -107,7 +118,7 @@ $(SKYEXT_CSERVICE_PATH) :
 	mkdir -p $(SKYEXT_CSERVICE_PATH)
 
 $(SKYEXT_CSERVICE_PATH)/profiler.so : $(SKYEXT_ROOT)/service-src/service_profiler.c | $(SKYEXT_CSERVICE_PATH)
-	$(CC) $(CFLAGS) $(SHARED) -I$(SKYNET_SRC) $^ -o $@ $(SKYNET_LINK_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) -I$(SKYNET_SRC) $^ -o $@ $(SKYNET_LINK_LIBS) $(SKYNET_LIBS)
 
 SKYEXT_CSERVICE = profiler
 
@@ -140,10 +151,10 @@ skyext_build: skynet \
 
 clean:
 	cd $(SKYEXT_ROOT)/skynet && $(MAKE) clean
-	rm -f $(SKYEXT_LUACLIB_PATH)/*.so
+	rm -f $(SKYEXT_LUACLIB_PATH)/*.so $(SKYEXT_LUACLIB_PATH)/*.gcno $(SKYEXT_LUACLIB_PATH)/*.gcda
 	rm -rf $(SKYEXT_LUACLIB_PATH)/*.so.dSYM
 	rm -rf $(SKYEXT_LUACLIB_PATH)/skytest
-	rm -f $(SKYEXT_CSERVICE_PATH)/*.so
+	rm -f $(SKYEXT_CSERVICE_PATH)/*.so $(SKYEXT_CSERVICE_PATH)/*.gcno $(SKYEXT_CSERVICE_PATH)/*.gcda
 	rm -rf $(SKYEXT_CSERVICE_PATH)/*.so.dSYM
 	@for path in "$(BIN_PATH)"/*; do \
 		case "$$path" in \

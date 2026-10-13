@@ -35,7 +35,7 @@ local function usage()
 用法: ./bin/skyext <command> [options]       (Unix/macOS)
       bin\skyext.bat <command> [options]   (Windows CMD/PowerShell)
 
-  test [--cov] [--match TEXT] [--timeout SECS] [targets...]
+  test [--cov] [--cov-c] [--match TEXT] [--timeout SECS] [targets...]
   serve <node|config>                  启动服务节点
   generate <proto|schema>              生成协议或 ORM schema（schema 需要 stylua）
   package game                         打包示例游戏部署包 example/skyext.zip

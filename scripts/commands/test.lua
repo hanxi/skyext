@@ -3,7 +3,8 @@ local lcov = require "scripts.lib.lcov"
 local function usage()
     print([[用法: ./bin/skyext test [options] [file|directory...]
   --match TEXT     按路径子串过滤测试文件
-  --cov            收集覆盖率，生成 LCOV 报告（装有 genhtml 时也生成 HTML）
+  --cov            收集 Lua 覆盖率（LCOV；有 genhtml 时也生成 HTML）
+  --cov-c          收集 C 覆盖率（需 Linux/GCC 插桩构建及 lcov）
   --timeout SECS   每个文件的超时秒数（默认 120）
   --conf FILE      自定义 skynet 配置
 默认扫描 lualib/、service/、example/、test/。]])
@@ -20,6 +21,9 @@ local function parse(args)
             i = i + 2
         elseif item == "--cov" then
             options.cov = true
+            i = i + 1
+        elseif item == "--cov-c" then
+            options.cov_c = true
             i = i + 1
         elseif item == "--help" or item == "-h" then
             options.help = true
@@ -140,6 +144,71 @@ local function coverage(ctx, dir, run_dir)
     end
 end
 
+local function run_lcov(ctx, args)
+    local code = ctx.process.run(args, { cwd = ctx.root })
+    assert(code == 0, "lcov failed; install lcov and rebuild with make build C_COVERAGE=1")
+end
+
+local function c_coverage_start(ctx, dir, run_dir)
+    ctx.fs.mkdir(dir)
+    run_lcov(ctx, { "lcov", "--zerocounters", "--directory", ctx.root })
+    run_lcov(ctx, {
+        "lcov",
+        "--capture",
+        "--initial",
+        "--directory",
+        ctx.root,
+        "--output-file",
+        ctx.fs.join(run_dir, "initial.info"),
+    })
+end
+
+-- lcov 2.x 读取 tracefile 时会做函数/行计数一致性校验，gcov 数据可能触发
+-- inconsistent 报错；因此 capture 之后改用 scripts/lib/lcov.lua 合并与过滤
+-- （只保留 SF/DA 行数据），行为在 lcov 1.x/2.x 下一致。
+local function c_source_filter(root)
+    local prefixes = { root .. "/lualib-src/", root .. "/service-src/" }
+    return function(source)
+        for _, prefix in ipairs(prefixes) do
+            if source:sub(1, #prefix) == prefix then
+                return true
+            end
+        end
+        return false
+    end
+end
+
+local function c_coverage(ctx, dir, run_dir)
+    local fs = ctx.fs
+    local current = fs.join(run_dir, "current.info")
+    local clean = fs.join(dir, "c_coverage.info")
+    run_lcov(ctx, { "lcov", "--capture", "--directory", ctx.root, "--output-file", current })
+    local merged = lcov.merge({ fs.join(run_dir, "initial.info"), current }, c_source_filter(ctx.root))
+    local files, total, hit = lcov.stats(merged)
+    assert(total > 0 and hit > 0, "no C coverage data; rebuild with make build C_COVERAGE=1")
+    lcov.write(clean, merged)
+    local html = fs.join(dir, "html-c")
+    local ok, code = pcall(ctx.process.run, {
+        "genhtml",
+        clean,
+        "--output-directory",
+        html,
+        "--title",
+        "skyext C coverage",
+        "--legend",
+    }, { cwd = ctx.root })
+    if not ok or code == 127 then
+        io.stderr:write("genhtml 未安装，跳过 C HTML 报告\n")
+    else
+        assert(code == 0, "genhtml failed for C coverage")
+    end
+    print(string.format("C 覆盖率: %.1f%% (%d/%d 行, %d 文件)", hit * 100 / total, hit, total, files))
+    print("lcov: " .. clean)
+    if ok and code == 0 then
+        print("报告: " .. fs.join(html, "index.html"))
+    end
+end
+
 return function(ctx, _, args)
     local options = parse(args)
     if options.help then
@@ -168,12 +237,13 @@ return function(ctx, _, args)
     end
 
     local cov_dir = fs.join(ctx.root, os.getenv("SKYTEST_COV_OUTPUT_DIR") or "coverage")
-    local run_dir
-    if options.cov then
-        run_dir = fs.temporary_dir()
-    end
+    local run_dir = options.cov and fs.temporary_dir()
+    local c_run_dir = options.cov_c and fs.temporary_dir()
 
     local ok, result = xpcall(function()
+        if options.cov_c then
+            c_coverage_start(ctx, cov_dir, c_run_dir)
+        end
         local passed, failed, errors = 0, 0, 0
         local failed_files = {}
         for _, file in ipairs(files) do
@@ -208,6 +278,9 @@ return function(ctx, _, args)
         if options.cov then
             coverage(ctx, cov_dir, run_dir)
         end
+        if options.cov_c then
+            c_coverage(ctx, cov_dir, c_run_dir)
+        end
         print(string.format("%d files, %d passed, %d failed, %d errors", #files, passed, failed, errors))
         for _, file in ipairs(failed_files) do
             print("  " .. file)
@@ -219,6 +292,9 @@ return function(ctx, _, args)
     end
     if run_dir then
         fs.remove_tree(run_dir)
+    end
+    if c_run_dir then
+        fs.remove_tree(c_run_dir)
     end
     if not ok then
         error(result, 0)

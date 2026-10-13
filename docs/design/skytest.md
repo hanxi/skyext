@@ -629,6 +629,8 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 - 若系统安装了 `genhtml`（lcov 包），还会在 `coverage/html/` 下生成 HTML 报告；未安装时仅产出 LCOV 文件，跳过 HTML
 - `SKYTEST_COV_FLUSH_INTERVAL`：覆盖率数据自动 flush 间隔（秒），默认 10。在 `skytest.cov.config` 中读取，传给 collector 定时写盘
 
+Linux/GCC 下可用 `C_COVERAGE=1` 插桩构建主工程 C 模块，再通过 `--cov-c` 调用 gcov/lcov。命令在测试前清零计数并采集初始数据（包含未运行的 C 文件），测试后再次 capture，并由 `scripts/lib/lcov.lua` 合并、过滤出 `lualib-src/`、`service-src/` 写入 `coverage/c_coverage.info`（只保留行数据，规避 lcov 2.x 读取 tracefile 时的函数计数一致性报错，行为在 lcov 1.x/2.x 下一致）；有 `genhtml` 时单独生成 `coverage/html-c/`。C 报告和上述 Lua 报告彼此独立，不计 skynet 和第三方子模块。测试进程非正常退出时，该进程的 C 计数可能丢失。
+
 ## 相关外部文件
 
 ### `lualib/skyext/config.lua`
@@ -666,7 +668,7 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
 
 ### `.github/workflows/coverage.yml`
 
-核心流程为 `make build`（先安装固定版本 StyLua，生成游戏层 schema）、`./bin/skyext generate proto`、`./bin/skyext test --cov` 和 `./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35`。CI 等待 MongoDB 和 etcd 就绪后，显式启用真实连接集成测试；本地默认跳过，需自行启动服务并设置 `SKYTEST_INTEGRATION=1`。测试为当前运行创建随机名称的 Mongo 数据库和 etcd key 前缀，结束后删除测试数据库并释放锁。`MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 可覆盖默认本机地址：
+核心流程为 `make build C_COVERAGE=1`（先安装固定版本 StyLua，生成游戏层 schema）、`./bin/skyext generate proto`、`./bin/skyext test --cov --cov-c`，并分别检查 Lua 35% 与 C 60% 行覆盖率。CI 等待 MongoDB 和 etcd 就绪后，显式启用真实连接集成测试；本地默认跳过，需自行启动服务并设置 `SKYTEST_INTEGRATION=1`。测试为当前运行创建随机名称的 Mongo 数据库和 etcd key 前缀，结束后删除测试数据库并释放锁。`MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 可覆盖默认本机地址：
 
 ```yaml
     - name: Run tests with coverage and MongoDB/etcd integration
@@ -674,7 +676,7 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
         SKYTEST_INTEGRATION: '1'
         MONGO_HOST: mongo
         ETCD_ENDPOINTS: http://etcd:2379
-      run: ./bin/skyext test --cov
+      run: ./bin/skyext test --cov --cov-c
 ```
 
 `persistence.integration.test.lua` 在同一 Skynet 进程内建立两个互不共享模块状态的锁/DB 实例，使用真实 MongoDB/etcd 检查竞争、租约撤销、fence 递增、CAS 拒绝旧持有者；`reliable_msg.integration.test.lua` 使用真实 MongoDB 检查并发分配、按 `seq` 分页和重复确认。两者都不替代多进程节点交接与故障注入测试。
@@ -712,7 +714,7 @@ test CLI 用 Lua 编写，通过 `tool_process`（C 模块）管理子进程和�
 3. `./bin/skyext test lualib/skyext/` — 目录级测试应逐文件输出 mocha 风格报告与汇总。
 4. `./bin/skyext test --cov lualib/skyext/` — 应合并生成 LCOV 报告；安装 genhtml 时还应生成 HTML。
 5. `./bin/skyext test lualib/skytest/process.test.lua` — fixture 集成测试应启动子 skynet 并验证可连接。
-6. `./bin/skyext test --cov` — 执行完整覆盖率流程。
+6. `./bin/skyext test --cov` — 执行完整 Lua 覆盖率流程；以 `C_COVERAGE=1` 重建后运行 `./bin/skyext test --cov --cov-c`，检查 C 报告含全部 7 个主工程 C 文件。
 7. 故意写一个失败测试 → test 命令退出码应为 1。
 8. 故意写一个语法错误的测试文件 → 单文件 skynet 进程退出码应为 2，统一 CLI 退出码应为 1，报告指出错误文件。
 9. 故意写一个死循环测试 → `tool_process` 超时应生效，文件计为失败，后续文件正常执行。

@@ -72,7 +72,7 @@ jobs:
 
     - name: Build and generate example schema
       run: |
-        make build
+        make build C_COVERAGE=1
         test -s example/build/lualib/game/orm/schema.lua
         ./bin/skyext generate proto
         test -s example/build/proto/sproto.spb
@@ -115,13 +115,19 @@ jobs:
         SKYTEST_INTEGRATION: '1'
         MONGO_HOST: mongo
         ETCD_ENDPOINTS: http://etcd:2379
-      run: ./bin/skyext test --cov
+      run: ./bin/skyext test --cov --cov-c
 
     - name: Enforce minimum line coverage
-      run: ./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35
+      run: |
+        ./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35
+        ./bin/skyext cov check coverage/c_coverage.info --threshold 60
 
     - name: Summarize coverage
-      run: ./bin/skyext cov summary coverage/lua_coverage_clean.info >> "$GITHUB_STEP_SUMMARY"
+      run: |
+        echo '### Lua' >> "$GITHUB_STEP_SUMMARY"
+        ./bin/skyext cov summary coverage/lua_coverage_clean.info >> "$GITHUB_STEP_SUMMARY"
+        echo '### C（引擎源码）' >> "$GITHUB_STEP_SUMMARY"
+        ./bin/skyext cov summary coverage/c_coverage.info >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload coverage artifact
       uses: actions/upload-artifact@v4
@@ -135,6 +141,20 @@ jobs:
       with:
         name: coverage-lcov
         path: coverage/lua_coverage_clean.info
+        retention-days: 30
+
+    - name: Upload C coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-c-report
+        path: coverage/html-c/
+        retention-days: 30
+
+    - name: Upload C lcov
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-c-lcov
+        path: coverage/c_coverage.info
         retention-days: 30
 
   deploy-pages:
@@ -178,6 +198,13 @@ jobs:
       with:
         name: coverage-report
         path: _site/coverage
+
+    - name: Download C coverage report
+      if: steps.pages.outputs.enabled == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-c-report
+        path: _site/coverage-c
 
     - name: Assemble site
       if: steps.pages.outputs.enabled == 'true'
