@@ -25,7 +25,11 @@
 
 ### ORM Schema 热更
 
-ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文件，再重载 schema，再热更代码。**ORM Schema 热更只允许新增字段，不允许删除和修改字段。** `reload_orm_schema` 为 `true` 时，`clearcache` 必须为 `true`，因为 ORM Schema 是游戏构建目录下的 Lua 文件 `example/build/lualib/game/orm/schema.lua`（模块名 `game.orm.schema`）。需在 `hotfix.conf.lua` 中手动设置 `reload_orm_schema = true`。注意活跃服务的 `package.loaded["game.orm.schema"]` 仍可能保留旧模块：`clearcache` 不等于清除 `package.loaded`；操作前应为目标服务设计安全的模块替换和已加载实体迁移，并用集成测试验证，不能只凭热更接口返回成功判断 schema 已生效。
+ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文件，再重载 schema，再热更代码。**ORM Schema 热更只允许新增字段，不允许删除和修改字段。** `reload_orm_schema` 为 `true` 时，`clearcache` 必须为 `true`，因为 ORM Schema 是游戏构建目录下的 Lua 文件 `example/build/lualib/game/orm/schema.lua`（模块名 `game.orm.schema`）。需在 `hotfix.conf.lua` 中手动设置 `reload_orm_schema = true`。
+
+`reload_orm_schema` 是**就地重载**：dbmgr 持有的那张 schema 表、以及表里每个 schema 对象的引用都保持不变，只把字段定义换成新的，新增的类型补进来、删除的类型移除。必须保持引用不变——生成代码里 `role.new(init)` 这类闭包、以及已加载 doc 的类型判定都直接持有这些对象，换一张新表等于让老 doc 全部失效。重载结束后 `package.loaded["game.orm.schema"]` 会被还原成同一张表，所以之后 `require` 拿到的就是已生效的那份；若重新 `require` 得到的还是同一张表（例如 `clearcache` 没生效），重载会被直接拒绝而不是静默清空 schema。
+
+仍然要注意作用域：GM 命令只在注册它的服务（dbmgr）的 Lua VM 里生效，`clearcache` 不等于清除其它服务自己的 `package.loaded`。其它服务里已经 require 过 schema 的模块仍持有旧副本，操作前应为目标服务设计安全的模块替换和已加载实体迁移，并用集成测试验证，不能只凭热更接口返回成功判断 schema 已生效。
 
 ### 代码热更
 
@@ -230,7 +234,7 @@ curl -X POST http://localhost:9092/gm/execute \
 - HTTP Header: `Authorization: Bearer <token>`
 - 或请求参数: `token=<token>`
 
-Token 在 `example/etc/nodes/common.app.lua` 中配置 `gm_auth_token`。**未配置或仍使用占位符 `CHANGE_ME_TO_RANDOM_TOKEN` 时，GM 接口禁用。**
+Token 在 `example/etc/nodes/common.app.lua` 中配置 `gm_auth_token`。**未配置、仍使用占位符（如 `CHANGE_ME_TO_RANDOM_TOKEN`）、或少于 16 字符时，GM 接口禁用**，启动日志里会有一条 `gm_auth_token is unusable` 的 ERROR。`allow_insecure_secret` 对 GM 鉴权无效。
 
 `/gm/list` 接口同样需要鉴权。
 

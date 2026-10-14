@@ -3,6 +3,7 @@ local bson = require "bson"
 local orm = require "orm"
 
 local integer = { type = "integer" }
+local str = { type = "string" }
 local item = { type = "message", count = integer }
 local items = { type = "map", count = item }
 local list = { type = "array", count = integer }
@@ -173,5 +174,93 @@ t.describe("ORM Mongo snapshots", function()
         t.expect(pcall(orm.remove, doc.list, 5)).to.equal(false)
         t.expect(orm.is_dirty(doc)).to.equal(false)
         t.expect(orm.to_bson(doc).list).to.equal({ 9, 4 })
+    end)
+end)
+
+t.describe("ORM schema reload", function()
+    local function message(schema_name, fields)
+        local obj = { type = "message" }
+        for k, v in pairs(fields) do
+            obj[k] = v
+        end
+        setmetatable(obj, {
+            __tostring = function()
+                return "schema_" .. schema_name
+            end,
+        })
+        return obj
+    end
+
+    t.it("refuses to reload a schema table into itself", function()
+        local role = message("role", { rid = integer })
+        local old_schema = { role = role }
+        -- 同一张表 reload 会先把 schema 清空再从自己被清空的自己身上取值，必须拒绝
+        t.expect(function()
+            orm.reload_schema(old_schema, old_schema)
+        end).to
+            .throw("distinct new_schema")
+        -- 拒绝之后不能留下半清空的状态
+        t.expect(old_schema.role).to.equal(role)
+        t.expect(role.rid).to.equal(integer)
+        t.expect(role.type).to.equal("message")
+    end)
+
+    t.it("keeps table and object identity while swapping field definitions", function()
+        local role = message("role", { rid = integer, name = str })
+        local old_schema = { role = role }
+        local new_role = message("role", { rid = integer, level = integer })
+
+        orm.reload_schema(old_schema, { role = new_role })
+
+        -- 引用必须保持不变：进程里已有的 orm doc 和 role.new 闭包都持有它
+        t.expect(old_schema.role).to.equal(role)
+        t.expect(role.rid).to.equal(integer)
+        t.expect(role.level).to.equal(integer)
+        t.expect(role.name).to.be_nil()
+        t.expect(getmetatable(role)).to.equal(getmetatable(new_role))
+        t.expect(tostring(role)).to.equal("schema_role")
+    end)
+
+    t.it("drops removed types and picks up newly added ones", function()
+        local role = message("role", { rid = integer })
+        local mail = message("mail", { id = integer })
+        local old_schema = { role = role, mail = mail }
+        local bag = message("bag", { size = integer })
+
+        orm.reload_schema(old_schema, { role = message("role", { rid = integer }), bag = bag })
+
+        t.expect(old_schema.role).to.equal(role)
+        t.expect(old_schema.role.rid).to.equal(integer)
+        t.expect(old_schema.mail).to.be_nil()
+        t.expect(old_schema.bag).to.equal(bag)
+    end)
+
+    t.it("keeps an already loaded doc usable across a reload", function()
+        local role_schema = message("role", { rid = integer, level = integer })
+        install_checks(role_schema)
+        -- 生成代码里的 role.new 捕获的就是 schema 表里那个对象
+        role_schema.new = function(init)
+            return orm.new(role_schema, init)
+        end
+        local old_schema = { role = role_schema }
+        local doc = old_schema.role.new({ rid = 1, level = 2 })
+        t.expect(doc.level).to.equal(2)
+
+        local new_role = message("role", { rid = integer, level = integer, exp = integer })
+        install_checks(new_role)
+        new_role.new = function(init)
+            return orm.new(new_role, init)
+        end
+        orm.reload_schema(old_schema, { role = new_role })
+
+        -- reload 之前建好的 doc 仍然可用，并且能写新增字段
+        doc.exp = 100
+        t.expect(orm.is_dirty(doc)).to.equal(true)
+        t.expect(orm.to_bson(doc).exp).to.equal(100)
+
+        -- reload 之后新建的 doc 也走同一份定义
+        local fresh = old_schema.role.new({ rid = 2, exp = 7 })
+        t.expect(orm.is_orm(fresh)).to.equal(true)
+        t.expect(orm.to_bson(fresh).exp).to.equal(7)
     end)
 end)

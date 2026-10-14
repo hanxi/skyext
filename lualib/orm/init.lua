@@ -334,9 +334,15 @@ function orm.is_orm(doc)
     return getmetatable(doc) == ormdoc_type
 end
 
+-- 就地热重载 schema。
+-- 必须保持 old_schema 这张表以及每个 schema_obj 的引用不变：进程里所有 orm doc
+-- 的类型判定、以及生成代码里 role.new 之类的闭包都持有这些引用。
+-- old_schema 和 new_schema 必须是两张不同的表。传同一张表会让每个 schema_obj
+-- 先被清空、再从已经被清空的自己身上取值，结果是所有类型定义全部丢失。
 function orm.reload_schema(old_schema, new_schema)
     assert(old_schema, "need old_schema")
     assert(new_schema, "need new_schema")
+    assert(old_schema ~= new_schema, "reload_schema needs a distinct new_schema table")
     for schema_name, schema_obj in pairs(old_schema) do
         local new_schema_obj = new_schema[schema_name]
         if new_schema_obj then
@@ -352,6 +358,13 @@ function orm.reload_schema(old_schema, new_schema)
             setmetatable(schema_obj, getmetatable(new_schema_obj))
         else
             old_schema[schema_name] = nil
+        end
+    end
+    -- 新增的类型：old_schema 里还没有的 schema_name 需要补进来，
+    -- 否则热更后新增的数据结构会被静默丢掉
+    for schema_name, new_schema_obj in pairs(new_schema) do
+        if old_schema[schema_name] == nil then
+            old_schema[schema_name] = new_schema_obj
         end
     end
 end

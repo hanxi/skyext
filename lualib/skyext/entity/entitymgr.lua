@@ -42,6 +42,8 @@ function M:_init_modules(entity)
         entity.data.modules = {}
     end
     entity.modules = {}
+    -- on_load 已经跑完的模块；初始化中途失败时只有这些模块需要补 on_unload
+    entity.loaded_modules = {}
     for name, mod in pairs(self.data_modules) do
         if entity.data.modules[name] == nil then
             entity.data.modules[name] = {}
@@ -62,11 +64,15 @@ function M:_call_modules_on_load(entity)
                 return false, err
             end
         end
+        -- 记下已经加载完成的模块：初始化在中途失败时，这些模块的 on_unload 仍然要跑
+        entity.loaded_modules[name] = true
     end
     return true
 end
 
-function M:_call_modules_on_unload(entity)
+-- only_loaded: 只卸载 on_load 已经跑完的模块。初始化中途失败时必须这样，
+-- 否则 on_load 没跑过的模块会被 on_unload 拆一遍不存在的状态
+function M:_call_modules_on_unload(entity, only_loaded)
     if not entity.modules then
         return true
     end
@@ -76,8 +82,13 @@ function M:_call_modules_on_unload(entity)
         done = {}
         entity.unloaded_modules = done
     end
+    local loaded = entity.loaded_modules
     for name, mod_inst in pairs(entity.modules) do
-        if mod_inst.on_unload and not done[name] then
+        local need_unload = mod_inst.on_unload ~= nil and not done[name]
+        if need_unload and only_loaded then
+            need_unload = loaded ~= nil and loaded[name] == true
+        end
+        if need_unload then
             local ok, err = xpcall(mod_inst.on_unload, debug.traceback, mod_inst)
             if not ok then
                 log.error(
@@ -351,9 +362,11 @@ function M:_ensure_loaded(entity_id)
     if not initialized or not distributed_lock.is_valid(handle) then
         local reason = init_err or "lease expired during initialization"
         log.error("entity initialization failed", "type", self.type_name, "id", entity_id, "err", reason)
-        -- on_load 没有跑完，对应的 on_unload 不能执行；其余交给统一的卸载流程：
-        -- 租约还在就落库后解锁，租约没了就只丢弃干净缓存，失败则保持 unloading 并重试
-        entity.unload_hooks_run = true
+        -- handler.on_load 没有跑完，对应的 handler.on_unload 不能执行；
+        -- 但 on_load 已经成功的数据模块必须补跑 on_unload（见 _call_modules_on_unload）。
+        -- 其余交给统一的卸载流程：租约还在就落库后解锁，租约没了就只丢弃干净缓存，
+        -- 失败则保持 unloading 并重试
+        entity.init_failed = true
         if not self:_unload_entity(entity) then
             log.error("entity retained after failed initialization", "type", self.type_name, "id", entity_id)
         end
@@ -491,12 +504,13 @@ function M:_unload_entity(entity)
     end
 
     if not entity.unload_hooks_run then
+        local init_failed = entity.init_failed
         local hooks_ok, hooks_err = xpcall(function()
-            if self.handler.on_unload and not entity.handler_unloaded then
+            if not init_failed and self.handler.on_unload and not entity.handler_unloaded then
                 self.handler.on_unload(entity)
                 entity.handler_unloaded = true
             end
-            local modules_ok, module_err = self:_call_modules_on_unload(entity)
+            local modules_ok, module_err = self:_call_modules_on_unload(entity, init_failed)
             assert(modules_ok, module_err)
         end, debug.traceback)
         if not hooks_ok then

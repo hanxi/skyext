@@ -3,7 +3,7 @@ bootfaillogpath = "logs/bootfail.log" -- 启动失败的日志文件
 log_overload_mqlen = 1000000 -- 日志过载队列长度
 log_src = true -- 日志是否打印代码位置
 log_print_table = true -- 日志是否打印table内容
-log_level = 4 -- 日志等级 DEBUG = 4, INFO = 3, WARN = 2, ERROR = 1, FATAL = 0
+log_level = 3 -- 日志等级 DEBUG = 4, INFO = 3, WARN = 2, ERROR = 1, FATAL = 0（DEBUG 会打出每次 DB 读写，仅本地排查时开）
 log_config = log_config
     or {
         {
@@ -130,7 +130,12 @@ role_db_coll = "role"
 
 db_save_interval = 3 * 60 -- 数据入库间隔秒
 
-login_jwt_secret = "your_access_secret" -- 登录用的 jwt 密钥
+-- 登录用的 jwt 密钥。下面这个示例值是公开的，谁都能拿它伪造登录态，
+-- 部署前必须换成随机长串（例如 openssl rand -hex 32），且不少于 16 字符。
+login_jwt_secret = "your_access_secret"
+-- 仅供本地开发：显式打开后允许继续使用弱密钥（日志里会持续告警）。
+-- 生产环境不要设置这一项——弱密钥会直接导致登录被拒绝。
+allow_insecure_secret = true
 
 -- 客户端看到到服务器与游戏服的映射
 server2game = {
@@ -141,5 +146,6 @@ server2game = {
 
 http_request_body_size = 1024 * 1024
 
--- GM 鉴权 token，部署时替换为随机长串；未配置则 /gm/execute 接口禁用
+-- GM 鉴权 token，部署时替换为随机长串（不少于 16 字符）；
+-- 未配置或仍是占位符时 /gm/execute 接口禁用
 gm_auth_token = "CHANGE_ME_TO_RANDOM_TOKEN"

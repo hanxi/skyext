@@ -1,5 +1,9 @@
 local t = require "skytest"
+local fs = require "skyext.util.fs"
+local lfs = require "lfs"
 local mongo_conn = require "skyext.mongo_conn"
+
+local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "lualib/skyext/mongo_conn.lua")
 
 -- 用假连接验证 collection 包装层把参数原样整形后投给 mongo_conn 服务，
 -- 不依赖真实 MongoDB。
@@ -79,5 +83,149 @@ t.describe("mongo_conn collection 包装", function()
         coll:safe_update({ a = 1 }, { ["$set"] = { b = 2 } }, true, false)
         t.expect(calls[2].cmd).to.equal("raw_safe_update")
         t.expect(calls[2].args[2]).to.be_type("userdata")
+    end)
+end)
+
+-- 加载一份全新的 mongo_conn 模块：mongo_config 缓存在模块局部变量里，
+-- 而且要在"配置还没注入"的状态下加载，才能复现真实的加载顺序。
+local function harness(mongo_config)
+    local h = {
+        mongo_config = mongo_config, -- nil 表示 config.init() 还没跑
+        config_reads = 0,
+        services = {},
+        calls = {},
+        logs = {},
+    }
+
+    local function record(level, msg, ...)
+        h.logs[#h.logs + 1] = { level = level, msg = msg, args = { ... } }
+    end
+
+    local fake_skynet = {
+        uniqueservice = function(name, ...)
+            h.services[#h.services + 1] = { name = name, args = { ... } }
+            return 100 + #h.services
+        end,
+        call = function(addr, proto, cmd, ...)
+            h.calls[#h.calls + 1] = { addr = addr, cmd = cmd, args = { ... } }
+            return "ret:" .. tostring(cmd)
+        end,
+    }
+
+    local imports = {
+        skynet = fake_skynet,
+        ["skyext.config"] = {
+            get_table = function(key)
+                h.config_reads = h.config_reads + 1
+                if key == "mongo_config" then
+                    return h.mongo_config
+                end
+            end,
+        },
+        ["skyext.log"] = {
+            debug = function(...)
+                record("debug", ...)
+            end,
+            info = function(...)
+                record("info", ...)
+            end,
+            warn = function(...)
+                record("warn", ...)
+            end,
+            error = function(...)
+                record("error", ...)
+            end,
+        },
+    }
+    local env = setmetatable({
+        require = function(name)
+            return imports[name] or require(name)
+        end,
+    }, { __index = _G })
+    h.mod = assert(loadfile(source, "t", env))()
+    return h
+end
+
+-- 日志里出现过某个值（按引用或按字符串比较），用来断言存档没有被整份刷进日志
+local function logged(h, value)
+    for _, entry in ipairs(h.logs) do
+        if entry.msg == value then
+            return true
+        end
+        for _, v in ipairs(entry.args) do
+            if v == value then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+t.describe("mongo_conn 惰性读取配置", function()
+    t.it("加载期不读 mongo_config", function()
+        local h = harness({ game = { connections = 1 } })
+        -- 配置是在 skyext 的 skynet.init 回调里注入的，chunk 加载期读到的是 nil。
+        -- 一旦在文件顶层读并缓存，这个进程后面所有 mongo 操作都会拿 nil 配置跑。
+        t.expect(h.config_reads).to.equal(0)
+        t.expect(h.mod.get_collection("game", "role")).to.exist()
+        t.expect(h.config_reads).to.be_gt(0)
+    end)
+
+    t.it("配置缺失时报错而不是缓存 nil", function()
+        local h = harness(nil)
+        t.expect(function()
+            h.mod.get_collection("game", "role")
+        end).to
+            .throw("mongo_config is not configured")
+
+        -- 失败的那次不能留下缓存：配置注入后必须能正常建连
+        h.mongo_config = { game = { connections = 2 } }
+        local coll = h.mod.get_collection("game", "role")
+        t.expect(coll).to.exist()
+        t.expect(#h.services).to.equal(2)
+        t.expect(h.services[1].name).to.equal("mongo_conn:game:1")
+        t.expect(h.services[2].name).to.equal("mongo_conn:game:2")
+        t.expect(coll:find({ rid = 1 })).to.equal("ret:find")
+    end)
+
+    t.it("库没配时报出库名", function()
+        local h = harness({ game = { connections = 1 } })
+        t.expect(function()
+            h.mod.get_collection("global", "server")
+        end).to
+            .throw("database not configured: global")
+    end)
+
+    t.it("同一个库只建一次连接", function()
+        local h = harness({ game = { connections = 2 } })
+        h.mod.get_collection("game", "role")
+        local services = #h.services
+        local coll = h.mod.get_collection("game", "mail")
+        t.expect(#h.services).to.equal(services)
+        t.expect(coll:find_one({ id = 1 })).to.equal("ret:find_one")
+        -- 连接池里随机挑一条，地址必须是建过的
+        t.expect(h.calls[1].addr).to.be_gt(100)
+        t.expect(h.calls[1].addr).to.be_lte(100 + services)
+    end)
+end)
+
+t.describe("mongo_conn 日志脱敏", function()
+    t.it("safe_update 不把存档增量写进日志", function()
+        local h = harness({ game = { connections = 1 } })
+        local coll = h.mod.get_collection("game", "role")
+        local update = { ["$set"] = { password_hash = "hunter2", bag = { items = { 1, 2, 3 } } } }
+        coll:safe_update({ rid = 7 }, update, true, false)
+        t.expect(logged(h, update)).to.equal(false)
+        -- 定位用的信息还是要留着，否则线上没法查问题
+        t.expect(logged(h, "safe_update")).to.equal(true)
+    end)
+
+    t.it("safe_insert 不把整份存档写进日志", function()
+        local h = harness({ game = { connections = 1 } })
+        local coll = h.mod.get_collection("game", "role")
+        local doc = { rid = 7, name = "alice", secret_field = "s3cr3t" }
+        coll:safe_insert(doc)
+        t.expect(logged(h, doc)).to.equal(false)
+        t.expect(logged(h, "safe_insert")).to.equal(true)
     end)
 end)

@@ -2,6 +2,7 @@ local skynet = require "skynet"
 local log = require "skyext.log"
 local errcode = require "skyext.errcode"
 local config = require "skyext.config"
+local secret = require "skyext.secret"
 
 local M = {
     GET = {},
@@ -18,18 +19,17 @@ local function get_gm_service()
     return g_gm_service
 end
 
-local PLACEHOLDER_TOKENS = {
-    ["CHANGE_ME_TO_RANDOM_TOKEN"] = true,
-}
-
 local function get_auth_token()
     if g_gm_auth_token == nil then
         local token = skynet.getenv("gm_auth_token")
-        if token and token ~= "" and not PLACEHOLDER_TOKENS[token] then
+        local ok, reason = secret.check(token)
+        if ok then
             g_gm_auth_token = token
         else
-            if token and PLACEHOLDER_TOKENS[token] then
-                log.error("gm_auth_token is still the default placeholder! /gm/execute is disabled.")
+            if token and token ~= "" then
+                -- 配了但不能用（占位符/太短）：必须显式报错，
+                -- 否则运维会以为 GM 接口是开着的
+                log.error("gm_auth_token is unusable, /gm/execute is disabled", "reason", reason)
             end
             g_gm_auth_token = false
         end

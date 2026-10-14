@@ -33,8 +33,26 @@ local function close_client(fd)
     g_clients[fd] = nil
 
     if client.forward_service then
-        skynet.call(g_gate_service, "lua", "kick", fd)
-        skynet.send(client.forward_service, "lua", "disconnect", fd)
+        -- kick 失败（gate 那边连接已经没了、或 gate 本身出错）不能挡住后面的 disconnect：
+        -- forward 目标靠 disconnect 清掉 entity.fd，而 fd 还在的实体永远不会进卸载定时器，
+        -- 漏发一次就是一个实体泄漏。
+        local ok, err = pcall(skynet.call, g_gate_service, "lua", "kick", fd)
+        if not ok then
+            log.warn("kick client failed", "fd", fd, "err", err)
+        end
+        -- forward_service 可能已经退出，send 失败同样只记录，不让 close_client 抛错
+        local sent, send_err = pcall(skynet.send, client.forward_service, "lua", "disconnect", fd)
+        if not sent then
+            log.error(
+                "notify disconnect failed",
+                "fd",
+                fd,
+                "service",
+                tostring(client.forward_service),
+                "err",
+                send_err
+            )
+        end
     end
 end
 

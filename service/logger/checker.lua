@@ -11,8 +11,10 @@ local HEARTBEAT_INTERVAL = 10
 
 local checkers = {}
 
-local overload_mqlen = config.get_number("log_overload_mqlen") or 1000000
-local overload_off_mqlen = overload_mqlen * 0.8
+-- log_overload_mqlen 由 skyext 的 skynet.init 回调注入，
+-- 加载期读到的是 nil，会永远退回默认值，所以放到下面的 init 回调里读
+local overload_mqlen
+local overload_off_mqlen
 checkers.check_mqlen = function()
     local mqlen = skynet.mqlen()
 
@@ -37,6 +39,8 @@ checkers.check_bucket = function()
 end
 
 skynet.init(function()
+    overload_mqlen = config.get_number("log_overload_mqlen") or 1000000
+    overload_off_mqlen = overload_mqlen * 0.8
     xpcall(timer.repeat_delayed, xpcall_msgh, "log_heartbeat", HEARTBEAT_INTERVAL, function()
         for _, f in pairs(checkers) do
             pcall(f)

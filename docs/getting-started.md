@@ -99,6 +99,13 @@ local secret = config.get("login_jwt_secret")
 
 `config.get*` 在配置不存在时返回 `nil`；应用配置中的 table 会序列化进 skynet 环境，再由 `get_table` 反序列化。示例中的 `login_jwt_secret = "your_access_secret"` 和 `gm_auth_token = "CHANGE_ME_TO_RANDOM_TOKEN"` **不是生产密钥**；在真实部署前务必更换，并保护 GM、Account、数据库与 etcd 的访问边界。
 
+密钥强度由 `skyext.secret` 统一校验（`openssl rand -hex 32` 生成即可）：未配置、命中已知占位符黑名单、或少于 16 字符的密钥一律视为不可用。不可用时的行为是"拒绝而不是放行"：
+
+- `login_jwt_secret` 不可用 → 登录请求返回 `TOKEN_ERROR`，机器人压测无法签发 token；
+- `gm_auth_token` 不可用 → `/gm/execute`、`/gm/list` 全部拒绝。
+
+示例配置里额外写了 `allow_insecure_secret = true`，这是**仅供本地开发**的逃生口：它只放宽 `login_jwt_secret`（放行时打一条 ERROR 日志），不影响 GM 鉴权。生产环境不要设置这一项。
+
 ## 6. 测试、检查与打包
 
 ```bash

@@ -9,7 +9,15 @@ local to_lightuserdata = bson.to_lightuserdata
 
 local M = {}
 
-local mongo_config = config.get_table("mongo_config")
+-- 配置可能在 config.init() 之后才可见，加载期读取会把 nil 永久缓存下来，
+-- 因此改成首次使用时读取并缓存
+local g_mongo_config
+local function mongo_config()
+    if not g_mongo_config then
+        g_mongo_config = assert(config.get_table("mongo_config"), "mongo_config is not configured")
+    end
+    return g_mongo_config
+end
 
 -- 处理 orm 的情况：orm.to_bson 返回脱离 ORM 的普通表（map key 已转成 string），
 -- 普通表原样通过，因此 query/update 仍然可以直接传普通 Lua 表。
@@ -69,14 +77,16 @@ end
 -- 兼容 orm 数据打包,必须在调用者服务执行 bson_encode
 function coll_mt:safe_insert(doc)
     local conn_obj = self.db:_route()
-    log.debug("safe_insert doc:", "doc", doc)
+    -- 整个 doc 就是玩家存档，不能整份刷进日志
+    log.debug("safe_insert", "coll", self.coll)
     local bson_obj = bson_encode(doc)
     return conn_obj:call("raw_safe_insert", self.coll, to_lightuserdata(bson_obj))
 end
 
 function coll_mt:safe_update(query, update, upsert, multi)
     local conn_obj = self.db:_route()
-    log.debug("safe_update", "query", query, "update", update, "upsert", upsert, "multi", multi)
+    -- update 里是整份存档增量，只记录定位用的 query
+    log.debug("safe_update", "coll", self.coll, "query", query, "upsert", upsert, "multi", multi)
     local bson_obj = bson_encode({
         q = query,
         u = update,
@@ -120,7 +130,7 @@ function db_mt:_route()
 end
 
 function db_mt:init()
-    local db_config = mongo_config[self.name]
+    local db_config = assert(mongo_config()[self.name], "database not configured: " .. tostring(self.name))
     for i = 1, db_config.connections do
         local conn_obj = conn.new(self.name, i)
         table.insert(self.conns, conn_obj)

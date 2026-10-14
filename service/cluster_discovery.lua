@@ -40,7 +40,16 @@ local g_heartbeat_timer
 local g_map_service = {} -- service -> { map_node = { [node] = node_revision } }
 local g_map_node = {} -- node -> { address, node_revision }
 local g_etcd_node_revision
-local g_node_name = config.get("cluster_node_name")
+-- cluster_node_name 由 skyext 的 skynet.init 回调注入，服务 chunk 加载期读到的是 nil，
+-- 会让注册进 etcd 的 key 变成 "node:nil"，所以惰性读取并缓存
+local g_node_name
+local function node_name()
+    if not g_node_name then
+        g_node_name = assert(config.get("cluster_node_name"), "cluster_node_name is not configured")
+    end
+    return g_node_name
+end
+
 local g_cluster_listened
 
 local function etcd_grant()
@@ -73,11 +82,11 @@ local function etcd_keepalive()
 end
 
 local function make_node_key()
-    return sformat("%s%s", NODE_PREFIX, g_node_name)
+    return sformat("%s%s", NODE_PREFIX, node_name())
 end
 
 local function etcd_make_service_key(service)
-    return sformat("%s%s/%s", SERVICE_PREFIX, service, g_node_name)
+    return sformat("%s%s/%s", SERVICE_PREFIX, service, node_name())
 end
 
 local function get_self_node_info()
@@ -276,7 +285,7 @@ end
 
 local function init_node_revision()
     local node_info = get_self_node_info()
-    log.info("initializing node revision", "node", g_node_name, "address", node_info.address)
+    log.info("initializing node revision", "node", node_name(), "address", node_info.address)
     local new_node_revision
     if g_local_node_revision then
         new_node_revision = etcd_update_node(node_info, g_local_node_revision)
@@ -288,9 +297,9 @@ local function init_node_revision()
     if new_node_revision then
         g_service_local_synced = {}
         g_local_node_revision = new_node_revision
-        log.info("node revision initialized", "node", g_node_name, "node_revision", new_node_revision)
+        log.info("node revision initialized", "node", node_name(), "node_revision", new_node_revision)
     else
-        log.error("failed to initialize node revision", "node", g_node_name, "address", node_info.address)
+        log.error("failed to initialize node revision", "node", node_name(), "address", node_info.address)
     end
 end
 

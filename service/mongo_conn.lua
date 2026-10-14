@@ -7,7 +7,6 @@ local log = require "skyext.log"
 local g_name, g_index = ...
 g_index = tonumber(g_index)
 local g_db
-local mongo_config = config.get_table("mongo_config")
 local service_name = string.format("mongo_conn:%s:%d", g_name, g_index)
 
 -- log 配置使用 traceback 避免出错打印upvale。
@@ -20,7 +19,10 @@ log.config({
 local CMD = {}
 
 local function init_db(dbname)
-    local db_config = mongo_config[dbname]
+    -- 配置由 skyext 的 skynet.init 回调注入，必须在启动回调里读，
+    -- 加载期读到的永远是 nil
+    local mongo_config = config.get_table("mongo_config")
+    local db_config = mongo_config and mongo_config[dbname]
     assert(db_config, "Database not configured: " .. dbname)
     local dbs = mongo.client(db_config.cfg)
     g_db = dbs[dbname]
@@ -78,13 +80,10 @@ function CMD.create_index(coll, keys, options)
 end
 
 function CMD.find_one(coll, doc, projection)
-    log.debug("find_one", "coll", coll, "doc", doc, "projection", projection)
     local col_obj = g_db[coll]
     local ret = col_obj:findOne(doc, projection)
-    for k, v in pairs(ret or {}) do
-        log.debug("find_one", "k", k, "v", v, "typev", type(v))
-    end
-    log.debug("find_one", "ret", ret)
+    -- 逐字段打印会把整份存档（含玩家数据）刷进日志，这里只留一条概要
+    log.debug("find_one", "coll", coll, "doc", doc, "projection", projection, "found", ret ~= nil)
     return ret
 end
 

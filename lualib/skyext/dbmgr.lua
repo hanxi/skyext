@@ -3,7 +3,8 @@ local config = require "skyext.config"
 local log = require "skyext.log"
 local mongo_conn = require "skyext.mongo_conn"
 local orm = require "orm"
-local schema = require "game.orm.schema"
+local SCHEMA_PATH = "game.orm.schema"
+local schema = require(SCHEMA_PATH)
 local timer = require "skyext.timer"
 local queue = require "skynet.queue"
 
@@ -16,11 +17,26 @@ local g_default_projection = { _id = false, _fence = false }
 -- 认领 fence 时需要读回 _fence 判断归属，之后再从文档里剔除（schema 中没有这个字段）。
 local g_claim_projection = { _id = false }
 local FENCE_CLAIM_ATTEMPTS = 3
-local mongo_config = config.get_table("mongo_config")
-local db_save_interval = config.get_number("db_save_interval") or 3 * 60
+-- 配置有可能在模块加载之后才注入（dbmgr 会被很早 require 到），
+-- 在加载期读取会把 nil / 空表永久缓存下来，因此改成惰性读取 + 缓存
+local g_mongo_config
+local function mongo_config()
+    if not g_mongo_config then
+        g_mongo_config = assert(config.get_table("mongo_config"), "mongo_config is not configured")
+    end
+    return g_mongo_config
+end
+
+local g_db_save_interval
+local function db_save_interval()
+    if not g_db_save_interval then
+        g_db_save_interval = config.get_number("db_save_interval") or 3 * 60
+    end
+    return g_db_save_interval
+end
 
 local function check_collection(dbname, dbcoll)
-    local db_config = mongo_config[dbname]
+    local db_config = mongo_config()[dbname]
     if db_config == nil then
         error("database not configured" .. dbname)
     end
@@ -296,7 +312,7 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
 
         local schema_type = assert(schema[dbcoll], "missing schema for " .. dbcoll)
         local doc = schema_type.new(value)
-        local timer_obj = timer.repeat_random_delayed("dbmgr", db_save_interval, function()
+        local timer_obj = timer.repeat_random_delayed("dbmgr", db_save_interval(), function()
             local ok = M.save(dbname, dbcoll, key, unique_id)
             if not ok then
                 log.error("timer save failed", "dbname", dbname, "dbcoll", dbcoll, "unique_id", unique_id)
@@ -363,7 +379,23 @@ local GM_CMD = {}
 GM_CMD.reload_orm_schema = {
     desc = "重载 orm schema",
     handler = function()
-        local new_schema = require "game.orm.schema"
+        -- require 有缓存，必须先清掉才能拿到热更后的新代码
+        package.loaded[SCHEMA_PATH] = nil
+        local ok, new_schema = pcall(require, SCHEMA_PATH)
+        -- 不论成败都要把原来那张表放回去：整个进程只能有一份 schema 表，
+        -- 否则 orm doc 的类型判定会分裂成两套
+        package.loaded[SCHEMA_PATH] = schema
+        if not ok then
+            log.error("reload schema failed", "err", new_schema)
+            return false, new_schema
+        end
+        if new_schema == schema then
+            -- loader 返回的还是同一张表（package.preload 之类），
+            -- 拿它 reload 等于把 schema 清空，必须拒绝
+            local err = "new schema is the same table, reload skipped"
+            log.error("reload schema failed", "err", err)
+            return false, err
+        end
         orm.reload_schema(schema, new_schema)
         log.info("reload schema success", "schema", tostring(schema), "new_schema", tostring(new_schema))
         return true

@@ -6,9 +6,9 @@ local log = require "skyext.log"
 
 local CMD = {}
 
-local mongo_config = config.get_table("mongo_config")
-
 function CMD.create_indexes()
+    -- 配置由 skyext 的 skynet.init 回调注入，加载期读到的永远是 nil
+    local mongo_config = assert(config.get_table("mongo_config"), "mongo_config is not configured")
     local all_ok = true
     for dbname, db_config in pairs(mongo_config) do
         local dbs = mongo.client(db_config.cfg)

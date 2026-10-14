@@ -683,3 +683,142 @@ t.describe("entitymgr load failure recovery", function()
         t.expect(h.timers["entity_unload_retry:7"]).to.be_nil()
     end)
 end)
+
+t.describe("entitymgr partial initialization", function()
+    -- 构造一个可跟踪的数据模块：记录 on_load 是否跑完、on_unload 跑了几次
+    local function track(calls, name, behavior)
+        behavior = behavior or {}
+        return {
+            new = function(entity, data)
+                return {
+                    entity = entity,
+                    data = data,
+                    on_load = function(self)
+                        local rec = calls[name] or {}
+                        calls[name] = rec
+                        if behavior.fail_load then
+                            error(behavior.fail_load)
+                        end
+                        rec.loaded = true
+                        t.expect(self.entity).to.equal(entity)
+                    end,
+                    on_unload = function()
+                        local rec = calls[name] or {}
+                        calls[name] = rec
+                        rec.unloads = (rec.unloads or 0) + 1
+                        if behavior.fail_unload and rec.unloads == 1 then
+                            error(behavior.fail_unload)
+                        end
+                    end,
+                }
+            end,
+        }
+    end
+
+    t.it("unloads every module that finished loading when the handler init fails", function()
+        local calls = {}
+        local handler_unloads = 0
+        local h = harness({
+            modules = {
+                bag = track(calls, "bag"),
+                mail = track(calls, "mail"),
+            },
+        })
+        h.handler.on_load = function()
+            error("init refused")
+        end
+        h.handler.on_unload = function()
+            handler_unloads = handler_unloads + 1
+        end
+
+        local ok, err = h.mgr:ensure_loaded(7)
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.match("init refused")
+        -- 两个模块的 on_load 都跑完了，on_unload 就必须都跑到，
+        -- 否则模块在 on_load 里申请的定时器/注册项会随实体一起泄漏
+        t.expect(calls.bag.loaded).to.equal(true)
+        t.expect(calls.mail.loaded).to.equal(true)
+        t.expect(calls.bag.unloads).to.equal(1)
+        t.expect(calls.mail.unloads).to.equal(1)
+        -- handler.on_load 没跑完，对应的 handler.on_unload 不能跑
+        t.expect(handler_unloads).to.equal(0)
+        t.expect(h.mgr.entities[7]).to.be_nil()
+        t.expect(index_of(h.events, "persist")).to.be_lt(index_of(h.events, "unlock"))
+    end)
+
+    t.it("never unloads a module whose on_load did not complete", function()
+        local calls = {}
+        local h = harness({
+            modules = {
+                bag = track(calls, "bag"),
+                mail = track(calls, "mail", { fail_load = "mail init refused" }),
+            },
+        })
+
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(false)
+        -- 加载失败的模块没有建立任何状态，不能被 on_unload 拆一遍
+        t.expect(calls.mail.loaded).to.be_nil()
+        t.expect(calls.mail.unloads).to.be_nil()
+        -- pairs 顺序不确定：mail 先失败时 bag 的 on_load 根本不会跑（calls.bag 为 nil），
+        -- bag 先跑完时它的 on_unload 要补上一次。两种顺序下都不允许出现
+        -- "没 load 过却被 unload" 的模块，所以这里断言的是这个不变量本身。
+        for _, rec in pairs(calls) do
+            if rec.unloads then
+                t.expect(rec.loaded).to.equal(true)
+            end
+        end
+        t.expect(h.mgr.entities[7]).to.be_nil()
+    end)
+
+    t.it("keeps skipping the handler hook while retrying a failed module unload", function()
+        local calls = {}
+        local handler_unloads = 0
+        local h = harness({
+            modules = {
+                bag = track(calls, "bag", { fail_unload = "unload refused" }),
+            },
+        })
+        h.handler.on_load = function()
+            error("init refused")
+        end
+        h.handler.on_unload = function()
+            handler_unloads = handler_unloads + 1
+        end
+
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(false)
+        t.expect(calls.bag.unloads).to.equal(1)
+        local entity = h.mgr.entities[7]
+        t.expect(entity).to.be_type("table")
+        -- 初始化失败的标记要跨重试保留，否则重试时会把 handler.on_unload 补跑一遍
+        t.expect(entity.init_failed).to.equal(true)
+        t.expect(index_of(h.events, "unlock")).to.be_nil()
+
+        local retry = h.timers["entity_unload_retry:7"]
+        t.expect(retry).to.be_type("table")
+        retry.fire()
+        t.expect(calls.bag.unloads).to.equal(2)
+        t.expect(handler_unloads).to.equal(0)
+        t.expect(h.mgr.entities[7]).to.be_nil()
+        t.expect(index_of(h.events, "persist")).to.be_lt(index_of(h.events, "unlock"))
+    end)
+
+    t.it("still runs every module hook on a normal unload after a successful init", function()
+        local calls = {}
+        local handler_unloads = 0
+        local h = harness({
+            modules = {
+                bag = track(calls, "bag"),
+                mail = track(calls, "mail"),
+            },
+        })
+        h.handler.on_unload = function()
+            handler_unloads = handler_unloads + 1
+        end
+
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(true)
+        t.expect(h.mgr:unload(7)).to.equal(true)
+        t.expect(calls.bag.unloads).to.equal(1)
+        t.expect(calls.mail.unloads).to.equal(1)
+        t.expect(handler_unloads).to.equal(1)
+    end)
+end)

@@ -2,6 +2,7 @@ local time = require "skyext.time"
 local util_table = require "skyext.util.table"
 local bucket = require "skyext.log.bucket"
 local log_level = require "skyext.log.log_level"
+local redact = require "skyext.log.redact"
 local traceback_c = require "traceback.c"
 
 local type = type
@@ -70,7 +71,8 @@ logger.__index = logger
 
 function logger:_serialize(level, s)
     if type(s) == "table" and (self.log_table or level < INFO) then
-        return util_table.tostring(s)
+        -- 表里的凭据字段（token/secret/password 等）在序列化阶段就打码
+        return util_table.tostring(s, redact)
     end
     return s
 end
@@ -80,6 +82,12 @@ function logger:_pack_events(level, ...)
     local n = select("#", ...)
     assert(n % 2 == 0, "log args not even, must be key-value pairs")
     local values = { ... }
+    -- 键名命中凭据词时，值不进日志（在序列化之前替换掉，顺带省下展开大对象的开销）
+    for i = 1, n, 2 do
+        if redact.is_sensitive(values[i]) then
+            values[i + 1] = redact.mask(values[i + 1])
+        end
+    end
     for i = 1, n do
         values[i] = tostring(self:_serialize(level, values[i]))
     end
@@ -156,7 +164,8 @@ function logger:error(...)
     if not self:is_enabled(ERROR) then
         return
     end
-    local tcb = self.traceback(nil, 2)
+    -- traceback 会把每帧的 arg/upvalue 连值一起打出来，其中可能有凭据
+    local tcb = redact.filter_traceback(self.traceback(nil, 2))
     return self:_log(ERROR, ext_stack_depth, "traceback", tcb, ...)
 end
 
@@ -164,7 +173,7 @@ local function log_traceback(self, log_lv, stack_depth, err_type, err_msg)
     if not self:is_enabled(log_lv) then
         return
     end
-    local tcb = self.traceback(nil, stack_depth + 1)
+    local tcb = redact.filter_traceback(self.traceback(nil, stack_depth + 1))
     return self:_log(log_lv, stack_depth, "stack traceback", "err_type", err_type, "err_msg", err_msg, "traceback", tcb)
 end
 
@@ -264,7 +273,9 @@ function M.new()
     -- 单 vm 内 SERVICE_ARGS 作为全局变量读取。
     obj.name = SERVICE_ARGS or "skyext"
 
-    obj.level = log_level.DEBUG
+    -- 默认 INFO：DEBUG 会把每次数据库读写、每条协议消息都刷进日志，
+    -- 误用默认值就是磁盘和性能事故。需要调试时显式配置 log_level。
+    obj.level = log_level.INFO
     obj.log_src = true
 
     -- 回溯栈的深度

@@ -10,10 +10,31 @@ local sproto_api = require "skyext.sproto_api"
 
 local M = {}
 
-local login_jwt_secret = config.get("login_jwt_secret")
-local proto_checksum_enable = config.get_boolean("proto_checksum_enable")
-local server2game = config.get_table("server2game")
-local g_self_node = config.get("cluster_node_name")
+-- 配置是在 skyext 的 skynet.init 回调里注入的，本文件被服务 chunk 在加载期 require 到，
+-- 顶层读取只会拿到 nil 并把它永久缓存下来，因此统一改成惰性读取
+local g_server2game
+local function server2game()
+    if not g_server2game then
+        g_server2game = assert(config.get_table("server2game"), "server2game is not configured")
+    end
+    return g_server2game
+end
+
+local g_self_node
+local function self_node()
+    if not g_self_node then
+        g_self_node = assert(config.get("cluster_node_name"), "cluster_node_name is not configured")
+    end
+    return g_self_node
+end
+
+local g_proto_checksum_enable
+local function proto_checksum_enable()
+    if g_proto_checksum_enable == nil then
+        g_proto_checksum_enable = config.get_boolean("proto_checksum_enable") or false
+    end
+    return g_proto_checksum_enable
+end
 
 function M:report_remote_addr(fd, client_obj)
     log.info("report_remote_addr", "fd", fd, "remote_addr", self.remote_addr, "local_addr", self.local_addr)
@@ -34,7 +55,7 @@ end
 
 local function load_bind_role(fd, rid)
     local target_node = entity_types.calc_node("role", rid)
-    if target_node ~= g_self_node then
+    if target_node ~= self_node() then
         return {
             code = errcode.NOT_THIS_NODE,
             rolenode = target_node,
@@ -59,16 +80,26 @@ local function load_bind_role(fd, rid)
 end
 
 function M:login(fd, client_obj)
+    local login_jwt_secret, secret_err = jwt.login_secret()
+    if not login_jwt_secret then
+        -- 密钥不可用（没配 / 还是示例里的公开默认值）时不能放行任何登录
+        log.error("login rejected, login_jwt_secret is unusable", "reason", secret_err)
+        return {
+            code = errcode.TOKEN_ERROR,
+        }
+    end
+
     local data, err = jwt.verify(self.token, login_jwt_secret)
     if not data then
-        log.warn("jwt failed", "err", err, "token", self.token)
+        -- token 是登录凭据，不能进日志
+        log.warn("jwt failed", "err", err)
         return {
             code = errcode.TOKEN_ERROR,
         }
     end
 
     local account = data.account
-    if proto_checksum_enable then
+    if proto_checksum_enable() then
         local proto_checksum = sproto_api.get_sproto_info().checksum
         if self.proto_checksum ~= proto_checksum then
             log.warn(
@@ -96,7 +127,7 @@ function M:login(fd, client_obj)
     end
 
     local server = self.server
-    if not server2game[server] then
+    if not server2game()[server] then
         return {
             code = errcode.SERVER_NOT_EXIST,
         }

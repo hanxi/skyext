@@ -255,7 +255,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=st
 - HTTP Header: `Authorization: Bearer <token>`
 - 请求参数（query 或 body）: `token=<token>`
 
-Token 在 `example/etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置。**未配置 token 或仍为占位符 `CHANGE_ME_TO_RANDOM_TOKEN` 时，`/gm/execute` 接口一律拒绝。**
+Token 在 `example/etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置，由 `skyext.secret` 校验强度。**未配置、仍为占位符（如 `CHANGE_ME_TO_RANDOM_TOKEN`）、或少于 16 字符时，`/gm/execute` 接口一律拒绝**，并在启动日志里打一条 `gm_auth_token is unusable` 的 ERROR。`allow_insecure_secret` 只放宽登录密钥，对 GM 鉴权无效。用 `openssl rand -hex 32` 生成一个即可。
 
 `/gm/list` 同样需要鉴权。
 

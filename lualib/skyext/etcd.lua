@@ -4,6 +4,7 @@ local httpc = require "http.httpc"
 local skynet = require "skynet"
 local time = require "skyext.time"
 local log = require "skyext.log"
+local redact = require "skyext.log.redact"
 
 local setmetatable = setmetatable
 local random = math.random
@@ -115,18 +116,28 @@ local function _request_uri(self, host, method, uri, opts)
         return nil, err
     end
 
-    log.debug("request_uri begin", "uri", uri, "host", host, "headers", ret.headers, "body", ret.body)
+    -- 认证接口（ignore_auth）的请求体是 etcd 用户名密码，响应体就是 jwt token 本身。
+    -- 两者都是整段 JSON 字符串，凭据在字符串内部，按 key 脱敏救不了，只能整体打码。
+    local log_req_body = ret.body
+    if opts.ignore_auth then
+        log_req_body = redact.mask(ret.body)
+    end
+    log.debug("request_uri begin", "uri", uri, "host", host, "headers", ret.headers, "body", log_req_body)
     local recvheader = {}
     -- TODO: httpc.request 中的 internal.request 需要支持超时
     local status, body = httpc.request(method, host, ret.uri, recvheader, ret.headers, ret.body)
-    log.debug("request_uri end", "uri", uri, "status", status, "body", body, "host", host)
+    local log_res_body = body
+    if opts.ignore_auth then
+        log_res_body = redact.mask(body)
+    end
+    log.debug("request_uri end", "uri", uri, "status", status, "body", log_res_body, "host", host)
     if status >= 500 then
-        log.warn("request_uri failed", "uri", uri, "status", status, "body", body, "host", host)
+        log.warn("request_uri failed", "uri", uri, "status", status, "body", log_res_body, "host", host)
         return nil, "invalid response code: " .. status
     end
 
     if status == 401 then
-        log.warn("request_uri failed", "uri", uri, "status", status, "body", body, "host", host)
+        log.warn("request_uri failed", "uri", uri, "status", status, "body", log_res_body, "host", host)
         return nil, "insufficient credentials code: " .. status
     end
 
@@ -348,7 +359,8 @@ function refresh_jwt_token(self, timeout)
     self.jwt_token = res.body.token
     self.last_auth_time = now()
 
-    log.info("refresh_jwt_token succ", "token", self.jwt_token)
+    -- token 是访问凭据，不能进日志
+    log.info("refresh_jwt_token succ", "user", self.user)
     return true, nil
 end
 

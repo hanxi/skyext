@@ -183,8 +183,28 @@ local function harness(handle, stored, defer)
         return true, nil, { n = 1, nModified = 1 }
     end
 
+    -- dbmgr 加载时 require 到的那张 schema 表；reload_orm_schema 的用例会把
+    -- imports["game.orm.schema"] 换成新版本，模拟热更后重新 require 的结果
+    local schema_mock = {
+        role = {
+            new = function(data)
+                return orm.new(schema, data)
+            end,
+        },
+    }
+    h.schema = schema_mock
+
     local imports = {
-        skynet = { init = function() end },
+        skynet = {
+            init = function(f)
+                f()
+            end,
+        },
+        ["skyext.gm_api"] = {
+            register = function(cmds)
+                h.gm = cmds
+            end,
+        },
         ["skyext.config"] = {
             get_table = function()
                 return { demo = { collections = { role = {} } } }
@@ -204,13 +224,7 @@ local function harness(handle, stored, defer)
                 return lease.valid
             end,
         },
-        ["game.orm.schema"] = {
-            role = {
-                new = function(data)
-                    return orm.new(schema, data)
-                end,
-            },
-        },
+        ["game.orm.schema"] = schema_mock,
         ["skyext.timer"] = {
             repeat_random_delayed = function(_, _, fn)
                 h.timer = fn
@@ -222,8 +236,12 @@ local function harness(handle, stored, defer)
             end,
         },
     }
+    h.imports = imports
     local env = setmetatable({
         require = function(name)
+            if h.require_error and h.require_error[name] then
+                error(h.require_error[name])
+            end
             return imports[name] or require(name)
         end,
     }, { __index = _G })
@@ -542,5 +560,95 @@ t.describe("dbmgr persistence", function()
         t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
         t.expect(h.updates[2].query._version).to.equal(1)
         t.expect(h.updates[2].update["$set"].name).to.equal("later")
+    end)
+end)
+
+t.describe("dbmgr reload_orm_schema", function()
+    local SCHEMA_PATH = "game.orm.schema"
+
+    local function role_type(extra)
+        local obj = {
+            new = function(data)
+                return orm.new(schema, data)
+            end,
+        }
+        for k, v in pairs(extra or {}) do
+            obj[k] = v
+        end
+        return obj
+    end
+
+    t.it("reloads definitions in place and keeps one canonical schema table", function()
+        local h = harness(nil, nil, true)
+        local v1_role = h.schema.role
+        local v2_role = role_type({ mail = true })
+        local v2_bag = role_type()
+        h.imports[SCHEMA_PATH] = { role = v2_role, bag = v2_bag }
+
+        local ok, err = h.gm.reload_orm_schema.handler()
+        t.expect(err).to.be_nil()
+        t.expect(ok).to.equal(true)
+
+        -- 原地替换：外面持有的 role 引用不变，内容换成新版本
+        t.expect(h.schema.role).to.equal(v1_role)
+        t.expect(v1_role.mail).to.equal(true)
+        t.expect(v1_role.new).to.equal(v2_role.new)
+        -- 新版本里新增的类型不能丢
+        t.expect(h.schema.bag).to.equal(v2_bag)
+        -- 整个进程只能有一份 schema 表，require 回来还是它
+        t.expect(package.loaded[SCHEMA_PATH]).to.equal(h.schema)
+    end)
+
+    t.it("refuses to reload when require hands back the very same table", function()
+        local h = harness(nil, nil, true)
+        local v1_role = h.schema.role
+        v1_role.rid = true
+
+        -- 没有替换 imports，热更后 require 拿回来的仍是同一张表。
+        -- 这种时候继续 reload 等于把每个 schema 对象清空再自我赋值，
+        -- 一次调用就能毁掉整个进程的存档能力，必须拒绝。
+        local ok, err = h.gm.reload_orm_schema.handler()
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.be_type("string")
+
+        t.expect(h.schema.role).to.equal(v1_role)
+        t.expect(v1_role.rid).to.equal(true)
+        t.expect(package.loaded[SCHEMA_PATH]).to.equal(h.schema)
+    end)
+
+    t.it("restores the canonical table when the new schema fails to load", function()
+        local h = harness(nil, nil, true)
+        local v1_role = h.schema.role
+        v1_role.rid = true
+        h.require_error = { [SCHEMA_PATH] = "syntax error in schema" }
+
+        local ok, err = h.gm.reload_orm_schema.handler()
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.be_type("string")
+
+        -- 旧 schema 原样保留，package.loaded 也不能停在 nil 上
+        t.expect(h.schema.role).to.equal(v1_role)
+        t.expect(v1_role.rid).to.equal(true)
+        t.expect(package.loaded[SCHEMA_PATH]).to.equal(h.schema)
+
+        h.require_error = nil
+        h.imports[SCHEMA_PATH] = { role = role_type({ mail = true }) }
+        t.expect(h.gm.reload_orm_schema.handler()).to.equal(true)
+        t.expect(v1_role.mail).to.equal(true)
+    end)
+
+    t.it("reloads a schema that dbmgr is already caching documents for", function()
+        local h = harness(nil, nil, false)
+        local doc = h.doc
+        t.expect(doc).to.be_type("table")
+
+        h.imports[SCHEMA_PATH] = { role = role_type({ mail = true }) }
+        t.expect(h.gm.reload_orm_schema.handler()).to.equal(true)
+
+        -- 已加载的 doc 仍然可写、可落库
+        doc.name = "reloaded"
+        t.expect(orm.is_dirty(doc)).to.equal(true)
+        t.expect(h.db.save("demo", "role", "rid", 7)).to.equal(true)
+        t.expect(h.store.name).to.equal("reloaded")
     end)
 end)

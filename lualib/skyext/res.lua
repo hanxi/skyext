@@ -53,7 +53,8 @@ local function res_service()
         local content = util_io.readfile(filepath)
         assert(content, "invalid filepath")
         assert(hash_map[name] == nil, "res file already loaded")
-        log.debug("load res file", "file", filepath, "content", content)
+        -- content 是整个资源文件源码，只记录大小
+        log.debug("load res file", "file", filepath, "size", #content)
         local hash = md5.sumhexa(content)
         hash_map[name] = hash
         sharetable.loadstring(name, content)
@@ -181,7 +182,8 @@ skynet.init(function()
     preload_loaded, lazy_loaded = skynet.call(g_service_addr, "lua", "open", skynet.self())
     for name, _ in pairs(preload_loaded) do
         res_table[name] = sharetable.query(name)
-        log.debug("load init", "name", name, "content", res_table[name])
+        -- res_table[name] 是整张资源表，展开一次就是几 MB 日志
+        log.debug("load init", "name", name)
     end
     event_channel_api.subscribe(g_service_addr, "res_reload", on_res_reload)
 end)

@@ -8,9 +8,34 @@ local errcode = require "errcode"
 local time = require "skyext.time"
 local rolenode_api = require "rolenode_api"
 
-local login_jwt_secret = config.get("login_jwt_secret")
-local server2game = config.get_table("server2game")
-local max_role_count = config.get_number("max_role_count") or 5
+-- 配置是在 skyext 的 skynet.init 回调里注入的，本文件可能被服务 chunk 在加载期 require 到，
+-- 顶层读取只会拿到 nil 并永久缓存，因此统一改成惰性读取
+local g_server2game
+local function server2game()
+    if not g_server2game then
+        g_server2game = assert(config.get_table("server2game"), "server2game is not configured")
+    end
+    return g_server2game
+end
+
+local g_max_role_count
+local function max_role_count()
+    if not g_max_role_count then
+        g_max_role_count = config.get_number("max_role_count") or 5
+    end
+    return g_max_role_count
+end
+
+-- 登录密钥不可用（没配 / 还是示例里的公开默认值）时不能放行任何请求
+local function login_secret(res)
+    local secret, reason = jwt.login_secret()
+    if not secret then
+        log.error("request rejected, login_jwt_secret is unusable", "reason", reason)
+        res.write_json({ code = errcode.TOKEN_ERROR })
+        return nil
+    end
+    return secret
+end
 
 local M = {
     GET = {},
@@ -22,12 +47,21 @@ local function get_roles(account, query)
 end
 
 M.GET["/roles"] = function(req, res)
-    log.debug("begin get roles", req, res)
     local q = req.parse_query()
+    local secret = login_secret(res)
+    if not secret then
+        return
+    end
     local token = q.token
-    local data, err = jwt.verify(token, login_jwt_secret)
+    if not token or token == "" then
+        return res.write_json({
+            code = errcode.TOKEN_ERROR,
+        })
+    end
+    local data, err = jwt.verify(token, secret)
     if not data then
-        log.warn("jwt failed", "err", err, "token", token)
+        -- token 是登录凭据，不能进日志
+        log.warn("jwt failed", "err", err)
         return res.write_json({
             code = errcode.TOKEN_ERROR,
         })
@@ -38,7 +72,7 @@ M.GET["/roles"] = function(req, res)
     local server = q.server
     if server and server ~= "" then
         -- 检查服务器是否存在
-        if not server2game[server] then
+        if not server2game()[server] then
             return res.write_json({
                 code = errcode.SERVER_NOT_EXIST,
             })
@@ -46,7 +80,7 @@ M.GET["/roles"] = function(req, res)
         query.server = server
     end
     local roles = get_roles(account, query)
-    log.debug("get_roles", "token", token, "account", account, "roles", roles)
+    log.debug("get_roles", "account", account, "roles", roles)
     for _, role in pairs(roles) do
         local rolenode = rolenode_api.calc_rolenode(role.rid)
         role.rolenode = rolenode
@@ -59,12 +93,21 @@ M.GET["/roles"] = function(req, res)
 end
 
 M.POST["/create_role"] = function(req, res)
-    log.debug("begin get roles", req, res)
     local b = req.read_json()
+    local secret = login_secret(res)
+    if not secret then
+        return
+    end
     local token = b.token
-    local data, err = jwt.verify(token, login_jwt_secret)
+    if not token or token == "" then
+        return res.write_json({
+            code = errcode.TOKEN_ERROR,
+        })
+    end
+    local data, err = jwt.verify(token, secret)
     if not data then
-        log.warn("jwt failed", "err", err, "token", token)
+        -- token 是登录凭据，不能进日志
+        log.warn("jwt failed", "err", err)
         return res.write_json({
             code = errcode.TOKEN_ERROR,
         })
@@ -86,13 +129,13 @@ M.POST["/create_role"] = function(req, res)
         server = server,
     }
     local rids = role_db_api.get_roles(account, query)
-    if #rids > max_role_count then
-        log.warn("create_role too many roles for account", "account", account, "max", max_role_count)
+    if #rids > max_role_count() then
+        log.warn("create_role too many roles for account", "account", account, "max", max_role_count())
         return res.write_json({
             code = errcode.ROLE_TOO_MANY,
         })
     end
-    local game = server2game[server]
+    local game = server2game()[server]
     if not game then
         return res.write_json({
             code = errcode.SERVER_NOT_EXIST,
@@ -122,9 +165,9 @@ M.POST["/create_role"] = function(req, res)
 
     query.rid = rid
     local roles = get_roles(account, query)
-    log.debug("create_role get_roles", "token", token, "account", account, "roles", roles)
+    log.debug("create_role get_roles", "account", account, "roles", roles)
     if #roles ~= 1 then
-        log.error("create_role get_roles failed", "token", token, "account", account, "roles", roles)
+        log.error("create_role get_roles failed", "account", account, "roles", roles)
         return res.write_json({
             code = errcode.DB_ERROR,
         })

@@ -14,9 +14,6 @@ local g_fd = nil
 
 local g_session = 0
 
-local login_jwt_secret = config.get("login_jwt_secret")
-local gate_nodes = config.get_table("gate_nodes")
-
 local function new_session()
     g_session = g_session + 1
     return g_session
@@ -28,11 +25,21 @@ local function call(name, param)
 end
 
 function CMD.start(conf)
+    -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
+    -- 所以密钥和 gate_nodes 都要在这里读
+    local login_jwt_secret, secret_err = jwt.login_secret()
+    if not login_jwt_secret then
+        log.error("cannot sign login token, login_jwt_secret is unusable", "reason", secret_err)
+        return
+    end
+    local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
+
     local data = {
         account = "robot3",
     }
     local token = jwt.sign(data, login_jwt_secret, "HS512", 60)
-    log.info("generate token", "token", token)
+    -- token 是登录凭据，只能记录长度这类非敏感信息
+    log.info("generate token", "len", #token)
 
     local account_host = config.get("account_host")
     local status, body = httpc.get(account_host, "/roles?token=" .. token)

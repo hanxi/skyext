@@ -9,7 +9,13 @@ local function ensure_loaded()
     if g_types then
         return
     end
-    g_types = config.get_table("entity_types") or {}
+    -- 配置有可能还没注入（config.init 之前被 require 到），
+    -- 这时候不能把空表缓存下来，否则之后永远都是 unknown entity type
+    local types = config.get_table("entity_types")
+    if type(types) ~= "table" then
+        error("entity_types is not configured")
+    end
+    g_types = types
 end
 
 function M.get(type_name)
