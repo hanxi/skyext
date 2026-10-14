@@ -1,6 +1,7 @@
 - [首页](/)
 - [快速上手](getting-started.md)
 - [架构概览](overview.md)
+- [不做的事](non-goals.md)
 
 - **使用指南**
   - [登录流程](guide/login.md)

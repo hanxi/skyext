@@ -2,6 +2,8 @@
 
 本文面向修改 skyext 代码的 AI 助手；面向使用者的安装与运行说明见 [快速上手](docs/getting-started.md)，架构说明见 [架构概览](docs/overview.md)。以仓库中的实现、配置与测试为准，不要把 `docs/design/`、`docs/plan/` 中的提案当成已交付能力。
 
+**动手加"更安全""更严谨"的机制之前，先读[不做的事](docs/non-goals.md)。**那里记的是做过又删掉的设计（日志脱敏、ORM 版本化迁移、GM 权限分级、GM 独立审计文件）和删它们的理由，别再实现第二遍。核心三条：成本不要转嫁给写玩法的人；不要在现成设施旁边造一个更差的；信任边界内侧的那层防护拦不住任何人。
+
 ## 项目边界
 
 skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏服务器**引擎框架**；`example/` 是游戏层示例，游戏项目可以将引擎作为 submodule 使用。skynet 子模块当前构建的解释器是 **Lua 5.5**（可用 `./bin/lua -v` 核实）；另有引擎 C 模块、MongoDB 持久化、etcd 服务发现/分布式锁和 sproto 协议。
