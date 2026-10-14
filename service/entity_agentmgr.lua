@@ -151,6 +151,11 @@ function CMD.start(conf)
 
     g_agents = agents
     g_watchdog = watchdog
+    -- 死信队列的运维入口按节点单例，多个实体类型共用一个；起不来不该挡住实体服务
+    local dlq_ok, dlq_err = pcall(skynet.uniqueservice, "entity_dlq")
+    if not dlq_ok then
+        log.error("entity_dlq start failed", "type", type_name, "err", dlq_err)
+    end
     -- 全部 agent 创建、注册并 start 完成后，才向集群发布自己
     cluster_discovery.register({ "entity:" .. type_name })
     g_ready = true

@@ -140,6 +140,10 @@ local function new_coll(name)
                 for k, v in pairs(fields) do
                     target[k] = v
                 end
+            elseif op == "$unset" then
+                for k in pairs(fields) do
+                    target[k] = nil
+                end
             else
                 error("fake mongo: unsupported update operator " .. tostring(op))
             end
@@ -169,8 +173,17 @@ function fake_idgen.newid()
     return 1000000 - next_fake_id
 end
 
+-- 真实 config 读的是 skynet 环境变量，一个 key 只能 setenv 一次，
+-- 测不了"同一进程里换不同上限"，因此直接替掉
+local config_values = {}
+local fake_config = {}
+function fake_config.get_number(key)
+    return config_values[key]
+end
+
 package.loaded["skyext.mongo_conn"] = fake_mongo
 package.loaded["skyext.id_generator"] = fake_idgen
+package.loaded["skyext.config"] = fake_config
 
 local reliable_msg = require "skyext.entity.reliable_msg"
 
@@ -186,6 +199,7 @@ local function reset()
     env.insert_error = nil
     env.fam_error = nil
     env.yield_in_fam = nil
+    config_values = {}
     -- 预创建，保证 calls 记录从干净状态开始
     fake_mongo.get_collection("entity", "entity_msg")
     fake_mongo.get_collection("entity", "entity_msg_seq")
@@ -491,18 +505,268 @@ t.describe("reliable_msg", function()
     t.describe("ensure_indexes", function()
         t.before_each(reset)
 
-        t.it("建立 pending 排序索引与 msg_id 唯一索引", function()
+        t.it("建立 pending 排序索引、msg_id 唯一索引与死信列表索引", function()
             local created = {}
             local coll = msg_coll()
             function coll:create_index(keys, options)
                 created[#created + 1] = { keys = keys, options = options }
             end
             reliable_msg.ensure_indexes()
-            t.expect(#created).to.equal(2)
+            t.expect(#created).to.equal(3)
             t.expect(created[1].keys.name).to.equal("pending_seq")
             t.expect(created[1].keys[1]).to.equal({ target_type = 1 })
             t.expect(created[1].keys[4]).to.equal({ seq = 1 })
             t.expect(created[2].keys.unique).to.equal(true)
+            t.expect(created[3].keys.name).to.equal("dead_time")
+            t.expect(created[3].keys[1]).to.equal({ status = 1 })
+            t.expect(created[3].keys[2]).to.equal({ dead_time = 1 })
+        end)
+    end)
+
+    t.describe("投递次数上限", function()
+        t.before_each(reset)
+
+        t.it("没有配置时用内置默认值", function()
+            t.expect(reliable_msg.max_attempts()).to.equal(reliable_msg.DEFAULT_MAX_ATTEMPTS)
+            t.expect(reliable_msg.DEFAULT_MAX_ATTEMPTS).to.equal(5)
+        end)
+
+        t.it("节点配置可以覆盖默认值", function()
+            config_values.reliable_msg_max_attempts = 2
+            t.expect(reliable_msg.max_attempts()).to.equal(2)
+        end)
+
+        -- 配错一个数不该把投递整体打挂：那等于把笔误升级成消息积压
+        t.it("非法配置回落到默认值而不是报错", function()
+            for _, bad in ipairs({ 0, -1, 1.5 }) do
+                config_values.reliable_msg_max_attempts = bad
+                t.expect(reliable_msg.max_attempts()).to.equal(reliable_msg.DEFAULT_MAX_ATTEMPTS)
+            end
+        end)
+    end)
+
+    t.describe("投递失败计数", function()
+        t.before_each(reset)
+
+        t.it("首次失败记为 1 并保存错误与时间", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            t.expect(reliable_msg.record_failure(msg_id, "boom")).to.equal(1)
+            local doc = reliable_msg.get(msg_id)
+            t.expect(doc.attempts).to.equal(1)
+            t.expect(doc.last_error).to.equal("boom")
+            t.expect(doc.last_attempt_time).to.be_type("number")
+            t.expect(doc.status).to.equal(reliable_msg.STATUS_PENDING)
+        end)
+
+        t.it("连续失败逐次累加", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            t.expect(reliable_msg.record_failure(msg_id, "a")).to.equal(1)
+            t.expect(reliable_msg.record_failure(msg_id, "b")).to.equal(2)
+            t.expect(reliable_msg.get(msg_id).last_error).to.equal("b")
+        end)
+
+        -- 错误里是 traceback，不截断的话一条毒消息能把文档撑到 16MB 上限
+        t.it("超长错误被截断后才落库", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.record_failure(msg_id, string.rep("x", reliable_msg.MAX_ERROR_LENGTH + 100))
+            t.expect(#reliable_msg.get(msg_id).last_error).to.equal(reliable_msg.MAX_ERROR_LENGTH)
+        end)
+
+        t.it("已经 ack 的消息不再计数", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.mark_delivered(msg_id)
+            local attempts, reason = reliable_msg.record_failure(msg_id, "late")
+            t.expect(attempts).to.be_nil()
+            t.expect(reason).to.equal("not_matched")
+            t.expect(reliable_msg.get(msg_id).attempts).to.be_nil()
+        end)
+
+        t.it("写库失败时返回 nil，调用方不能据此判死", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            env.fam_error = { entity_msg = "mongo down" }
+            local attempts, reason = reliable_msg.record_failure(msg_id, "boom")
+            t.expect(attempts).to.be_nil()
+            t.expect(reason).to.equal("mongo down")
+        end)
+    end)
+
+    t.describe("死信隔离", function()
+        t.before_each(reset)
+
+        t.it("判死后消息不再出现在 pending 队列里", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            t.expect(reliable_msg.mark_dead(msg_id, "poison")).to.equal(true)
+            local doc = reliable_msg.get(msg_id)
+            t.expect(doc.status).to.equal(reliable_msg.STATUS_DEAD)
+            t.expect(doc.dead_reason).to.equal("poison")
+            t.expect(doc.dead_time).to.be_type("number")
+            t.expect(reliable_msg.load_pending("role", 1)).to.equal({})
+        end)
+
+        t.it("重复判死是幂等的", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.mark_dead(msg_id, "poison")
+            local ok, reason = reliable_msg.mark_dead(msg_id, "again")
+            t.expect(ok).to.equal(false)
+            t.expect(reason).to.equal("not_pending")
+            t.expect(reliable_msg.get(msg_id).dead_reason).to.equal("poison")
+        end)
+
+        -- 已经处理成功的消息被判死等于凭空多出一条"失败"记录
+        t.it("已经 ack 的消息不能被判死", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.mark_delivered(msg_id)
+            t.expect(reliable_msg.mark_dead(msg_id, "poison")).to.equal(false)
+            t.expect(reliable_msg.get(msg_id).status).to.equal(reliable_msg.STATUS_DELIVERED)
+        end)
+
+        t.it("判死后不能再 ack", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.mark_dead(msg_id, "poison")
+            local acked, reason = reliable_msg.mark_delivered(msg_id)
+            t.expect(acked).to.equal(false)
+            t.expect(reason).to.equal("already_delivered")
+            t.expect(reliable_msg.get(msg_id).status).to.equal(reliable_msg.STATUS_DEAD)
+        end)
+
+        t.it("超长 reason 同样被截断", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.mark_dead(msg_id, string.rep("y", reliable_msg.MAX_ERROR_LENGTH + 10))
+            t.expect(#reliable_msg.get(msg_id).dead_reason).to.equal(reliable_msg.MAX_ERROR_LENGTH)
+        end)
+    end)
+
+    t.describe("死信重放与丢弃", function()
+        t.before_each(reset)
+
+        local function dead_msg(target_id, cmd)
+            local msg_id = reliable_msg.save("role", target_id, cmd or "cmd", { 1, 2 })
+            reliable_msg.record_failure(msg_id, "boom")
+            reliable_msg.mark_dead(msg_id, "boom")
+            return msg_id
+        end
+
+        t.it("重放把消息放回 pending 并清零计数", function()
+            local msg_id = dead_msg(1)
+            local doc = reliable_msg.replay(msg_id)
+            t.expect(doc.target_type).to.equal("role")
+            t.expect(doc.target_id).to.equal(1)
+            t.expect(doc.cmd).to.equal("cmd")
+            t.expect(doc.status).to.equal(reliable_msg.STATUS_PENDING)
+            t.expect(doc.attempts).to.equal(0)
+            t.expect(doc.dead_time).to.be_nil()
+            t.expect(doc.dead_reason).to.be_nil()
+            t.expect(doc.replay_time).to.be_type("number")
+            local pending = reliable_msg.load_pending("role", 1)
+            t.expect(#pending).to.equal(1)
+            t.expect(pending[1].msg_id).to.equal(msg_id)
+        end)
+
+        t.it("重放后的消息仍然带着原来的 args", function()
+            local msg_id = dead_msg(1)
+            reliable_msg.replay(msg_id)
+            t.expect(reliable_msg.get(msg_id).args).to.equal({ 1, 2 })
+        end)
+
+        t.it("只有死信可以重放", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            local doc, reason = reliable_msg.replay(msg_id)
+            t.expect(doc).to.be_nil()
+            t.expect(reason).to.equal("not_dead")
+        end)
+
+        t.it("重复重放第二次返回 not_dead", function()
+            local msg_id = dead_msg(1)
+            t.expect(reliable_msg.replay(msg_id)).to.be_type("table")
+            local doc, reason = reliable_msg.replay(msg_id)
+            t.expect(doc).to.be_nil()
+            t.expect(reason).to.equal("not_dead")
+        end)
+
+        t.it("丢弃保留文档，只是不再出现在死信列表", function()
+            local msg_id = dead_msg(1)
+            t.expect(reliable_msg.discard(msg_id, "alice")).to.equal(true)
+            local doc = reliable_msg.get(msg_id)
+            t.expect(doc.status).to.equal(reliable_msg.STATUS_DISCARDED)
+            t.expect(doc.discard_operator).to.equal("alice")
+            t.expect(doc.discard_time).to.be_type("number")
+            t.expect(reliable_msg.list_dead()).to.equal({})
+            t.expect(reliable_msg.load_pending("role", 1)).to.equal({})
+        end)
+
+        -- 还在投递中的消息被误删会让生产者以为消息送达了
+        t.it("只有死信可以丢弃", function()
+            local msg_id = reliable_msg.save("role", 1, "cmd", {})
+            local ok, reason = reliable_msg.discard(msg_id)
+            t.expect(ok).to.equal(false)
+            t.expect(reason).to.equal("not_dead")
+            t.expect(reliable_msg.get(msg_id).status).to.equal(reliable_msg.STATUS_PENDING)
+        end)
+
+        t.it("丢弃后不能再重放", function()
+            local msg_id = dead_msg(1)
+            reliable_msg.discard(msg_id)
+            local doc, reason = reliable_msg.replay(msg_id)
+            t.expect(doc).to.be_nil()
+            t.expect(reason).to.equal("not_dead")
+        end)
+    end)
+
+    t.describe("死信列表", function()
+        t.before_each(reset)
+
+        local function dead_msg(target_type, target_id)
+            local msg_id = reliable_msg.save(target_type, target_id, "cmd", {})
+            reliable_msg.mark_dead(msg_id, "boom")
+            return msg_id
+        end
+
+        t.it("只返回死信，按入列时间排序", function()
+            local dead = dead_msg("role", 1)
+            reliable_msg.save("role", 1, "cmd", {})
+            local acked = reliable_msg.save("role", 1, "cmd", {})
+            reliable_msg.mark_delivered(acked)
+            local list = reliable_msg.list_dead()
+            t.expect(#list).to.equal(1)
+            t.expect(list[1].msg_id).to.equal(dead)
+            local calls = calls_of(msg_coll(), "find_many")
+            local last = calls[#calls]
+            t.expect(last.a.status).to.equal(reliable_msg.STATUS_DEAD)
+            t.expect(last.b.sort).to.equal({ dead_time = 1 })
+        end)
+
+        t.it("可以按实体类型和 ID 过滤", function()
+            dead_msg("role", 1)
+            local target = dead_msg("role", 2)
+            dead_msg("guild", 2)
+            local list = reliable_msg.list_dead({ target_type = "role", target_id = 2 })
+            t.expect(#list).to.equal(1)
+            t.expect(list[1].msg_id).to.equal(target)
+            t.expect(#reliable_msg.list_dead({ target_type = "role" })).to.equal(2)
+        end)
+
+        t.it("limit 生效且被上限夹住", function()
+            for i = 1, 3 do
+                dead_msg("role", i)
+            end
+            t.expect(#reliable_msg.list_dead({ limit = 2 })).to.equal(2)
+            reliable_msg.list_dead({ limit = reliable_msg.MAX_DEAD_PAGE_SIZE + 1000 })
+            local calls = calls_of(msg_coll(), "find_many")
+            t.expect(calls[#calls].b.limit).to.equal(reliable_msg.MAX_DEAD_PAGE_SIZE)
+        end)
+
+        t.it("不传 limit 时用默认条数", function()
+            dead_msg("role", 1)
+            reliable_msg.list_dead()
+            local calls = calls_of(msg_coll(), "find_many")
+            t.expect(calls[#calls].b.limit).to.equal(reliable_msg.DEFAULT_DEAD_PAGE_SIZE)
+        end)
+
+        t.it("非法 limit 直接报错而不是悄悄拉全表", function()
+            t.expect(function()
+                reliable_msg.list_dead({ limit = 0 })
+            end).to
+                .throw("limit must be positive")
         end)
     end)
 end)

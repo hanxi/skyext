@@ -90,11 +90,19 @@ mongo_config = {
                         partialFilterExpression = { status = 1 },
                         background = true,
                     },
+                    -- 死信队列按入列时间列出，status 放前缀上，不依赖 target 过滤
+                    { "status", "dead_time", background = true },
                 },
             },
         },
     },
 }
+
+-- 同一条可靠消息连续投递失败多少次后转入死信队列。
+-- 只有“错在消息本身”的失败才计数（没有对应 handler、handler 抛错）；
+-- 租约失效、落库失败这类环境问题不计，否则一次数据库抖动就会误伤正常消息。
+-- 死信用 GM 指令 dlq_list / dlq_replay / dlq_discard 处理。
+reliable_msg_max_attempts = 5
 
 -- Entity 系统配置
 entity_types = {

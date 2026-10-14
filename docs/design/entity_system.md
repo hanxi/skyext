@@ -176,8 +176,12 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 
 MongoDB `entity.entity_msg` 集合，文档结构：
 ```
-{ msg_id, seq, target_type, target_id, cmd, args, status(0/1), create_time, delivered_time }
+{ msg_id, seq, target_type, target_id, cmd, args, status, create_time, delivered_time,
+  attempts, last_error, last_attempt_time, dead_time, dead_reason,
+  replay_time, discard_time, discard_operator }
 ```
+
+`status`：`0` pending、`1` delivered、`2` dead（毒消息已隔离）、`3` discarded（死信被人工丢弃）。
 
 另有计数器集合 `entity.entity_msg_seq`：`{ _id = "<target_type>:<target_id>", seq }`。
 
@@ -192,6 +196,35 @@ MongoDB `entity.entity_msg` 集合，文档结构：
 - `mark_delivered(msg_id)` — `findAndModify({ query = { msg_id, status = 0 }, update = { $set = ... } })`
   将 status 置 1 并记录 `delivered_time`；幂等，首次 ack 返回 `true`，重复 ack 返回 `false`，
   写库失败返回 `false, err`（消息保持 pending，下次加载重投）。
+- `record_failure(msg_id, err)` — `$inc attempts` 并记录 `last_error`/`last_attempt_time`，
+  返回自增后的 `attempts`；查询限定 pending，写失败返回 `nil, err`。
+- `mark_dead(msg_id, reason)` / `replay(msg_id)` / `discard(msg_id, operator)` / `list_dead(opts)` —
+  死信队列的状态迁移与查询，均按 `{ msg_id, status = <期望状态> }` 条件更新，天然幂等。
+- `max_attempts()` — 投递次数上限，节点配置 `reliable_msg_max_attempts`，默认 5。
+
+**毒消息隔离与死信队列：** 一条 handler 必然抛错的消息会永远卡在队首，把同一实体后面
+所有消息一起拖住，并以重试间隔持续刷错误日志。因此 entitymgr 区分两类投递失败：
+
+| 失败类型 | 例子 | 处理 |
+| --- | --- | --- |
+| 消息级（`message_fault`） | 没有对应 handler、handler 抛错 | `record_failure` 计数，达到 `max_attempts()` 后 `mark_dead` 移入死信队列，队列继续往下走 |
+| 环境级 | 租约失效、实体落库失败、ack 写库失败 | 不计数，整批投递停下来等重试定时器 |
+
+把环境级失败计进去会让一次数据库抖动把正常消息误判成毒消息，所以这条边界是硬的。
+未达上限时毒消息仍然卡在队首（消息之间可能有先后依赖，不能为了让队列往前走就跳过一条
+还可能成功的消息）；隔离掉一条之后立刻 fork 一轮新的投递，让被它挡住的消息尽快跟上。
+
+死信通过 `service/entity_dlq.lua`（由 entity_agentmgr 用 `uniqueservice` 按节点拉起）
+暴露 GM 指令：
+
+| 指令 | 参数 | 说明 |
+| --- | --- | --- |
+| `dlq_list` | `target_type` / `target_id` / `limit`（均可选） | 按入列时间列出死信；不返回 `args`，那是业务负载 |
+| `dlq_replay` | `msg_id` | 状态回到 pending、`attempts` 清零，并唤醒目标实体 |
+| `dlq_discard` | `msg_id` / `operator`（可选） | 置为 discarded，文档保留便于事后追查 |
+
+死信队列是集群共享的一份 Mongo 数据，所以 `entity_dlq` 按节点单例而不是按实体类型注册：
+GM 指令会在所有注册该指令的服务上执行，每类型注册一次会把一次查询变成 N 次。
 
 **语义：** at-least-once。handler 执行成功之后才 ack；handler 抛错、节点宕机或 ack 写库失败时
 消息保持 pending；已加载实体定时重试，重新加载时也会重投，因此**业务 handler 必须幂等**，
@@ -233,7 +266,7 @@ MongoDB `entity.entity_msg` 集合，文档结构：
 **CMD 表：**
 - `CMD.entity_call(entity_id, cmd, ...)` — 在 `with_entity` 门内加载、检查租约并调用 handler
 - `CMD.entity_send(entity_id, cmd, ...)` — 同上但无返回值
-- `CMD.__deliver_reliable(entity_id, ...)` — 即时唤醒 pending 队列，从 Mongo 按 seq 拉取，持久化实体状态后再 ack
+- `CMD.__deliver_reliable(entity_id)` — 即时唤醒 pending 队列，从 Mongo 按 seq 拉取，持久化实体状态后再 ack
 - `CMD.unload_entity(entity_id)` — 强制卸载（供重连流程跨节点调用）
 - `CMD.bind_client(entity_id, fd)` — 客户端绑定（含重连逻辑，见上节）
 - `CMD.disconnect(fd)` — 客户端断开，触发 unbind + handler 回调

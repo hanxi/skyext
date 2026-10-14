@@ -95,6 +95,14 @@ local function new_harness(opts)
             end
             return true
         end,
+        uniqueservice = function(name)
+            record("uniqueservice", name)
+            if opts.uniqueservice_error then
+                error(opts.uniqueservice_error)
+            end
+            next_addr = next_addr + 1
+            return next_addr
+        end,
         wait = function(token)
             record("wait")
             coroutine.yield("wait", token)
@@ -187,8 +195,18 @@ t.describe("entity_agentmgr 两段式启动", function()
             "call:start",
             "newservice:entity_agent",
             "call:start",
+            "uniqueservice:entity_dlq",
             "cluster_register:entity:role",
         })
+        t.expect(h.CMD.is_ready()).to.equal(true)
+        t.expect(#h.registered).to.equal(1)
+    end)
+
+    -- 死信队列只是运维入口，起不来不该让整个实体类型对外不可用
+    t.it("entity_dlq 启动失败不影响 ready 与集群发布", function()
+        local h = new_harness({ uniqueservice_error = "no such service" })
+        h.CMD.start({ watchdog = 0x01000005 })
+
         t.expect(h.CMD.is_ready()).to.equal(true)
         t.expect(#h.registered).to.equal(1)
     end)

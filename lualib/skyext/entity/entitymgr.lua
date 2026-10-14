@@ -9,6 +9,16 @@ local queue = require "skynet.queue"
 local M = {}
 M.__index = M
 
+-- reliable_msg 会连上 mongo，加载期 require 会把尚未配置好的连接固化下来，
+-- 因此推迟到首次投递时再取
+local g_reliable_msg
+local function reliable_msg()
+    if not g_reliable_msg then
+        g_reliable_msg = require "skyext.entity.reliable_msg"
+    end
+    return g_reliable_msg
+end
+
 -- 卸载失败后的重试间隔（秒），可按实体类型用 unload_retry_delay 覆盖
 local UNLOAD_RETRY_DELAY = 5
 -- 退避上限，避免数据库/etcd 长时间故障时持续重试刷日志
@@ -110,55 +120,136 @@ function M:_call_modules_on_unload(entity, only_loaded)
     return true
 end
 
+-- 投递一条消息。返回 ok, reason, message_fault。
+-- message_fault 为 true 表示错在消息本身（没有对应 handler、handler 抛错），
+-- 重投多少次结果都一样，要计入毒消息次数；为 false 表示环境问题
+-- （租约失效、落库失败、ack 写库失败），换个时间重投就能成功，不计数。
+function M:_deliver_one(entity, msg)
+    local handler_func = self.handler.handlers and self.handler.handlers[msg.cmd]
+    if not handler_func then
+        return false, string.format("no handler for command %s", tostring(msg.cmd)), true
+    end
+    local args = table.pack(table.unpack(msg.args or {}))
+    args.n = args.n + 1
+    args[args.n] = msg.msg_id
+    local ok, err = xpcall(handler_func, debug.traceback, entity, table.unpack(args, 1, args.n))
+    if not ok then
+        return false, err, true
+    end
+    if entity.invalid or not distributed_lock.is_valid(entity.handle) then
+        return false, "lease expired during handler", false
+    end
+    local tc = self.type_config
+    if not dbmgr.save(tc.db_name, tc.db_coll, tc.id_field, entity.id) then
+        return false, "entity persistence failed", false
+    end
+    if entity.invalid or not distributed_lock.is_valid(entity.handle) then
+        return false, "lease expired during persistence", false
+    end
+    local acked, reason = reliable_msg().mark_delivered(msg.msg_id)
+    if not acked and reason ~= "already_delivered" then
+        return false, reason, false
+    end
+    return true
+end
+
+-- 累计一条消息的投递失败次数，到上限则移入死信队列。
+-- 返回 true 表示消息已被隔离，调用方可以跳过它继续处理后面的消息；
+-- 返回 false 表示它还留在队列头部，整批投递必须停下来重试。
+function M:_quarantine(entity, msg, reason)
+    local rmsg = reliable_msg()
+    local attempts, record_err = rmsg.record_failure(msg.msg_id, reason)
+    if not attempts then
+        -- 次数记不上就不能判死：宁可继续重投，也不能凭未知次数把消息误隔离
+        log.error(
+            "reliable message attempt count failed",
+            "type",
+            self.type_name,
+            "id",
+            entity.id,
+            "msg_id",
+            msg.msg_id,
+            "err",
+            record_err
+        )
+        return false
+    end
+    local max_attempts = rmsg.max_attempts()
+    if attempts < max_attempts then
+        log.error(
+            "reliable message delivery failed",
+            "type",
+            self.type_name,
+            "id",
+            entity.id,
+            "cmd",
+            msg.cmd,
+            "msg_id",
+            msg.msg_id,
+            "attempts",
+            attempts,
+            "max_attempts",
+            max_attempts,
+            "err",
+            reason
+        )
+        return false
+    end
+    if not rmsg.mark_dead(msg.msg_id, reason) then
+        return false
+    end
+    log.error(
+        "reliable message moved to dead letter queue",
+        "type",
+        self.type_name,
+        "id",
+        entity.id,
+        "cmd",
+        msg.cmd,
+        "msg_id",
+        msg.msg_id,
+        "attempts",
+        attempts,
+        "err",
+        reason
+    )
+    return true
+end
+
 function M:_deliver_pending_msgs(entity)
-    local reliable_msg = require "skyext.entity.reliable_msg"
-    local msgs = reliable_msg.load_pending(self.type_name, entity.id, { max_count = reliable_msg.DEFAULT_PAGE_SIZE })
+    local rmsg = reliable_msg()
+    local msgs = rmsg.load_pending(self.type_name, entity.id, { max_count = rmsg.DEFAULT_PAGE_SIZE })
+    local quarantined = 0
     for _, msg in ipairs(msgs) do
         if entity.invalid or not distributed_lock.is_valid(entity.handle) then
             return false, "lease expired"
         end
-        local handler_func = self.handler.handlers and self.handler.handlers[msg.cmd]
-        if not handler_func then
-            -- 没有处理函数时保持消息 pending（不自动 ack、不转死信），等待修复后重投
-            log.error(
-                "reliable message handler missing",
-                "type",
-                self.type_name,
-                "id",
-                entity.id,
-                "cmd",
-                msg.cmd,
-                "msg_id",
-                msg.msg_id
-            )
-            return false, "message handler missing"
-        end
-        local args = table.pack(table.unpack(msg.args or {}))
-        args.n = args.n + 1
-        args[args.n] = msg.msg_id
-        local ok, err = xpcall(handler_func, debug.traceback, entity, table.unpack(args, 1, args.n))
+        local ok, reason, message_fault = self:_deliver_one(entity, msg)
         if not ok then
-            log.error("reliable message handler failed", "msg_id", msg.msg_id, "err", err)
-            return false, err
-        end
-        if entity.invalid or not distributed_lock.is_valid(entity.handle) then
-            return false, "lease expired during handler"
-        end
-        local tc = self.type_config
-        if not dbmgr.save(tc.db_name, tc.db_coll, tc.id_field, entity.id) then
-            log.error("reliable message persistence failed", "msg_id", msg.msg_id)
-            return false, "entity persistence failed"
-        end
-        if entity.invalid or not distributed_lock.is_valid(entity.handle) then
-            return false, "lease expired during persistence"
-        end
-        local acked, reason = reliable_msg.mark_delivered(msg.msg_id)
-        if not acked and reason ~= "already_delivered" then
-            log.error("reliable message acknowledgement failed", "msg_id", msg.msg_id, "err", reason)
-            return false, reason
+            if not message_fault then
+                log.error(
+                    "reliable message delivery deferred",
+                    "type",
+                    self.type_name,
+                    "id",
+                    entity.id,
+                    "msg_id",
+                    msg.msg_id,
+                    "err",
+                    reason
+                )
+                return false, reason
+            end
+            -- 毒消息没达到上限时仍然卡在队首：消息之间可能有先后依赖，
+            -- 不能为了让队列往前走就跳过一条还可能成功的消息
+            if not self:_quarantine(entity, msg, reason) then
+                return false, reason
+            end
+            quarantined = quarantined + 1
         end
     end
-    if #msgs == reliable_msg.DEFAULT_PAGE_SIZE then
+    if quarantined > 0 or #msgs == rmsg.DEFAULT_PAGE_SIZE then
+        -- 隔离掉毒消息后被它挡住的消息已经可以投递了，立刻再跑一轮
         skynet.fork(function()
             self:deliver_pending(entity.id)
         end)

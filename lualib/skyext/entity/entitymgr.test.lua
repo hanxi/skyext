@@ -123,6 +123,39 @@ local function harness(opts)
         end
         error("unknown message " .. tostring(id))
     end
+    local function find_msg(id)
+        for _, msg in ipairs(h.pending) do
+            if msg.msg_id == id then
+                return msg
+            end
+        end
+        error("unknown message " .. tostring(id))
+    end
+    function fake_msg.max_attempts()
+        return h.max_attempts or 3
+    end
+    function fake_msg.record_failure(id, err)
+        record("attempt:" .. id)
+        h.last_error = err
+        if h.record_failure_error then
+            return nil, h.record_failure_error
+        end
+        local msg = find_msg(id)
+        msg.attempts = (msg.attempts or 0) + 1
+        return msg.attempts
+    end
+    function fake_msg.mark_dead(id, reason)
+        record("dead:" .. id)
+        if h.mark_dead_error then
+            return false, h.mark_dead_error
+        end
+        local msg = find_msg(id)
+        -- 真实实现把 status 从 pending 改走，消息不会再出现在 load_pending 里
+        msg.delivered = true
+        msg.dead = true
+        msg.dead_reason = reason
+        return true
+    end
 
     local fake_client = {}
     function fake_client.unbind_kick(fd, expected_entity)
@@ -391,7 +424,7 @@ t.describe("entitymgr lease and delivery", function()
         h.pending = { { msg_id = 11, cmd = "missing", args = {} } }
         local ok, err = h.mgr:deliver_pending(7)
         t.expect(ok).to.equal(false)
-        t.expect(err).to.equal("message handler missing")
+        t.expect(err).to.equal("no handler for command missing")
         t.expect(h.pending[1].delivered).to.be_nil()
         t.expect(index_of(h.events, "ack:11")).to.be_nil()
     end)
@@ -820,5 +853,154 @@ t.describe("entitymgr partial initialization", function()
         t.expect(calls.bag.unloads).to.equal(1)
         t.expect(calls.mail.unloads).to.equal(1)
         t.expect(handler_unloads).to.equal(1)
+    end)
+end)
+
+t.describe("毒消息隔离", function()
+    t.it("handler 持续抛错达到上限后把消息移入死信队列", function()
+        local h = harness()
+        h.max_attempts = 3
+        h.pending = { { msg_id = 11, cmd = "change", args = {} } }
+        h.handler.handlers.change = function()
+            error("always broken")
+        end
+        for i = 1, 2 do
+            local ok = h.mgr:deliver_pending(7)
+            t.expect(ok).to.equal(false)
+            t.expect(h.pending[1].attempts).to.equal(i)
+            t.expect(index_of(h.events, "dead:11")).to.be_nil()
+        end
+        t.expect(h.mgr:deliver_pending(7)).to.equal(true)
+        t.expect(h.pending[1].attempts).to.equal(3)
+        t.expect(h.pending[1].dead).to.equal(true)
+        t.expect(h.pending[1].dead_reason).to.match("always broken")
+        t.expect(index_of(h.events, "ack:11")).to.be_nil()
+    end)
+
+    t.it("隔离毒消息后后续消息不再被队首挡住", function()
+        local h = harness()
+        h.max_attempts = 1
+        local seen = {}
+        h.pending = {
+            { msg_id = 11, seq = 1, cmd = "poison", args = {} },
+            { msg_id = 12, seq = 2, cmd = "change", args = { "ok" } },
+        }
+        h.handler.handlers.poison = function()
+            error("poison")
+        end
+        h.handler.handlers.change = function(entity, name)
+            seen[#seen + 1] = name
+            entity.data.name = name
+        end
+        t.expect(h.mgr:deliver_pending(7)).to.equal(true)
+        t.expect(h.pending[1].dead).to.equal(true)
+        t.expect(seen).to.equal({ "ok" })
+        t.expect(h.pending[2].delivered).to.equal(true)
+        t.expect(index_of(h.events, "dead:11")).to.be_lt(index_of(h.events, "ack:12"))
+    end)
+
+    t.it("没有对应 handler 的消息同样会被隔离", function()
+        local h = harness()
+        h.max_attempts = 2
+        h.pending = { { msg_id = 11, cmd = "missing", args = {} } }
+        t.expect(h.mgr:deliver_pending(7)).to.equal(false)
+        t.expect(h.pending[1].dead).to.be_nil()
+        t.expect(h.mgr:deliver_pending(7)).to.equal(true)
+        t.expect(h.pending[1].dead).to.equal(true)
+        t.expect(h.pending[1].dead_reason).to.equal("no handler for command missing")
+    end)
+
+    t.it("隔离一条之后立刻补跑一轮投递", function()
+        local h = harness()
+        h.max_attempts = 1
+        h.mgr:ensure_loaded(7)
+        -- 加载本身会 fork 一次首轮投递，先清掉再测隔离补跑的那一次
+        h.jobs = {}
+        h.pending = { { msg_id = 11, cmd = "missing", args = {} } }
+        t.expect(h.mgr:deliver_pending(7)).to.equal(true)
+        t.expect(#h.jobs).to.equal(1)
+    end)
+
+    t.it("全部投递成功时不会多跑一轮", function()
+        local h = harness()
+        h.mgr:ensure_loaded(7)
+        h.jobs = {}
+        h.handler.handlers.change = function() end
+        h.pending = { { msg_id = 11, cmd = "change", args = {} } }
+        t.expect(h.mgr:deliver_pending(7)).to.equal(true)
+        t.expect(#h.jobs).to.equal(0)
+    end)
+
+    -- 环境问题重投一次就可能成功，计进毒消息次数等于把数据库抖动变成消息丢失
+    t.it("落库失败不计入毒消息次数", function()
+        local h = harness()
+        h.max_attempts = 1
+        h.handler.handlers.change = function(entity)
+            entity.data.name = "new"
+        end
+        h.pending = { { msg_id = 11, cmd = "change", args = {} } }
+        h.save_ok = false
+        local ok, err = h.mgr:deliver_pending(7)
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.equal("entity persistence failed")
+        t.expect(index_of(h.events, "attempt:11")).to.be_nil()
+        t.expect(h.pending[1].dead).to.be_nil()
+    end)
+
+    t.it("ack 写库失败不计入毒消息次数", function()
+        local h = harness()
+        h.max_attempts = 1
+        h.handler.handlers.change = function() end
+        h.pending = { { msg_id = 11, cmd = "change", args = {} } }
+        h.ack_error = "mongo down"
+        t.expect(h.mgr:deliver_pending(7)).to.equal(false)
+        t.expect(index_of(h.events, "attempt:11")).to.be_nil()
+        t.expect(h.pending[1].dead).to.be_nil()
+    end)
+
+    t.it("租约在 handler 执行中失效不计入毒消息次数", function()
+        local h = harness()
+        h.max_attempts = 1
+        h.pending = { { msg_id = 11, cmd = "change", args = {} } }
+        h.handler.handlers.change = function()
+            h:expire()
+        end
+        t.expect(h.mgr:deliver_pending(7)).to.equal(false)
+        t.expect(index_of(h.events, "attempt:11")).to.be_nil()
+        t.expect(h.pending[1].dead).to.be_nil()
+    end)
+
+    -- 次数记不上就不知道已经失败了几次，凭未知次数判死可能把正常消息误隔离
+    t.it("计数写库失败时不判死，保持消息 pending 等重试", function()
+        local h = harness()
+        h.max_attempts = 1
+        h.pending = { { msg_id = 11, cmd = "missing", args = {} } }
+        h.record_failure_error = "mongo down"
+        local ok, err = h.mgr:deliver_pending(7)
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.equal("no handler for command missing")
+        t.expect(index_of(h.events, "dead:11")).to.be_nil()
+        t.expect(h.timers["reliable_retry:7"]).to.be_type("table")
+    end)
+
+    t.it("死信写库失败时消息留在队首并安排重试", function()
+        local h = harness()
+        h.max_attempts = 1
+        h.pending = { { msg_id = 11, cmd = "missing", args = {} } }
+        h.mark_dead_error = "mongo down"
+        t.expect(h.mgr:deliver_pending(7)).to.equal(false)
+        t.expect(h.pending[1].delivered).to.be_nil()
+        t.expect(h.timers["reliable_retry:7"]).to.be_type("table")
+    end)
+
+    t.it("隔离之后重试定时器被取消", function()
+        local h = harness()
+        h.max_attempts = 2
+        h.pending = { { msg_id = 11, cmd = "missing", args = {} } }
+        t.expect(h.mgr:deliver_pending(7)).to.equal(false)
+        local retry = h.timers["reliable_retry:7"]
+        t.expect(retry).to.be_type("table")
+        t.expect(h.mgr:deliver_pending(7)).to.equal(true)
+        t.expect(retry.cancelled).to.equal(true)
     end)
 end)
