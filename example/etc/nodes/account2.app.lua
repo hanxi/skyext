@@ -1,3 +1,9 @@
+-- 账号节点也要加入集群：它按服务发现报告的存活节点为玩家挑 rolenode，
+-- 不注册进 etcd 就拿不到成员变更
+cluster_node_name = "account2"
+cluster_listen_port = "7041"
+cluster_host = "127.0.0.1"
+
 log_config = {
     {
         name = "file",

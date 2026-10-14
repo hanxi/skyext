@@ -23,6 +23,13 @@ local function harness(entity_types)
                 return h.cfg.entity_types
             end,
         },
+        -- 真实的 placement 会去连服务发现，这里只验证 types 把类型配置原样交了出去
+        ["skyext.entity.placement"] = {
+            calc_node = function(type_name, type_config, entity_id)
+                h.placed = { type_name, type_config, entity_id }
+                return "node-from-placement"
+            end,
+        },
     }
     local env = setmetatable({
         require = function(name)
@@ -83,43 +90,19 @@ t.describe("entity types", function()
             .throw("unknown entity type: nil")
     end)
 
-    t.it("calc_node maps an entity id into the configured node list", function()
+    t.it("calc_node hands the resolved type config to placement", function()
         local h = harness({ role = ROLE_TYPE })
-        local allowed = {}
-        for _, node in ipairs(ROLE_TYPE.nodes) do
-            allowed[node] = true
-        end
-
-        local seen = {}
-        for id = 1, 200 do
-            local node = h.mod.calc_node("role", id)
-            t.expect(allowed[node]).to.equal(true)
-            seen[node] = (seen[node] or 0) + 1
-            -- 同一个 id 必须稳定落在同一个节点上，否则实体会到处漂移
-            t.expect(h.mod.calc_node("role", id)).to.equal(node)
-        end
-        -- 一致性哈希应该真的把 id 分散开
-        local used = 0
-        for _, count in pairs(seen) do
-            if count > 0 then
-                used = used + 1
-            end
-        end
-        t.expect(used).to.be_gt(1)
+        t.expect(h.mod.calc_node("role", 42)).to.equal("node-from-placement")
+        t.expect(h.placed).to.equal({ "role", ROLE_TYPE, 42 })
     end)
 
-    t.it("calc_node refuses a type without nodes", function()
-        local h = harness({ ghost = {} })
+    t.it("calc_node still rejects an unknown entity type", function()
+        local h = harness({ role = ROLE_TYPE })
         t.expect(function()
             h.mod.calc_node("ghost", 1)
         end).to
-            .throw("no nodes for entity type: ghost")
-
-        h = harness({ ghost = { nodes = {} } })
-        t.expect(function()
-            h.mod.calc_node("ghost", 1)
-        end).to
-            .throw("no nodes for entity type: ghost")
+            .throw("unknown entity type: ghost")
+        t.expect(h.placed).to.be_nil()
     end)
 
     t.it("calc_agent_index wraps by agent_count", function()

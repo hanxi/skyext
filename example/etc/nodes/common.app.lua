@@ -113,6 +113,8 @@ entity_types = {
         schema = "role",
         agent_count = 2,
         unload_delay = 300,
+        -- 兜底节点列表：正常情况下实体落在哪个节点由服务发现报告的存活节点决定
+        -- （entity_agentmgr 注册的 "entity:role"），这里只在服务发现不可用时生效
         nodes = { "rolenode1", "rolenode2" },
         client_enabled = true,
         modules_path = "modules",

@@ -8,7 +8,7 @@ local errcode = require "skyext.errcode"
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "service/entity_agent.lua")
 
 local function harness()
-    local h = { events = {}, bound = {}, calls = {}, deliveries = 0 }
+    local h = { events = {}, bound = {}, calls = {}, deliveries = 0, cluster_calls = 0 }
     local noop = function() end
     local gates = {}
     local entity = { id = 7, data = { name = "before" } }
@@ -23,7 +23,7 @@ local function harness()
         end
         return gate(function()
             if h.with_entity_error then
-                return false, h.with_entity_error
+                return false, h.with_entity_error, h.with_entity_owner
             end
             local result = table.pack(f(entity))
             return true, table.unpack(result, 1, result.n)
@@ -81,8 +81,14 @@ local function harness()
     local fake_cluster = {}
     function fake_cluster.call(node, agent, command, id)
         h.cluster_call = { node, agent, command, id }
+        h.cluster_calls = h.cluster_calls + 1
         if h.cluster_error then
             error(h.cluster_error)
+        end
+        if h.release_clears_lock then
+            -- 上一个持有者真的放了手：之后的重试应该能拿到实体
+            h.with_entity_error = nil
+            h.lock_error = nil
         end
         return h.cluster_released ~= false
     end
@@ -252,6 +258,53 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.OK)
         t.expect(h.bound[9]).to.equal(h.entity)
         t.expect(h.forward).to.equal({ 123, "forward" })
+    end)
+
+    t.it("takes the entity back from its previous node when routing moves it here", function()
+        -- 集群成员变化后实体换了节点，上一个节点可能还持有着锁
+        local h = harness()
+        h.with_entity_error = "lock held"
+        h.with_entity_owner = "node-b"
+        h.release_clears_lock = true
+        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal("new")
+        t.expect(h.cluster_call).to.equal({ "node-b", ".entity_agent:role:1", "unload_entity", 7 })
+        t.expect(h.cluster_calls).to.equal(1)
+        t.expect(h.entity.data.name).to.equal("new")
+    end)
+
+    t.it("retries the handoff at most once so two nodes cannot ping-pong", function()
+        local h = harness()
+        h.with_entity_error = "lock held"
+        h.with_entity_owner = "node-b"
+        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.cluster_calls).to.equal(1)
+        t.expect(h.entity.data.name).to.equal("before")
+
+        h.cluster_error = "node down"
+        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.cluster_calls).to.equal(2)
+    end)
+
+    t.it("does not chase a handoff without a verified owner or for other failures", function()
+        local h = harness()
+        h.with_entity_error = "lock held"
+        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.cluster_calls).to.equal(0)
+
+        h.with_entity_error = "entity lease expired"
+        h.with_entity_owner = "node-b"
+        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.cluster_calls).to.equal(0)
+    end)
+
+    t.it("entity_send takes the entity back too", function()
+        local h = harness()
+        h.with_entity_error = "lock held"
+        h.with_entity_owner = "node-b"
+        h.release_clears_lock = true
+        h.CMD.entity_send(7, "change", "sent")
+        t.expect(h.cluster_calls).to.equal(1)
+        t.expect(h.entity.data.name).to.equal("sent")
     end)
 
     t.it("disconnect respects the entity gate and unbinds an expired client", function()

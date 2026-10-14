@@ -8,7 +8,7 @@
 
 **核心能力：**
 - Entity ID 稳定不变（snowflake ID）
-- 节点重启路由不变（jchash + 固定节点列表）
+- 路由跟随服务发现的存活节点（rendezvous hashing），节点进出只迁移它自己那一份实体
 - 支持 `call`（同步）、`send`（异步）、`reliable_send`（持久化消息，实体加载时重试投递）
 - 可选客户端连接绑定（`client_enabled`）
 
@@ -31,7 +31,8 @@
 
 | 文件 | 职责 |
 |------|------|
-| `lualib/skyext/entity/types.lua` | 实体类型注册表，路由计算（jchash 选节点，modulo 选 agent） |
+| `lualib/skyext/entity/types.lua` | 实体类型注册表，委托 placement 选节点，modulo 选 agent |
+| `lualib/skyext/entity/placement.lua` | 实体放置：读服务发现的存活节点，用 rendezvous hashing 选节点 |
 | `lualib/skyext/entity/router.lua` | 公共 API：call / send / reliable_send，自动路由到正确节点 |
 | `lualib/skyext/entity/entitymgr.lua` | 单 agent 内实体生命周期（加载/卸载/缓存），复用 dbmgr + distributed_lock |
 | `lualib/skyext/entity/reliable_msg.lua` | 可靠消息持久化（MongoDB），加载时投递 pending 消息 |
@@ -45,7 +46,6 @@
 
 | 组件 | 路径 | 用途 |
 |------|------|------|
-| jchash | `lualib-src/jchash.c` | `jchash.hash(key, buckets)` 确定性路由 |
 | distributed_lock | `lualib/skyext/distributed_lock.lua` | etcd 分布式锁，用于协调跨节点实体加载 |
 | dbmgr | `lualib/skyext/dbmgr.lua` | MongoDB ORM 加载/存盘/卸载，含脏数据定时刷盘 |
 | cluster_discovery | `lualib/skyext/cluster_discovery.lua` | 服务注册/发现 |
@@ -101,11 +101,27 @@ entity_types = {
 **关键函数：**
 - `types.get(type_name)` — 返回类型配置，未知类型抛错
 - `types.all()` — 返回全部类型配置
-- `types.calc_node(type_name, entity_id)` — `nodes[jchash.hash(id, #nodes) + 1]`
+- `types.calc_node(type_name, entity_id)` — 委托给 `placement.calc_node`，见下
 - `types.calc_agent_index(type_name, entity_id)` — `entity_id % agent_count + 1`
 - `types.format_agent_service_name(type_name, index)` — 如 `".entity_agent:role:1"`
 
-**路由稳定性**：节点列表固定在配置中，jchash 确定性算法，节点重启路由不变；这不等于自动故障转移，所选节点不可用时调用可能失败。修改节点列表也会改变部分实体的路由，需要规划数据与锁的迁移。
+### 1.1 placement.lua — 实体落在哪个节点
+
+候选节点来自服务发现：`entity_agentmgr` 在本节点全部 agent 就绪后注册服务名 `entity:<type>`，
+`cluster_discovery` 把该服务的存活节点推给每个订阅方。**服务发现是权威**，`entity_types[*].nodes`
+只是服务发现尚未就绪时的兜底列表，扩缩容不需要改配置（两者都为空才抛错）。
+
+选节点用 **rendezvous hashing（HRW）**，对每个 `(实体, 节点)` 算分取最大值：
+
+- 节点进出只迁移它自己那一份实体，别的实体原地不动；节点回来时拿回的也正好是原来那一份。
+  jchash 做不到这点——它的输入是桶下标，从列表中间摘掉一个节点会把几乎所有实体重排。
+- 结果与候选列表顺序无关。存活集合是从哈希表遍历出来的，顺序本来就不定，依赖下标的算法在
+  这里会让各节点算出不同的答案。
+
+**跨节点交接**：路由搬家后实体可能还被上一个节点持有着 etcd 锁。`entity_agent` 在 `entity_call` /
+`entity_send` / `bind_client` 拿不到锁且确认了持有者时，向持有者发一次 `unload_entity` 再重试。
+**只重试一次**：两边成员视图短暂分歧时，无限重试会变成互相抢。安全性由分布式锁本身保证——
+路由短暂分歧最多让请求失败，不会出现两个节点同时持有同一实体。
 
 ### 2. router.lua — 消息路由 API
 
@@ -123,7 +139,7 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 ```
 
 **路由逻辑：**
-1. `types.calc_node()` 确定目标节点
+1. `types.calc_node()` 确定目标节点（存活节点 + HRW，见 1.1）
 2. `types.calc_agent_index()` 确定 agent 索引，拼出 service name
 3. 通过 `config.get("cluster_node_name")` 判断本节点
 4. 本节点 → `skynet.call/send`；远程 → `cluster.call/send`
@@ -431,7 +447,8 @@ mongo_config.entity = {
 
 | 文件 | 说明 |
 |------|------|
-| `lualib/skyext/entity/types.lua` | 实体类型注册与路由计算 |
+| `lualib/skyext/entity/types.lua` | 实体类型注册与路由入口 |
+| `lualib/skyext/entity/placement.lua` | 存活节点发现与 HRW 选节点 |
 | `lualib/skyext/entity/router.lua` | call / send / reliable_send API |
 | `lualib/skyext/entity/entitymgr.lua` | 实体生命周期管理 |
 | `lualib/skyext/entity/reliable_msg.lua` | 可靠消息持久化 |

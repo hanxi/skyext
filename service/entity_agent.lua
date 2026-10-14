@@ -1,4 +1,5 @@
 local skynet = require "skynet"
+local cluster = require "skynet.cluster"
 local cmd_api = require "skyext.cmd_api"
 local types = require "skyext.entity.types"
 local entitymgr_mod = require "skyext.entity.entitymgr"
@@ -17,13 +18,41 @@ local g_watchdog
 
 local CMD = {}
 
+-- 路由跟着集群成员走，实体会换节点，而上一个节点可能还持有着它的分布式锁。
+-- 向持有者要一次卸载再重试；只要一次：两边的成员视图短暂分歧时，无限重试会变成互相抢。
+local function request_handoff(entity_id, holder_node)
+    if not holder_node then
+        return false
+    end
+    local holder_agent = types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
+    local called, released = pcall(cluster.call, holder_node, holder_agent, "unload_entity", entity_id)
+    if not called or not released then
+        log.warn("entity handoff failed", "type", type_name, "id", entity_id, "holder", holder_node)
+        return false
+    end
+    log.info("entity handed off", "type", type_name, "id", entity_id, "holder", holder_node)
+    return true
+end
+
+-- 锁被别的节点占着时先要一次实体再重试；f 在抢锁阶段还没跑过，重试不会重复副作用
+local function with_entity(entity_id, f)
+    local result = table.pack(entitymgr:with_entity(entity_id, f))
+    if result[1] or result[2] ~= "lock held" then
+        return table.unpack(result, 1, result.n)
+    end
+    if not request_handoff(entity_id, result[3]) then
+        return table.unpack(result, 1, result.n)
+    end
+    return entitymgr:with_entity(entity_id, f)
+end
+
 function CMD.entity_call(entity_id, cmd, ...)
     local handler_func = handler.handlers[cmd]
     if not handler_func then
         error(string.format("unknown entity command: %s.%s", type_name, cmd))
     end
     local args = table.pack(...)
-    local result = table.pack(entitymgr:with_entity(entity_id, function(entity)
+    local result = table.pack(with_entity(entity_id, function(entity)
         return handler_func(entity, table.unpack(args, 1, args.n))
     end))
     if not result[1] then
@@ -39,7 +68,7 @@ function CMD.entity_send(entity_id, cmd, ...)
         return
     end
     local args = table.pack(...)
-    local ok, err = entitymgr:with_entity(entity_id, function(entity)
+    local ok, err = with_entity(entity_id, function(entity)
         handler_func(entity, table.unpack(args, 1, args.n))
     end)
     if not ok then
@@ -65,15 +94,12 @@ function CMD.bind_client(entity_id, fd)
         if reason ~= "lock held" or not holder_node then
             return errcode.LOCK_FAILED
         end
-        local cluster = require "skynet.cluster"
-        local holder_agent = types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
-        local called, released = pcall(cluster.call, holder_node, holder_agent, "unload_entity", entity_id)
-        if not called or not released then
+        if not request_handoff(entity_id, holder_node) then
             return errcode.IN_OTHER_NODE
         end
     end
 
-    local bound, result = entitymgr:with_entity(entity_id, function(entity)
+    local bound, result = with_entity(entity_id, function(entity)
         if entity.fd then
             client_ext.unbind_kick(entity.fd, entity)
         end

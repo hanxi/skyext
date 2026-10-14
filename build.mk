@@ -72,9 +72,6 @@ $(SKYEXT_LUACLIB_PATH) :
 $(BIN_PATH) :
 	mkdir -p $(BIN_PATH)
 
-$(SKYEXT_LUACLIB_PATH)/jchash.so : $(SKYEXT_ROOT)/lualib-src/jchash.c | $(SKYEXT_LUACLIB_PATH)
-	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
-
 $(SKYEXT_LUACLIB_PATH)/cjson.so : $(SKYEXT_ROOT)/3rd/lua-cjson/lua_cjson.c \
                                    $(SKYEXT_ROOT)/3rd/lua-cjson/strbuf.c \
                                    $(SKYEXT_ROOT)/3rd/lua-cjson/fpconv.c | $(SKYEXT_LUACLIB_PATH)
@@ -95,7 +92,7 @@ $(SKYEXT_LUACLIB_PATH)/crypto.so : $(SKYEXT_ROOT)/lualib-src/crypto.c | $(SKYEXT
 $(SKYEXT_LUACLIB_PATH)/profiler_c.so : $(SKYEXT_ROOT)/lualib-src/profiler.c | $(SKYEXT_LUACLIB_PATH)
 	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 
-SKYEXT_LUA_CLIB = jchash cjson traceback lfs tool_process crypto profiler_c
+SKYEXT_LUA_CLIB = cjson traceback lfs tool_process crypto profiler_c
 
 # mingw.mk 不构建 TLS_MODULE，待 Lua 导入库生成后单独编译。
 SKYEXT_TLS_MODULE =

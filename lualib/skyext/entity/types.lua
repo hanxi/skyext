@@ -1,5 +1,5 @@
 local config = require "skyext.config"
-local jchash = require "jchash"
+local placement = require "skyext.entity.placement"
 
 local M = {}
 
@@ -33,11 +33,7 @@ function M.all()
 end
 
 function M.calc_node(type_name, entity_id)
-    local t = M.get(type_name)
-    local nodes = t.nodes
-    assert(nodes and #nodes > 0, "no nodes for entity type: " .. type_name)
-    local idx = jchash.hash(entity_id, #nodes)
-    return nodes[idx + 1]
+    return placement.calc_node(type_name, M.get(type_name), entity_id)
 end
 
 function M.calc_agent_index(type_name, entity_id)

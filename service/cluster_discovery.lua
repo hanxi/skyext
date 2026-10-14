@@ -446,6 +446,8 @@ function service_mt:get_nodes()
     for node, _ in pairs(self.map_node) do
         nodes[#nodes + 1] = node
     end
+    -- 哈希表遍历顺序不定，排序后日志和订阅方拿到的列表才是稳定的
+    table.sort(nodes)
     return nodes
 end
 
@@ -455,6 +457,8 @@ local function get_service_obj(service)
         obj = setmetatable({
             service = service,
             lock = queue(),
+            -- 首查未完成就被 query_service 问到时要能答"还没有节点"，而不是炸在 pairs(nil)
+            map_node = {},
         }, service_mt)
         g_map_service[service] = obj
         log.info("cluster_discovery create service object", "service", service)
@@ -532,10 +536,14 @@ function service_mt:first_query()
         return false
     end
 
+    -- 快照没取全就不能对外发布半套节点列表，否则订阅方会按残缺的成员做路由；
+    -- 保留上一份，等 watch 循环重试
+    local prev = self.map_node
     self.map_node = {}
 
     for k, v in pairs(map_node) do
         if not self:update_node(k, v) then
+            self.map_node = prev
             return false
         end
     end

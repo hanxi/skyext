@@ -487,9 +487,11 @@ end
 
 function M:with_entity(entity_id, f)
     return self:_with_gate(entity_id, function()
-        local ok, entity = self:_ensure_loaded(entity_id)
+        -- 第三个返回值是锁的当前持有节点：路由随集群成员搬家后，调用方要靠它
+        -- 找到上一个 owner 去要实体
+        local ok, entity, owner = self:_ensure_loaded(entity_id)
         if not ok then
-            return false, entity
+            return false, entity, owner
         end
         local result = table.pack(pcall(f, entity))
         if entity.invalid or not distributed_lock.is_valid(entity.handle) then

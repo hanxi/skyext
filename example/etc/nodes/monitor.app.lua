@@ -4,6 +4,6 @@ cluster_host = "127.0.0.1"
 
 start = "monitor" -- main script
 
--- 负责管理role节点数量，使用etcd同步节点信息，使用jhash决定role应该在哪个节点上
+-- 负责管理 role 节点数量，节点信息经 etcd 同步，实体落在哪个节点由 skyext.entity.placement 决定
 
 include "common.app.lua"
