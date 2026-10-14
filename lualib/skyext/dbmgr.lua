@@ -3,7 +3,10 @@ local config = require "skyext.config"
 local log = require "skyext.log"
 local mongo_conn = require "skyext.mongo_conn"
 local orm = require "orm"
+local orm_migration = require "skyext.orm_migration"
 local SCHEMA_PATH = "game.orm.schema"
+local MIGRATION_PATH = "game.orm.migrations"
+local VERSION_FIELD = orm_migration.VERSION_FIELD
 local schema = require(SCHEMA_PATH)
 local save_wheel = require "skyext.save_wheel"
 local queue = require "skynet.queue"
@@ -33,6 +36,27 @@ local function db_save_interval()
         g_db_save_interval = config.get_number("db_save_interval") or 3 * 60
     end
     return g_db_save_interval
+end
+
+-- 游戏层可以完全不提供迁移表。但文件存在却加载不了时必须让整个加载失败：
+-- 静默当成“没有迁移”会让旧文档直接按新 schema 建 doc，坏在业务代码深处远比坏在这里难查。
+local function load_migration_defs()
+    local ok, defs = pcall(require, MIGRATION_PATH)
+    if ok then
+        return defs
+    end
+    if tostring(defs):find("module '" .. MIGRATION_PATH .. "' not found", 1, true) then
+        return {}
+    end
+    error(defs, 0)
+end
+
+local g_migrations
+local function migrations()
+    if not g_migrations then
+        g_migrations = orm_migration.compile(load_migration_defs())
+    end
+    return g_migrations
 end
 
 local function check_collection(dbname, dbcoll)
@@ -219,6 +243,67 @@ local function save_doc(coll_obj, key, unique_id, doc, handle)
     return true
 end
 
+-- 把刚读出来的原始文档升级到当前 schema 版本，并在业务拿到它之前落库。
+--
+-- 必须立刻落库而不是等下一次回存：迁移函数不保证幂等，进程若崩在中间，下次加载会从
+-- 库里的旧版本号把同一条链再跑一遍。而且文档可能一直不脏，等下去就是永远不写。
+--
+-- 写入沿用 save_doc 那套 _version 乐观锁（有 handle 时再叠上 fence）。失配说明别的
+-- 写者正在并发改这一行，此时放弃加载，比带着半迁移的数据继续跑安全。
+local function migrate_value(coll_obj, dbcoll, key, unique_id, value, handle)
+    local from, invalid = orm_migration.version_of(value)
+    if not from then
+        return nil, invalid
+    end
+    -- schema 里没有这个字段，建 doc 前必须剔除
+    value[VERSION_FIELD] = nil
+
+    local before = {}
+    for k in pairs(value) do
+        before[k] = true
+    end
+
+    local target, err = orm_migration.apply(migrations(), dbcoll, value, from)
+    if not target then
+        return nil, err
+    end
+    if target == from then
+        return true
+    end
+
+    local old_version = type(value._version) == "number" and math.tointeger(value._version)
+    if not old_version then
+        return nil, "document has no _version"
+    end
+    -- 不知道迁移具体动了哪些字段，整份 $set 回去；迁移删掉的字段单独 $unset。
+    local set = {}
+    for k, v in pairs(value) do
+        set[k] = v
+    end
+    set._version = old_version + 1
+    set[VERSION_FIELD] = target
+    local update = { ["$set"] = set }
+    for k in pairs(before) do
+        if value[k] == nil then
+            update["$unset"] = update["$unset"] or {}
+            update["$unset"][k] = true
+        end
+    end
+
+    local query = { [key] = unique_id, _version = old_version }
+    if handle then
+        query._fence = handle.fence
+    end
+    local called, ok, write_err, ret = pcall(coll_obj.safe_update, coll_obj, query, update, false)
+    if not called or not ok or type(ret) ~= "table" or ret.n ~= 1 or ret.nModified ~= 1 or ret.upserted then
+        log.error("schema migration write failed", "query", query, "reply", ret, "error", called and write_err or ok)
+        return nil, "schema migration write failed"
+    end
+    value._version = old_version + 1
+    log.info("schema migrated", "dbcoll", dbcoll, "unique_id", unique_id, "from", from, "to", target)
+    return true
+end
+
 -- 回存轮用的落库入口：等行锁期间文档可能已经被卸载或被新的持有者换掉，
 -- 所以拿到锁之后要确认缓存里还是同一个条目，否则这一轮就不该再碰它
 local function sweep_save(entry)
@@ -279,6 +364,12 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
         initial[key] = unique_id
         initial._version = 0
         initial._fence = handle and handle.fence or nil
+        -- 新文档天生就是最新结构，插入时就打上当前版本号，省掉第一次加载的空迁移。
+        -- 没有迁移链的集合不写这个字段，文档里不留多余的东西。
+        local target_version = orm_migration.target(migrations(), dbcoll)
+        if target_version > 0 then
+            initial[VERSION_FIELD] = target_version
+        end
 
         local coll_obj = get_collection_obj(dbname, dbcoll)
         local value
@@ -341,6 +432,22 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
                 )
                 return nil, "database load failed"
             end
+        end
+
+        local migrated, migrate_err = migrate_value(coll_obj, dbcoll, key, unique_id, value, handle)
+        if not migrated then
+            log.error(
+                "schema migration failed",
+                "dbname",
+                dbname,
+                "dbcoll",
+                dbcoll,
+                "unique_id",
+                unique_id,
+                "reason",
+                migrate_err
+            )
+            return nil, migrate_err
         end
 
         local schema_type = assert(schema[dbcoll], "missing schema for " .. dbcoll)
@@ -413,27 +520,44 @@ end
 
 local GM_CMD = {}
 GM_CMD.reload_orm_schema = {
-    desc = "重载 orm schema",
+    desc = "重载 orm schema 与迁移链",
     level = "write",
     handler = function()
+        -- schema 和迁移链必须一起换：schema 加了字段而迁移没跟上，之后加载的旧文档
+        -- 会直接撞在类型检查上。两边都先只读地准备好，最后再一起生效。
+        local cached_migrations = package.loaded[MIGRATION_PATH]
+        package.loaded[MIGRATION_PATH] = nil
+        local ok, new_migrations = pcall(function()
+            return orm_migration.compile(load_migration_defs())
+        end)
+        if not ok then
+            package.loaded[MIGRATION_PATH] = cached_migrations
+            log.error("reload migrations failed", "err", new_migrations)
+            return false, new_migrations
+        end
+
+        local function abort(err)
+            package.loaded[MIGRATION_PATH] = cached_migrations
+            log.error("reload schema failed", "err", err)
+            return false, err
+        end
+
         -- require 有缓存，必须先清掉才能拿到热更后的新代码
         package.loaded[SCHEMA_PATH] = nil
-        local ok, new_schema = pcall(require, SCHEMA_PATH)
+        local loaded, new_schema = pcall(require, SCHEMA_PATH)
         -- 不论成败都要把原来那张表放回去：整个进程只能有一份 schema 表，
         -- 否则 orm doc 的类型判定会分裂成两套
         package.loaded[SCHEMA_PATH] = schema
-        if not ok then
-            log.error("reload schema failed", "err", new_schema)
-            return false, new_schema
+        if not loaded then
+            return abort(new_schema)
         end
         if new_schema == schema then
             -- loader 返回的还是同一张表（package.preload 之类），
             -- 拿它 reload 等于把 schema 清空，必须拒绝
-            local err = "new schema is the same table, reload skipped"
-            log.error("reload schema failed", "err", err)
-            return false, err
+            return abort("new schema is the same table, reload skipped")
         end
         orm.reload_schema(schema, new_schema)
+        g_migrations = new_migrations
         log.info("reload schema success", "schema", tostring(schema), "new_schema", tostring(new_schema))
         return true
     end,

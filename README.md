@@ -89,6 +89,7 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 - [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md)。
 - [热更新操作](docs/guide/hotfix.md) · [GM HTTP API](docs/guide/gm_api.md)。
 - [指标采集与导出](docs/guide/metrics.md)：指标原语、Prometheus 端点与内置指标。
+- [ORM schema 迁移](docs/guide/orm_migration.md)：文档版本号与迁移链的声明、执行和热更。
 
 **仅保存在仓库的设计与规划文档**（未发布到在线文档站）：[实体系统](docs/design/entity_system.md)、[skytest](docs/design/skytest.md)、[性能采样设计](docs/design/profiler.md)、[管理后台规划](docs/plan/admin_panel.md)。规划文档描述目标，不代表功能已经可用。
 
