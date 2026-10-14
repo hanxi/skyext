@@ -15,21 +15,24 @@ end
 local LOCK_HEADER = [[
 -- ORM schema 基线：上一次确认过的结构，由 ./bin/skyext schema accept 写入。
 -- 不要手改；schema check 用它判断新 schema 还能不能读旧文档。
+--
+-- retired 记的是删过的名字。删字段只是不再读它，值一直躺在库里，
+-- 所以这些名字不能再用，否则旧值会被当成新值读出来。
 ]]
 
--- 基线就是当时那份 schema define，只把"自动生成"的头换成基线自己的说明
-local function write_lock(fs, define_path, lock_path)
-    local body = assert(fs.read(define_path):match("\nreturn {.*$"), "unexpected schema define layout")
-    fs.write(lock_path, LOCK_HEADER .. body:sub(2))
+local function write_lock(ctx, lock, lock_path)
+    ctx.fs.write(lock_path, LOCK_HEADER .. orm_compat.encode(lock))
+    -- 交给 stylua 定版式，免得这份文件在 stylua --check 下挂掉
+    assert(ctx.process.run({ "stylua", lock_path }, { cwd = ctx.root }) == 0, "stylua failed")
 end
 
 -- 两份文件都是纯数据表，用空环境加载，免得生成物里的东西碰到全局
-local function load_defs(fs, path, hint)
+local function load_table(fs, path, hint)
     assert(fs.mode(path) == "file", hint)
     local chunk = assert(load(fs.read(path), "@" .. path, "t", {}))
-    local defs = chunk()
-    assert(type(defs) == "table", "not a schema define: " .. path)
-    return defs
+    local data = chunk()
+    assert(type(data) == "table", "not a schema table: " .. path)
+    return data
 end
 
 local function report(changes)
@@ -52,7 +55,7 @@ return function(ctx, _, args)
     local fs = ctx.fs
     local define_path = fs.join(ctx.game, DEFINE)
     local lock_path = fs.join(ctx.game, LOCK)
-    local current = load_defs(fs, define_path, "schema 还没生成，先执行 ./bin/skyext generate schema")
+    local current = load_table(fs, define_path, "schema 还没生成，先执行 ./bin/skyext generate schema")
 
     if fs.mode(lock_path) ~= "file" then
         if action == "check" then
@@ -61,12 +64,12 @@ return function(ctx, _, args)
             )
             return 1
         end
-        write_lock(fs, define_path, lock_path)
+        write_lock(ctx, { types = current, retired = { fields = {}, types = {} } }, lock_path)
         print("已记录基线: " .. lock_path)
         return 0
     end
 
-    local baseline = load_defs(fs, lock_path, "基线读不出来: " .. lock_path)
+    local baseline = load_table(fs, lock_path, "基线读不出来: " .. lock_path)
     local changes = orm_compat.diff(baseline, current)
     if #changes == 0 then
         print("schema 与基线一致")
@@ -78,7 +81,8 @@ return function(ctx, _, args)
         io.stderr:write(
             string.format(
                 "\n%d 处不兼容改动：线上文档按旧结构写的，新代码读不回来。\n"
-                    .. "改名和改类型请换一种做法：加新字段、让玩法代码双写一段时间，再删旧字段。\n",
+                    .. "改名、改类型、重用删过的名字，都请换一种做法：加一个新名字的字段，\n"
+                    .. "让玩法代码双写一段时间，再删旧字段。\n",
                 counts[orm_compat.BREAK]
             )
         )
@@ -89,7 +93,7 @@ return function(ctx, _, args)
         io.stderr:write("\n基线落后于当前 schema，确认上面的改动后执行 ./bin/skyext schema accept\n")
         return 1
     end
-    write_lock(fs, define_path, lock_path)
+    write_lock(ctx, orm_compat.build_lock(baseline, current), lock_path)
     print("\n已更新基线: " .. lock_path)
     return 0
 end

@@ -58,7 +58,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 - `generate proto` 从 `example/proto/**/*.sproto` 生成 `example/build/proto/sproto.spb`。
 - `generate schema` 从 `example/schema/**/*.sproto` 生成 `example/build/lualib/game/orm/schema_define.lua` 与 `schema.lua`，最后调用 `stylua`。服务通过 `require "game.orm.schema"` 加载游戏层生成物；`example/build/` 被 Git 忽略，不要把 schema 写回引擎的 `lualib/orm/`。若报 `stylua failed`，先安装格式化工具并确认可从终端运行。
 - 协议解析器位于独立子模块 `3rd/sprotodump`，ORM 生成工具位于主工程 `scripts/tools/sproto_orm/`，运行时位于 `lualib/orm/`。框架发布包不包含许可证尚未核实的 `sprotodump`；要重新生成 schema/proto，请使用已初始化该子模块的源码检出。
-- 改过 schema 之后执行 `./bin/skyext schema check`：加删字段在运行期是安全的，改名和改类型会被拦下。确认无误后 `./bin/skyext schema accept` 更新基线 `example/schema/schema.lock.lua` 并一起提交，详见[改 ORM schema](guide/orm_schema_change.md)。
+- 改过 schema 之后执行 `./bin/skyext schema check`：加删字段在运行期是安全的，改名、改类型和重用删过的字段名会被拦下。确认无误后 `./bin/skyext schema accept` 更新基线 `example/schema/schema.lock.lua` 并一起提交，详见[改 ORM schema](guide/orm_schema_change.md)。
 - 修改协议或 schema 后重新生成相应产物，再运行相关测试；项目没有 `make autocode` 目标。
 
 ## 4. 启动示例节点
