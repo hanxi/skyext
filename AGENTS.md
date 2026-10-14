@@ -51,6 +51,7 @@ make init                                   # 初始化子模块（仓库根目�
 make build                                  # 构建引擎与示例
 ./bin/skyext generate proto                 # 生成 sproto
 ./bin/skyext generate schema                # 生成 example/build/lualib/game/orm/，需要 stylua
+./bin/skyext schema check                   # 改过 schema 后必跑：对比基线，拦下不兼容改动
 ./bin/skyext test                           # 运行 *.test.lua 测试
 ./bin/skyext test --cov                     # Lua LCOV；有 genhtml 时生成 HTML
 make -C example clean && make build C_COVERAGE=1  # Linux/GCC：切换到 C 插桩构建

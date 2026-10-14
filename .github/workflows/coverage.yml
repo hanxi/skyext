@@ -77,6 +77,9 @@ jobs:
         ./bin/skyext generate proto
         test -s example/build/proto/sproto.spb
 
+    - name: Check ORM schema compatibility
+      run: ./bin/skyext schema check
+
     - name: Verify game package contains generated schema
       run: |
         ./bin/skyext package game

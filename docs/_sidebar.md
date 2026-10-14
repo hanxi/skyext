@@ -8,3 +8,5 @@
   - [热更新操作](guide/hotfix.md)
   - [HTTP 服务端](guide/http_server.md)
   - [GM HTTP API](guide/gm_api.md)
+  - [指标采集与导出](guide/metrics.md)
+  - [改 ORM schema](guide/orm_schema_change.md)

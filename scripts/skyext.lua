@@ -28,6 +28,7 @@ local commands = {
     package = "package",
     hotfix = "hotfix",
     cov = "cov",
+    schema = "schema",
 }
 
 local function usage()
@@ -41,7 +42,8 @@ local function usage()
   package game                         打包示例游戏部署包 example/skyext.zip
   package framework <platform>         打包平台框架发布包 release-assets/skyext-<platform>.zip
   hotfix refresh <dir>                 刷新 example/ 下的热更包
-  cov <merge|check|summary|html> ...   覆盖率工具]])
+  cov <merge|check|summary|html> ...   覆盖率工具
+  schema <check|accept>                对比 ORM schema 与基线，拦下不兼容改动]])
 end
 
 local command = arg[1]
