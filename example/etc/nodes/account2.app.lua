@@ -20,5 +20,6 @@ account_http_port = 8081
 account_agent_count = 1
 
 gm_http_port = 9091 -- GM HTTP 服务端口
+metrics_http_port = 9191 -- 指标抓取端口
 
 include "common.app.lua"

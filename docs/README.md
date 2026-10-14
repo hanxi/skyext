@@ -13,6 +13,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 | [登录流程](guide/login.md) · [流程图](guide/login_diagram.md) | 客户端、Account 与 Role 的认证和交互 |
 | [热更新操作](guide/hotfix.md) | 热更包、预演、执行与失败处理 |
 | [GM HTTP API](guide/gm_api.md) | 账号鉴权与角色授权、命令查询与执行、操作审计 |
+| [指标采集与导出](guide/metrics.md) | counter/gauge/histogram 原语、Prometheus 抓取端点与内置指标 |
 
 仓库另保存[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)、[skytest 设计](https://github.com/hanxi/skyext/blob/main/docs/design/skytest.md)、[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)和[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)。`design/`、`plan/` **不会部署到在线文档站**；这些链接指向 GitHub 源文件，且规划文档不代表功能已实现。
 

@@ -97,6 +97,8 @@ local function harness(mongo_config)
         logs = {},
     }
 
+    h.clock = 0
+
     local function record(level, msg, ...)
         h.logs[#h.logs + 1] = { level = level, msg = msg, args = { ... } }
     end
@@ -108,12 +110,42 @@ local function harness(mongo_config)
         end,
         call = function(addr, proto, cmd, ...)
             h.calls[#h.calls + 1] = { addr = addr, cmd = cmd, args = { ... } }
+            if h.fail then
+                error(h.fail, 0)
+            end
+            if h.multi then
+                return table.unpack(h.multi, 1, 3)
+            end
             return "ret:" .. tostring(cmd)
+        end,
+        hpc = function()
+            h.clock = h.clock + 2000000 -- 每次读表走 2ms
+            return h.clock
+        end,
+    }
+
+    h.observed = {}
+    h.errors = {}
+    local fake_metrics = {
+        histogram = function()
+            return {
+                observe = function(_, value, labels)
+                    h.observed[#h.observed + 1] = { value = value, op = labels.op }
+                end,
+            }
+        end,
+        counter = function()
+            return {
+                inc = function(_, value, labels)
+                    h.errors[#h.errors + 1] = { value = value, op = labels.op }
+                end,
+            }
         end,
     }
 
     local imports = {
         skynet = fake_skynet,
+        ["skyext.metrics"] = fake_metrics,
         ["skyext.config"] = {
             get_table = function(key)
                 h.config_reads = h.config_reads + 1
@@ -206,6 +238,43 @@ t.describe("mongo_conn 惰性读取配置", function()
         -- 连接池里随机挑一条，地址必须是建过的
         t.expect(h.calls[1].addr).to.be_gt(100)
         t.expect(h.calls[1].addr).to.be_lte(100 + services)
+    end)
+end)
+
+t.describe("mongo_conn 调用耗时", function()
+    t.it("按操作名记录每次调用的耗时", function()
+        local h = harness({ game = { connections = 1 } })
+        local coll = h.mod.get_collection("game", "role")
+        coll:find_one({ id = 1 })
+        -- 在调用方这边计时：量到的是业务真正等了多久，包含连接服务自身的排队
+        t.expect(#h.observed).to.equal(1)
+        t.expect(h.observed[1].op).to.equal("find_one")
+        t.expect(h.observed[1].value).to.equal(0.002)
+        t.expect(#h.errors).to.equal(0)
+    end)
+
+    t.it("调用失败也计时，并把错误原样抛回去", function()
+        local h = harness({ game = { connections = 1 } })
+        local coll = h.mod.get_collection("game", "role")
+        h.fail = "mongo is down"
+        t.expect(function()
+            coll:find({ id = 1 })
+        end).to
+            .throw("mongo is down")
+        -- 失败的调用往往是最慢的，不计时等于把最该看的那部分数据丢掉
+        t.expect(#h.observed).to.equal(1)
+        t.expect(h.errors[1].op).to.equal("find")
+    end)
+
+    t.it("多返回值原样透传", function()
+        local h = harness({ game = { connections = 1 } })
+        -- 为了计时要包一层 pcall，返回值不能因此少一个或串位
+        h.multi = { true, nil, "err" }
+        local coll = h.mod.get_collection("game", "role")
+        local a, b, c = coll:find({})
+        t.expect(a).to.equal(true)
+        t.expect(b).to.be_nil()
+        t.expect(c).to.equal("err")
     end)
 end)
 

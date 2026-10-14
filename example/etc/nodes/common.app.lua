@@ -191,3 +191,9 @@ gm_accounts = {
 
 -- GM 操作审计文件，默认写到 skynet root 下的 gm_audit.jsonl
 -- gm_audit_path = "logs/gm_audit.jsonl"
+
+-- 指标抓取端点。和 GM 一样默认只听回环：这个端点不鉴权，暴露出去等于把内部
+-- 拓扑和业务量公开。线上让 Prometheus 从同机或内网侧抓。
+-- 端口按节点配（见各 *.app.lua 的 metrics_http_port），同机跑多个节点才不会撞。
+metrics_http_host = "127.0.0.1"
+metrics_scrape_timeout = 300 -- 单次抓取等各服务回包的时限（1/100 秒），卡住的服务不拖垮整次抓取

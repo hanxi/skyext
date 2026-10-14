@@ -44,6 +44,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 数据持久化 | `lualib/skyext/dbmgr.lua`、`lualib/skyext/save_wheel.lua`、`lualib/orm/`、`service/mongo_conn.lua` | 加载/缓存 ORM 对象、跟踪变更、按回存轮定时与卸载时写入 MongoDB |
 | 协议与鉴权 | `lualib/skyext/sproto_api.lua`、`example/lualib/jwt.lua` | sproto 编解码、示例 JWT 登录 |
 | HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`lualib/skyext/gm_auth.lua`、`lualib/skyext/gm_audit.lua`、`service/gm.lua` | HTTP 路由、命令注册/执行、账号与角色鉴权、操作审计；见 [HTTP 服务端](guide/http_server.md)、[GM HTTP API](guide/gm_api.md) |
+| 指标 | `lualib/skyext/metrics*.lua`、`service/metrics.lua` | counter/gauge/histogram 原语、跨服务合并与 Prometheus 文本导出；见 [指标采集与导出](guide/metrics.md) |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
 | 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、实体生命周期、业务模块扩展 |
 | 测试与覆盖率 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程，生成 lcov 报告 |

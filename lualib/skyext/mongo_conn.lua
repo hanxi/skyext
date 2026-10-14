@@ -4,6 +4,7 @@ local config = require "skyext.config"
 local bson = require "bson"
 local log = require "skyext.log"
 local orm = require "orm"
+local metrics = require "skyext.metrics"
 
 local to_lightuserdata = bson.to_lightuserdata
 
@@ -26,16 +27,36 @@ local function bson_encode(doc)
     return _bson_encode(orm.to_bson(doc))
 end
 
+-- 在调用方这边计时，量到的是业务真正等了多久：既包含 mongo 的响应时间，
+-- 也包含连接服务自身的排队。只看 mongo 侧耗时会把"连接数不够"这类问题漏掉。
+local m_latency = metrics.histogram("skyext_mongo_call_seconds", "Time spent in a mongo call", { "op" })
+local m_errors = metrics.counter("skyext_mongo_call_errors_total", "Mongo calls that raised", { "op" })
+
+-- 操作名就那么几个，标签表建一次反复用，省掉热路径上的分配
+local g_op_labels = {}
+local function op_labels(cmd)
+    local labels = g_op_labels[cmd]
+    if not labels then
+        labels = { op = cmd }
+        g_op_labels[cmd] = labels
+    end
+    return labels
+end
+
 local conn_mt = {}
 conn_mt.__index = conn_mt
 
--- fuck tail call
-local function call_ret(...)
-    return ...
-end
-
 function conn_mt:call(cmd, ...)
-    return call_ret(skynet.call(self.addr, "lua", cmd, ...))
+    local labels = op_labels(cmd)
+    local started = skynet.hpc()
+    -- 包一层 pcall 是为了让失败也能计时和计数；错误原样抛回去，调用方感知不到这层
+    local ret = table.pack(pcall(skynet.call, self.addr, "lua", cmd, ...))
+    m_latency:observe((skynet.hpc() - started) / 1e9, labels)
+    if not ret[1] then
+        m_errors:inc(1, labels)
+        error(ret[2], 0)
+    end
+    return table.unpack(ret, 2, ret.n)
 end
 
 local conn = {}

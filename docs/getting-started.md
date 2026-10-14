@@ -65,8 +65,8 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 分别在不同终端、**从仓库根目录**运行，命令会保持前台：
 
 ```bash
-./bin/skyext serve account1  # Account：HTTP 端口 8080，GM 端口 9090
-./bin/skyext serve role1     # Role：客户端网关端口 7012，GM 端口 9092
+./bin/skyext serve account1  # Account：HTTP 端口 8080，GM 端口 9090，指标端口 9190
+./bin/skyext serve role1     # Role：客户端网关端口 7012，GM 端口 9092，指标端口 9192
 ```
 
 也可以启动 `account2`、`role2`（端口由各自的 `example/etc/nodes/*.app.lua` 配置决定）。`./bin/skyext serve robot` 启动示例机器人；其 `gate_nodes` 默认列出两个 Role 节点，若只运行 `role1`，请按需要启动 `role2` 或调整机器人配置。
@@ -108,6 +108,8 @@ local secret = config.get("login_jwt_secret")
 
 登录 token 除签名外还校验签发方和有效期：`login_jwt_issuer` / `login_jwt_audience` 两边必须一致，`login_jwt_ttl` 决定有效期（缺 `exp` 的 token 一律拒绝），`login_jwt_leeway` 容忍节点间时钟差。详见 [登录流程](guide/login_diagram.md#jwt-token)。
 
+指标端点（`metrics_http_host` / `metrics_http_port`，示例里 account1 用 9190、role1 用 9192）同样默认只听回环。它**不鉴权**，暴露出去等于把内部拓扑和业务量公开，配法与内置指标见[指标采集与导出](guide/metrics.md)。
+
 GM 不是一个 token 走天下：每个使用者配一个账号，账号挂一个角色，角色决定能执行到哪一级指令，所有操作进审计文件。示例默认不配账号（即 GM 接口关闭），配法见 [GM HTTP API](guide/gm_api.md#鉴权与权限)。
 
 ## 6. 测试、检查与打包
@@ -138,5 +140,6 @@ make -C example lint                       # 示例游戏 luacheck
 | MongoDB/etcd 连接失败 | 检查 Compose 服务、端口与 `common.app.lua` 中的连接地址；容器环境需替换 `127.0.0.1`。 |
 | 客户端/机器人无法连接 | 核对 Account HTTP、Role 网关监听端口，以及 `robot.app.lua` 的 `gate_nodes`。 |
 | GM 接口不可用 | 核对对应节点 GM 端口与 `gm_accounts`（账号/角色/token），详见 [GM HTTP API](guide/gm_api.md)。 |
+| `/metrics` 少了某个服务 | 该服务要用 `skyext.cmd_api` 接管消息分发才挂得上 `collect_metrics`；另见日志里的 `metrics service not found`。 |
 
 下一步可阅读[登录流程](guide/login.md)、[热更新操作](guide/hotfix.md)与[架构概览](overview.md)。

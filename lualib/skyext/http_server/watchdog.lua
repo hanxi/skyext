@@ -7,6 +7,7 @@ return function(server_name)
     local agent_main = require "skyext.http_server.agent"
     local cmd_api = require "skyext.cmd_api"
     local limits_mod = require "skyext.http_server.limits"
+    local metrics = require "skyext.metrics"
 
     assert(type(server_name) == "string" and server_name ~= "", "http watchdog requires a server name")
 
@@ -35,9 +36,18 @@ return function(server_name)
 
     local REJECT_LOG_INTERVAL = 100 -- 1 秒，单位为 skynet 的 1/100 秒
 
+    local m_connections = metrics.gauge("skyext_http_connections", "HTTP connections being served", { "server" })
+    local m_rejected = metrics.counter(
+        "skyext_http_connections_rejected_total",
+        "HTTP connections closed on accept because the limit was reached",
+        { "server" }
+    )
+    local m_labels = { server = server_name }
+
     local function on_accept(id, addr, balance)
         if active >= limits.max_connections then
             rejected = rejected + 1
+            m_rejected:inc(1, m_labels)
             -- 直接关闭而不是回 503：回 503 得先把请求读完，正好是被打满时最不该做的事。
             -- 必须用 close_fd：这个 fd 还没 socket.start 过，socket.close 查不到它会直接返回，
             -- fd 就这么泄漏在 C 层，连接上限反而成了 fd 耗尽的加速器。
@@ -63,6 +73,7 @@ return function(server_name)
             return balance
         end
         active = active + 1
+        m_connections:set(active, m_labels)
         skynet.send(agents[balance], "lua", "socket", "request", id, addr)
         balance = balance + 1
         if balance > #agents then
@@ -129,6 +140,7 @@ return function(server_name)
             log.error("http active connection underflow", "server", server_name)
             active = 0
         end
+        m_connections:set(active, m_labels)
     end
 
     -- 同步注册到所有 agent，返回时路由已全部生效
