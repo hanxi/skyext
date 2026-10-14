@@ -7,9 +7,10 @@ local function usage()
     print([[用法:
   ./bin/skyext schema check            对比当前 schema 与基线，不兼容则退出码 1
   ./bin/skyext schema accept [--force] 把当前 schema 记为新基线（不兼容时需要 --force）
+  ./bin/skyext schema retired [结构名] 列出删过、不能再用的名字
 
 基线是 example/schema/schema.lock.lua，跟着改动一起提交，评审时能直接看到 schema 变了什么。
-两个命令都要求先执行 ./bin/skyext generate schema。]])
+check 和 accept 都要求先执行 ./bin/skyext generate schema。]])
 end
 
 local LOCK_HEADER = [[
@@ -48,13 +49,33 @@ return function(ctx, _, args)
         usage()
         return 0
     end
+    local fs = ctx.fs
+    local lock_path = fs.join(ctx.game, LOCK)
+    local missing = "没有基线: " .. lock_path .. "，先执行 ./bin/skyext schema accept"
+
+    if action == "retired" then
+        assert(not args[3], "用法: schema retired [结构名]")
+        local list = orm_compat.retired(load_table(fs, lock_path, missing), args[2])
+        if #list == 0 then
+            print(args[2] and ("没有退休的名字: " .. args[2]) or "基线里没有退休的名字")
+            return 0
+        end
+        print("这些名字不能再用，库里还躺着当时写下的值：")
+        for _, item in ipairs(list) do
+            if item.field then
+                print(string.format("  %s.%s\t%s", item.scope, item.field, item.signature))
+            else
+                print(string.format("  %s\t（整个结构）", item.scope))
+            end
+        end
+        return 0
+    end
+
     assert(action == "check" or action == "accept", "未知命令: " .. action)
     local force = args[2] == "--force"
     assert(not args[2] or (force and action == "accept" and not args[3]), "用法: schema " .. action)
 
-    local fs = ctx.fs
     local define_path = fs.join(ctx.game, DEFINE)
-    local lock_path = fs.join(ctx.game, LOCK)
     local current = load_table(fs, define_path, "schema 还没生成，先执行 ./bin/skyext generate schema")
 
     if fs.mode(lock_path) ~= "file" then

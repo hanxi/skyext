@@ -250,6 +250,32 @@ function M.build_lock(baseline, current)
     return { types = current, retired = { fields = fields, types = types } }
 end
 
+--- 列出基线里退休的名字，按结构名、字段名排序。scope 不为 nil 时只列那一个结构。
+-- 每项为 { scope, field, signature }，整个结构退休的那项没有 field。
+function M.retired(baseline, scope)
+    local retired_fields, retired_types = retired_of(baseline)
+    local list = {}
+    for name in pairs(retired_types) do
+        if not scope or scope == name then
+            list[#list + 1] = { scope = name }
+        end
+    end
+    for name, tombstones in pairs(retired_fields) do
+        if not scope or scope == name then
+            for field, sig in pairs(tombstones) do
+                list[#list + 1] = { scope = name, field = field, signature = sig }
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.scope ~= b.scope then
+            return a.scope < b.scope
+        end
+        return (a.field or "") < (b.field or "")
+    end)
+    return list
+end
+
 local RESERVED = {}
 for word in
     ("and break do else elseif end false for function goto if in local nil not or repeat return then true until while"):gmatch(

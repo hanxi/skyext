@@ -258,3 +258,37 @@ return {
         t.expect(compat.diff(restored, original.types)).to.equal({})
     end)
 end)
+
+t.describe("orm_compat 列出墓碑", function()
+    t.it("没有墓碑时返回空表", function()
+        t.expect(compat.retired(lock(role({ rid = INT })))).to.equal({})
+    end)
+
+    t.it("列出字段墓碑和它当时的类型", function()
+        local baseline = compat.build_lock(lock(role({ rid = INT, nick = STR })), role({ rid = INT }))
+        t.expect(compat.retired(baseline)).to.equal({ { scope = "role", field = "nick", signature = "string" } })
+    end)
+
+    t.it("结构整体退休时同时列出结构和它的字段", function()
+        local baseline = compat.build_lock(lock({ role = { rid = INT }, pet = { pid = INT } }), role({ rid = INT }))
+        t.expect(compat.retired(baseline)).to.equal({
+            { scope = "pet" },
+            { scope = "pet", field = "pid", signature = "integer" },
+        })
+    end)
+
+    t.it("按结构名过滤", function()
+        local baseline = lock({}, { role = { nick = STR.type }, bag = { size = INT.type } })
+        t.expect(compat.retired(baseline, "bag")).to.equal({ { scope = "bag", field = "size", signature = "integer" } })
+        t.expect(compat.retired(baseline, "none")).to.equal({})
+    end)
+
+    t.it("按结构名、字段名排序", function()
+        local baseline = lock({}, { role = { zone = STR.type, nick = STR.type }, bag = { size = INT.type } })
+        local names = {}
+        for _, item in ipairs(compat.retired(baseline)) do
+            names[#names + 1] = item.scope .. "." .. item.field
+        end
+        t.expect(names).to.equal({ "bag.size", "role.nick", "role.zone" })
+    end)
+end)

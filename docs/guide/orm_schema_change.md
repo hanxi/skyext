@@ -40,6 +40,15 @@ v2 和 v5 单看都是"加/删字段"这类安全改动，只有基线替你记�
 ./bin/skyext generate schema   # 先生成
 ./bin/skyext schema check      # 对比基线
 ./bin/skyext schema accept     # 确认改动，更新基线
+./bin/skyext schema retired    # 列出删过、不能再用的名字（可带结构名）
+```
+
+`.sproto` 里看不出哪些名字退休过，起名字之前可以先 `schema retired role` 查一眼：
+
+```
+这些名字不能再用，库里还躺着当时写下的值：
+  role.create_time	integer
+  role.nick	string
 ```
 
 基线是 `example/schema/schema.lock.lua`，记录上一次确认过的结构，跟着 `.sproto` 的改动一起提交——评审时直接就能看到 schema 变了什么。
