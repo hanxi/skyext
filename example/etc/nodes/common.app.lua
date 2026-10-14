@@ -144,7 +144,14 @@ server2game = {
     ["s3"] = "game2", -- game3 合并到 game2 之后
 }
 
-http_request_body_size = 1024 * 1024
+-- HTTP 服务端资源上限（节点级默认值，单个 http_server 实例可在 start 的 conf 里覆盖）。
+-- 这些值回答的是"单个客户端能不能把节点拖垮"，所以取保守侧。
+http_max_connections = 1024 -- 同时在处理的连接数上限，超出的新连接直接关闭
+http_read_timeout = 10 -- 读完一个完整请求的总时限（秒），绝对时限，不随收包续期
+http_write_timeout = 10 -- 写出一个响应的时限（秒）
+http_keepalive_timeout = 60 -- keep-alive 空闲时限（秒），0 表示关闭 keep-alive
+http_keepalive_requests = 100 -- 单条连接最多服务多少个请求
+http_request_body_size = 1024 * 1024 -- 请求 body 字节上限，超过返回 413
 
 -- GM 鉴权 token，部署时替换为随机长串（不少于 16 字符）；
 -- 未配置或仍是占位符时 /gm/execute 接口禁用

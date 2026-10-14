@@ -6,4 +6,5 @@
   - [登录流程](guide/login.md)
   - [登录流程图](guide/login_diagram.md)
   - [热更新操作](guide/hotfix.md)
+  - [HTTP 服务端](guide/http_server.md)
   - [GM HTTP API](guide/gm_api.md)

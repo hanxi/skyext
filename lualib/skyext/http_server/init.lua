@@ -36,6 +36,9 @@ end
 
 -- 启动监听。conf: { host = "0.0.0.0", port = 8080, agent_count = 8 }
 -- port 传 0 时由系统分配，返回值中的 port 为实际监听端口。
+-- conf 还可覆盖资源上限（max_connections / read_timeout / write_timeout /
+-- keepalive_timeout / keepalive_requests / request_body_size），
+-- 未给出的字段取节点配置 http_<字段名>，再取内置默认值，见 skyext.http_server.limits。
 function server:start(conf)
     assert(type(conf) == "table", "http server conf must be a table")
     assert(not self.addr, "http server already started: " .. self.name)
@@ -57,6 +60,12 @@ end
 
 function server:address()
     return self.addr
+end
+
+-- 当前连接数与累计拒绝数，用于监控与排障
+function server:stats()
+    local addr = assert(self.addr, "http server not started: " .. self.name)
+    return skynet.call(addr, "lua", "stats")
 end
 
 return M
