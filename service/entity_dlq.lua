@@ -68,7 +68,6 @@ local GM_CMD = {}
 
 GM_CMD.dlq_list = {
     desc = "列出可靠消息死信队列",
-    level = "read",
     params = {
         target_type = "实体类型（可选）",
         target_id = "实体 ID（可选）",
@@ -99,7 +98,6 @@ GM_CMD.dlq_list = {
 
 GM_CMD.dlq_replay = {
     desc = "重放一条死信消息",
-    level = "write",
     params = {
         msg_id = "消息 ID",
     },
@@ -145,7 +143,6 @@ GM_CMD.dlq_replay = {
 
 GM_CMD.dlq_discard = {
     desc = "丢弃一条死信消息（文档保留，仅不再出现在死信列表）",
-    level = "admin",
     params = {
         msg_id = "消息 ID",
         operator = "操作人（可选，记入文档）",

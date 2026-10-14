@@ -68,7 +68,6 @@ end
 local GM_CMD = {}
 GM_CMD.reload_sproto_schema = {
     desc = "重载 sproto schema",
-    level = "write",
     handler = function()
         for _, proto in pairs(g_sproto_loaded) do
             local ok, errmsg = load_sproto_schema(proto, true)

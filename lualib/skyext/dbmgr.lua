@@ -426,7 +426,6 @@ end
 local GM_CMD = {}
 GM_CMD.reload_orm_schema = {
     desc = "重载 orm schema",
-    level = "write",
     handler = function()
         -- require 有缓存，必须先清掉才能拿到热更后的新代码
         package.loaded[SCHEMA_PATH] = nil

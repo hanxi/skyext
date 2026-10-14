@@ -164,7 +164,6 @@ end
 local GM_CMD = {
     metrics = {
         desc = "Dump metrics in Prometheus text format",
-        level = "read",
         params = {},
         handler = function()
             return true, metrics_text.render(scrape())

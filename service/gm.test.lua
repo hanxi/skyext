@@ -4,38 +4,29 @@ local lfs = require "lfs"
 
 local root = fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir())
 local source = fs.join(root, "service/gm.lua")
-local auth_source = fs.join(root, "lualib/skyext/gm_auth.lua")
 
-local VIEWER_TOKEN = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
-local OPS_TOKEN = "0f9e8d7c6b5a40312817f6e5d4c3b2a1"
-local ROOT_TOKEN = "11223344556677889900aabbccddeeff"
+local TOKEN = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
 local SERVICE_A = 0x01000002
 local SERVICE_B = 0x01000003
 
--- 真的 gm_auth，配置用假的：鉴权规则本身在 gm_auth.test.lua 里覆盖，
--- 这里要验的是 gm 服务有没有正确地用它
-local function load_auth(conf)
-    local imports = {
-        ["skyext.config"] = {
-            get_table = function(key)
-                return conf[key]
-            end,
-        },
-        ["skyext.secret"] = require "skyext.secret",
-        ["skyext.log"] = { info = function() end, error = function() end },
-    }
-    local env = setmetatable({
-        require = function(name)
-            return imports[name] or require(name)
-        end,
-    }, { __index = _G })
-    return assert(loadfile(auth_source, "t", env))()
+-- 把结构化日志摊平成 { msg, k = v, ... }，断言时按字段取
+local function flatten(msg, ...)
+    local entry = { msg = msg }
+    local args = table.pack(...)
+    for i = 1, args.n - 1, 2 do
+        entry[args[i]] = args[i + 1]
+    end
+    return entry
 end
 
-local function harness(conf)
-    local h = { records = {}, calls = {}, replies = {} }
+-- token 为 nil 表示没配，走"GM 接口整体禁用"那条路
+local function harness(token)
+    local h = { calls = {}, replies = {}, logs = {} }
     local noop = function() end
+    local function record(msg, ...)
+        h.logs[#h.logs + 1] = flatten(msg, ...)
+    end
 
     local imports = {
         skynet = {
@@ -70,24 +61,15 @@ local function harness(conf)
             end,
         },
         ["skyext.config"] = {
-            get = function() end,
+            get = function(key)
+                return key == "gm_auth_token" and token or nil
+            end,
             get_number = function() end,
         },
-        ["skyext.gm_auth"] = load_auth(conf or {}),
-        ["skyext.gm_audit"] = {
-            record = function(entry)
-                h.records[#h.records + 1] = entry
-            end,
-            recent = function(limit)
-                h.recent_limit = limit
-                return { "recent" }
-            end,
-        },
-        ["skyext.log"] = {
-            info = noop,
-            warn = noop,
-            error = noop,
-        },
+        -- 真的 secret：token 强度规则在 secret.test.lua 里覆盖，
+        -- 这里要验的是 gm 服务有没有照它的结论放行
+        ["skyext.secret"] = require "skyext.secret",
+        ["skyext.log"] = { info = record, warn = record, error = record },
     }
     local env = setmetatable({
         require = function(name)
@@ -97,216 +79,201 @@ local function harness(conf)
     assert(loadfile(source, "t", env))()
     h.boot()
 
-    h.register = function(address, cmd_name, level)
+    h.register = function(address, cmd_name)
         return h.CMD.register_commands(address, {
-            { cmd_name = cmd_name, handler_name = "GM_" .. cmd_name:upper(), desc = cmd_name, level = level },
+            { cmd_name = cmd_name, handler_name = "GM_" .. cmd_name:upper(), desc = cmd_name },
         })
     end
+    -- 执行结果现在只留在日志里，捞出那一行
+    h.find = function(msg)
+        for i = #h.logs, 1, -1 do
+            if h.logs[i].msg == msg then
+                return h.logs[i]
+            end
+        end
+    end
+    h.executed = function()
+        return h.find("GM command executed")
+    end
     return h
-end
-
-local function accounts()
-    return {
-        gm_accounts = {
-            { name = "viewer", role = "readonly", token = VIEWER_TOKEN },
-            { name = "ops", role = "operator", token = OPS_TOKEN },
-            { name = "root", role = "admin", token = ROOT_TOKEN },
-        },
-    }
 end
 
 local function cred(token)
     return { token = token, peer = "10.0.0.9:4000" }
 end
 
-t.describe("gm service authorization", function()
-    t.it("runs a command the role is allowed to run", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "gc", "write")
+t.describe("gm service authentication", function()
+    t.it("runs a command for a caller with the right token", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
         h.replies[SERVICE_A] = "collected"
 
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "gc", { timeout = "3" })
+        local result = h.CMD.execute_command(cred(TOKEN), "gc", { timeout = "3" })
         t.expect(result.code).to.equal(0)
         t.expect(result.results[1].success).to.equal(true)
         t.expect(result.results[1].data).to.equal("collected")
         t.expect(h.calls[1].handler).to.equal("GM_GC")
 
-        local audit = h.records[1]
-        t.expect(audit.account).to.equal("ops")
-        t.expect(audit.role).to.equal("operator")
-        t.expect(audit.peer).to.equal("10.0.0.9:4000")
-        t.expect(audit.cmd).to.equal("gc")
-        t.expect(audit.params).to.equal({ timeout = "3" })
-        t.expect(audit.result).to.equal("ok")
+        local logged = h.executed()
+        t.expect(logged.peer).to.equal("10.0.0.9:4000")
+        t.expect(logged.cmd).to.equal("gc")
+        t.expect(logged.result).to.equal("ok")
     end)
 
-    t.it("refuses a command above the role level without calling the service", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "kill", "admin")
-
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "kill", { address = ":01000002" })
-        t.expect(result.code).to.equal(11)
-        t.expect(result.error).to.match("operator")
-        t.expect(#h.calls).to.equal(0)
-        t.expect(h.records[1].result).to.equal("denied")
-        t.expect(h.records[1].account).to.equal("ops")
-    end)
-
-    t.it("refuses an unknown token and records the attempt", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "list", "read")
+    t.it("refuses a wrong token without calling the service", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "list")
 
         local result = h.CMD.execute_command(cred("deadbeefdeadbeefdeadbeef"), "list")
         t.expect(result.code).to.equal(11)
         t.expect(result.error).to.equal("invalid token")
         t.expect(#h.calls).to.equal(0)
-        t.expect(h.records[1].result).to.equal("auth_failed")
-        t.expect(h.records[1].account).to.equal("-")
-        t.expect(h.records[1].cmd).to.equal("list")
-        t.expect(h.records[1].peer).to.equal("10.0.0.9:4000")
+        t.expect(h.logs[#h.logs]).to.equal({
+            msg = "GM auth failed",
+            peer = "10.0.0.9:4000",
+            error = "invalid token",
+        })
     end)
 
-    t.it("records an unknown command against the account that asked for it", function()
-        local h = harness(accounts())
-        local result = h.CMD.execute_command(cred(ROOT_TOKEN), "nope")
-        t.expect(result.code).to.equal(1)
-        t.expect(result.error).to.equal("command not found")
-        t.expect(h.records[1].result).to.equal("unknown_command")
-        t.expect(h.records[1].account).to.equal("root")
+    t.it("refuses a token of the same length that differs in one byte", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "list")
+
+        local near = TOKEN:sub(1, #TOKEN - 1) .. (TOKEN:sub(-1) == "0" and "1" or "0")
+        t.expect(h.CMD.execute_command(cred(near), "list").code).to.equal(11)
+        t.expect(#h.calls).to.equal(0)
     end)
 
-    t.it("runs internal calls as the system account", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "clearcache", "write")
+    t.it("refuses a missing token", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "list")
+
+        t.expect(h.CMD.execute_command({ peer = "1.2.3.4" }, "list").code).to.equal(11)
+        t.expect(#h.calls).to.equal(0)
+    end)
+
+    t.it("says so at boot when no token is configured", function()
+        local h = harness(nil)
+        t.expect(h.find("GM token is unusable, GM interface is disabled")).to.equal({
+            msg = "GM token is unusable, GM interface is disabled",
+            reason = "not configured",
+        })
+    end)
+
+    t.it("rejects everything when no token is configured", function()
+        local h = harness(nil)
+        h.register(SERVICE_A, "list")
+
+        local result = h.CMD.execute_command(cred(TOKEN), "list")
+        t.expect(result.code).to.equal(11)
+        t.expect(result.error).to.equal("no usable GM token configured")
+        t.expect(#h.calls).to.equal(0)
+    end)
+
+    t.it("rejects everything when the configured token is a known placeholder", function()
+        local h = harness("CHANGE_ME_TO_RANDOM_TOKEN")
+        h.register(SERVICE_A, "list")
+
+        t.expect(h.CMD.execute_command(cred("CHANGE_ME_TO_RANDOM_TOKEN"), "list").code).to.equal(11)
+        t.expect(#h.calls).to.equal(0)
+    end)
+
+    t.it("runs internal calls with no credential at all", function()
+        local h = harness(nil)
+        h.register(SERVICE_A, "clearcache")
 
         local result = h.CMD.execute_command(nil, "clearcache")
         t.expect(result.code).to.equal(0)
-        t.expect(h.records[1].account).to.equal("system")
-        t.expect(h.records[1].peer).to.equal("internal")
-        t.expect(h.records[1].result).to.equal("ok")
+        t.expect(h.executed().peer).to.equal("internal")
     end)
 
-    t.it("rejects everything when no account is configured", function()
-        local h = harness({})
-        h.register(SERVICE_A, "list", "read")
-
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "list")
-        t.expect(result.code).to.equal(11)
-        t.expect(#h.calls).to.equal(0)
+    t.it("answers an unknown command after the token checks out", function()
+        local h = harness(TOKEN)
+        local result = h.CMD.execute_command(cred(TOKEN), "nope")
+        t.expect(result.code).to.equal(1)
+        t.expect(result.error).to.equal("command not found")
+        t.expect(h.executed()).to.be_nil()
     end)
 end)
 
 t.describe("gm service command registry", function()
-    t.it("defaults a command with no declared level to admin", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "mystery", nil)
+    t.it("lists every registered command to a caller with the token", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "list")
+        h.register(SERVICE_A, "gc")
+        h.register(SERVICE_B, "gc")
 
-        t.expect(h.CMD.execute_command(cred(OPS_TOKEN), "mystery").code).to.equal(11)
-        t.expect(h.CMD.execute_command(cred(ROOT_TOKEN), "mystery").code).to.equal(0)
-    end)
-
-    t.it("keeps the stricter level when two services disagree", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "reload", "read")
-        h.register(SERVICE_B, "reload", "admin")
-
-        t.expect(h.CMD.execute_command(cred(VIEWER_TOKEN), "reload").code).to.equal(11)
-        -- 反过来注册也一样严
-        local other = harness(accounts())
-        other.register(SERVICE_A, "reload", "admin")
-        other.register(SERVICE_B, "reload", "read")
-        t.expect(other.CMD.execute_command(cred(VIEWER_TOKEN), "reload").code).to.equal(11)
-    end)
-
-    t.it("lists only the commands the caller may run", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "list", "read")
-        h.register(SERVICE_A, "gc", "write")
-        h.register(SERVICE_A, "kill", "admin")
-
-        local viewer = h.CMD.list_commands(cred(VIEWER_TOKEN))
-        t.expect(viewer.code).to.equal(0)
-        t.expect(viewer.account).to.equal("viewer")
-        t.expect(viewer.role).to.equal("readonly")
-        t.expect(#viewer.commands).to.equal(1)
-        t.expect(viewer.commands[1].cmd).to.equal("list")
-        t.expect(viewer.commands[1].level).to.equal("read")
-
-        t.expect(#h.CMD.list_commands(cred(OPS_TOKEN)).commands).to.equal(2)
-        t.expect(#h.CMD.list_commands(cred(ROOT_TOKEN)).commands).to.equal(3)
+        local listed = h.CMD.list_commands(cred(TOKEN))
+        t.expect(listed.code).to.equal(0)
+        t.expect(#listed.commands).to.equal(2)
+        local counts = {}
+        for _, cmd in ipairs(listed.commands) do
+            counts[cmd.cmd] = cmd.service_count
+        end
+        t.expect(counts).to.equal({ list = 1, gc = 2 })
     end)
 
     t.it("refuses to list anything without a valid token", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "list", "read")
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "list")
 
         local result = h.CMD.list_commands(cred("nope"))
         t.expect(result.code).to.equal(11)
         t.expect(result.commands).to.be_nil()
-        t.expect(h.records[1].result).to.equal("auth_failed")
-        t.expect(h.records[1].cmd).to.equal("list_commands")
     end)
 end)
 
 t.describe("gm service execution outcome", function()
     t.it("reports a partial result when only some services succeed", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "gc", "write")
-        h.register(SERVICE_B, "gc", "write")
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
+        h.register(SERVICE_B, "gc")
         h.replies[SERVICE_A] = "ok"
         h.replies[SERVICE_B] = function()
             return false, "boom"
         end
 
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "gc")
+        local result = h.CMD.execute_command(cred(TOKEN), "gc")
         t.expect(result.code).to.equal(0)
         t.expect(#result.results).to.equal(2)
-        t.expect(h.records[1].result).to.equal("partial")
-        t.expect(h.records[1].detail).to.equal("boom")
+        t.expect(h.executed().result).to.equal("partial")
+        t.expect(h.executed().error).to.equal("boom")
     end)
 
     t.it("counts an unknown target service as a failure", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "gc", "write")
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
         h.replies[SERVICE_A] = "ok"
 
-        -- 指定的服务没注册过这条指令：一个服务都没执行到，审计不能记成 ok
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "gc", nil, { SERVICE_B })
+        -- 指定的服务没注册过这条指令：一个服务都没执行到，不能记成 ok
+        local result = h.CMD.execute_command(cred(TOKEN), "gc", nil, { SERVICE_B })
         t.expect(#result.results).to.equal(1)
         t.expect(result.results[1].success).to.equal(false)
         t.expect(h.calls[1]).to.be_nil()
-        t.expect(h.records[1].result).to.equal("failed")
-        t.expect(h.records[1].detail).to.equal("service not registered for this command")
+        t.expect(h.executed().result).to.equal("failed")
+        t.expect(h.executed().error).to.equal("service not registered for this command")
     end)
 
     t.it("reports a partial result when one target is valid and one is not", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "gc", "write")
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
         h.replies[SERVICE_A] = "ok"
 
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "gc", nil, { SERVICE_A, SERVICE_B })
+        local result = h.CMD.execute_command(cred(TOKEN), "gc", nil, { SERVICE_A, SERVICE_B })
         t.expect(#result.results).to.equal(2)
-        t.expect(h.records[1].result).to.equal("partial")
+        t.expect(h.executed().result).to.equal("partial")
     end)
 
     t.it("reports a failure when every service fails", function()
-        local h = harness(accounts())
-        h.register(SERVICE_A, "gc", "write")
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
         h.replies[SERVICE_A] = function()
             error("handler exploded", 0)
         end
 
-        local result = h.CMD.execute_command(cred(OPS_TOKEN), "gc")
+        local result = h.CMD.execute_command(cred(TOKEN), "gc")
         t.expect(result.results[1].success).to.equal(false)
-        t.expect(h.records[1].result).to.equal("failed")
-        t.expect(h.records[1].detail).to.equal("handler exploded")
-    end)
-end)
-
-t.describe("gm service audit query", function()
-    t.it("passes the limit through to the audit log", function()
-        local h = harness(accounts())
-        t.expect(h.CMD.recent_audit(5)).to.equal({ "recent" })
-        t.expect(h.recent_limit).to.equal(5)
+        t.expect(h.executed().result).to.equal("failed")
+        t.expect(h.executed().error).to.equal("handler exploded")
     end)
 end)

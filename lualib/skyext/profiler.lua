@@ -128,7 +128,6 @@ skynet.init(function()
     local GM_CMD = {}
     GM_CMD.profiler_start = {
         desc = "开始火焰图采样",
-        level = "write",
         params = { service = "目标服务名", duration = "采样时长(秒)", freq = "采样频率(Hz)" },
         handler = function(params)
             local session_id = M.start(params.service, tonumber(params.duration), tonumber(params.freq))
@@ -137,7 +136,6 @@ skynet.init(function()
     }
     GM_CMD.profiler_status = {
         desc = "查询采样状态",
-        level = "read",
         params = { session_id = "会话ID(可选)" },
         handler = function(params)
             local result = M.status(params.session_id and tonumber(params.session_id))
@@ -146,7 +144,6 @@ skynet.init(function()
     }
     GM_CMD.profiler_result = {
         desc = "获取采样结果(folded stack格式)",
-        level = "read",
         params = { session_id = "会话ID" },
         handler = function(params)
             local data, err = M.result(tonumber(params.session_id))

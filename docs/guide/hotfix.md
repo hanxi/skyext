@@ -229,14 +229,14 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ### GM 鉴权
 
-`/gm/execute` 接口需要携带账号 token：
+`/gm/execute` 接口需要携带 token：
 
 - HTTP Header: `Authorization: Bearer <token>`
 - 或请求参数: `token=<token>`
 
-账号在 `example/etc/nodes/common.app.lua` 的 `gm_accounts` 里配置，每人一个 token。`hotfix` 是 `admin` 级指令，只有 `admin` 角色（或在自定义角色的 `extra` 里显式放开 `hotfix` 的账号）才能执行；`hotfix_history` 是 `read` 级，谁都能看。**token 未配置、仍是占位符、或少于 16 字符时该账号被丢弃**，一个可用账号都没有时 GM 接口整体禁用。`allow_insecure_secret` 对 GM 鉴权无效。详见 [GM HTTP API](gm_api.md#鉴权与权限)。
+token 在 `example/etc/nodes/common.app.lua` 的 `gm_auth_token` 里配置。**未配置、仍是占位符、或少于 16 字符时 GM 接口整体禁用**；`allow_insecure_secret` 对 GM 无效。详见 [GM HTTP API](gm_api.md#鉴权)。
 
-`/gm/list` 接口同样需要鉴权，且只列出当前账号有权执行的指令。每次热更都会记进 GM 审计文件，能查到是谁发起的。
+`/gm/list` 接口同样需要 token。每次热更都会打一条 `GM command executed` 的日志。
 
 ### hotfix 二次确认
 

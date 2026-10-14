@@ -107,7 +107,6 @@ local function res_service()
     local GM_CMD = {}
     GM_CMD.reload_res = {
         desc = "重载 res",
-        level = "write",
         params = { filepaths = "文件路径列表" },
         handler = function(params)
             local filepaths = params.filepaths
