@@ -25,5 +25,4 @@ log_config = {
     },
 }
 
-snowflake_machine_id = 1
 include "common.app.lua"

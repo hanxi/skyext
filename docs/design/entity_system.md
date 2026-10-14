@@ -51,6 +51,7 @@
 | save_wheel | `lualib/skyext/save_wheel.lua` | 回存轮：所有缓存文档共用一个定时器轮转刷盘 |
 | cluster_discovery | `lualib/skyext/cluster_discovery.lua` | 服务注册/发现 |
 | id_generator | `lualib/skyext/id_generator.lua` | snowflake ID 生成（reliable_msg 消息 ID） |
+| machine_id | `lualib/skyext/machine_id.lua` | snowflake 机器号槽位：启动时从 etcd 抢一个带租约的编号 |
 | mongo_conn | `lualib/skyext/mongo_conn.lua` + `service/mongo_conn.lua` | MongoDB 连接池 |
 | cmd_api | `lualib/skyext/cmd_api.lua` | 服务消息分发 |
 | timer | `lualib/skyext/timer.lua` | 超时卸载定时器 |

@@ -21,6 +21,4 @@ account_agent_count = 1
 
 gm_http_port = 9091 -- GM HTTP 服务端口
 
-snowflake_machine_id = 3
-
 include "common.app.lua"

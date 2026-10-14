@@ -140,6 +140,9 @@ role_db_coll = "role"
 
 db_save_interval = 3 * 60 -- 数据入库间隔秒
 
+-- snowflake 机器号默认由各节点启动时从 etcd 抢一个带租约的槽位，扩容不用改配置。
+-- 只有需要把某个节点的号钉死时才在节点配置里写 snowflake_machine_id。
+
 -- 登录用的 jwt 密钥。下面这个示例值是公开的，谁都能拿它伪造登录态，
 -- 部署前必须换成随机长串（例如 openssl rand -hex 32），且不少于 16 字符。
 login_jwt_secret = "your_access_secret"

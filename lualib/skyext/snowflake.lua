@@ -3,6 +3,7 @@ local function snowflake_service()
     local skynet = require "skynet"
     local cmd_api = require "skyext.cmd_api"
     local config = require "skyext.config"
+    local machine_id = require "skyext.machine_id"
 
     local function parse_date(str_date)
         local pattern = "(%d+)-(%d+)-(%d+)"
@@ -33,10 +34,20 @@ local function snowflake_service()
     local MACHINE_LEFT = SEQUENCE_BIT
     local TIMESTAMP_LEFT = SEQUENCE_BIT + MACHINE_BIT
 
-    local MACHINE_ID
+    -- 机器号要么写死在配置里，要么从 etcd 抢一个带租约的槽位
+    local FIXED_MACHINE_ID
+    local machine_slot
     local sequence = 0
     local last_timestamp = -1
-    local is_inited = false
+
+    local function current_machine_id()
+        return FIXED_MACHINE_ID or machine_slot.id
+    end
+
+    -- 号不在手上就绝不能发 ID：接手这个号的进程可能正在用同一个 (时间, 机器号)
+    local function machine_id_held()
+        return FIXED_MACHINE_ID ~= nil or (machine_slot ~= nil and machine_slot:valid())
+    end
 
     -- 获取当前时间，单位 1s
     local function get_cur_timestamp()
@@ -72,21 +83,21 @@ local function snowflake_service()
         assert(relative_timestamp <= MAX_RELATIVE_TIME, "timestamp is out of range, over 174 years")
 
         -- 组合 ID
-        return (relative_timestamp << TIMESTAMP_LEFT) | (MACHINE_ID << MACHINE_LEFT) | sequence
+        return (relative_timestamp << TIMESTAMP_LEFT) | (current_machine_id() << MACHINE_LEFT) | sequence
     end
 
     local CMD = {}
     function CMD.newid()
-        if not is_inited then
-            error("snowflake service is not initialized yet")
+        if not machine_id_held() then
+            error("snowflake machine id is not held")
         end
         return generate_one()
     end
 
     -- 返回一个顺序数组 { id1, id2, ... }
     function CMD.newids(count)
-        if not is_inited then
-            error("snowflake service is not initialized yet")
+        if not machine_id_held() then
+            error("snowflake machine id is not held")
         end
 
         count = tonumber(count) or 1
@@ -105,27 +116,36 @@ local function snowflake_service()
     end
 
     skynet.start(function()
-        MACHINE_ID = config.get_number("snowflake_machine_id")
-        -- 检查机器ID
-        assert(
-            MACHINE_ID and MACHINE_ID >= 0 and MACHINE_ID <= MAX_MACHINE_ID,
-            "invalid machine_id = " .. tostring(MACHINE_ID)
-        )
+        -- 配置写死的编号优先：运维需要把某个节点的号钉死时仍然走得通
+        FIXED_MACHINE_ID = config.get_number("snowflake_machine_id")
+        if FIXED_MACHINE_ID then
+            assert(
+                FIXED_MACHINE_ID >= 0 and FIXED_MACHINE_ID <= MAX_MACHINE_ID,
+                "invalid machine_id = " .. tostring(FIXED_MACHINE_ID)
+            )
+        else
+            machine_slot = machine_id.new("snowflake", MAX_MACHINE_ID + 1)
+        end
 
         -- 初始化 last_timestamp，避免首次启动时钟回拨误判
         last_timestamp = get_cur_timestamp()
-        is_inited = true -- 标记初始化完成
         log.info(
             "snowflake service started",
             "machine_id",
-            MACHINE_ID,
+            FIXED_MACHINE_ID or "auto",
             "begin_timestamp",
             BEGIN_TIMESTAMP,
             "last_timestamp",
             last_timestamp
         )
 
+        -- 先开始收消息再去抢号：etcd 还没就绪时调用方应该拿到明确报错，而不是卡死
         cmd_api.dispatch(CMD)
+        if machine_slot then
+            skynet.fork(function()
+                machine_slot:acquire()
+            end)
+        end
     end)
 end
 
