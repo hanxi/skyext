@@ -13,7 +13,10 @@ local M = {}
 local KEY_PREFIX = "machine_id/"
 -- 一轮最多探测多少个槽位：号段有上万个，撞满 64 个基本只能是 etcd 出了问题
 local PROBE_LIMIT = 64
-local RETRY_DELAY = 5
+-- 抢不到号就退避重试。起步必须短：启动时 etcd 租约还没批下来这种失败毫秒级就能恢复，
+-- 固定睡几秒等于让整个进程白等。号段真被占满才需要退到秒级。
+local RETRY_DELAY_MIN = 0.1
+local RETRY_DELAY_MAX = 5
 
 local slot_mt = {}
 slot_mt.__index = slot_mt
@@ -80,13 +83,15 @@ function slot_mt:acquire(exclude)
         return
     end
     self.acquiring = true
+    local delay = RETRY_DELAY_MIN
     while not self.id do
         local ok, err = self:_try_claim(exclude)
         if ok then
             break
         end
-        log.error("machine id claim failed", "name", self.name, "err", err)
-        skynet.sleep(RETRY_DELAY * 100)
+        log.error("machine id claim failed", "name", self.name, "err", err, "retry_after", delay)
+        skynet.sleep(delay * 100)
+        delay = math.min(delay * 2, RETRY_DELAY_MAX)
     end
     self.acquiring = false
     log.info("machine id acquired", "name", self.name, "id", self.id)

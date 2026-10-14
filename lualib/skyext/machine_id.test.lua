@@ -149,6 +149,26 @@ t.describe("machine_id claim", function()
         -- etcd 不可用时把整个号段试一遍只是白费请求
         t.expect(#h.attempts).to.equal(2)
         t.expect(#h.sleeps).to.equal(1)
+        -- 第一轮只等 0.1 秒：启动期租约还没批下来这种失败毫秒级就恢复了，
+        -- 固定睡 5 秒会让整个节点干等
+        t.expect(h.sleeps[1]).to.equal(10)
+        t.expect(slot:valid()).to.equal(true)
+    end)
+
+    t.it("backs off exponentially up to a five second cap", function()
+        local h = harness()
+        h.lock_error = "etcd lease unavailable"
+        local rounds = 0
+        h.on_sleep = function()
+            rounds = rounds + 1
+            if rounds == 8 then
+                h.lock_error = nil
+            end
+        end
+        local slot = h.machine_id.new("snowflake", 1024)
+        slot:acquire()
+        -- 翻倍到 5 秒封顶：etcd 真的长时间挂了也不会把重试打成风暴
+        t.expect(h.sleeps).to.equal({ 10, 20, 40, 80, 160, 320, 500, 500 })
         t.expect(slot:valid()).to.equal(true)
     end)
 
