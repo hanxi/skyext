@@ -200,7 +200,6 @@ local function capture_logger(opts)
     return lg, records
 end
 
--- logger:error 目前把 traceback 放在 kv 的 key 位置，所以统一按 pair 取值
 local function event_value(record, key)
     for _, pair in ipairs(record.events) do
         if pair[1] == key then
@@ -287,5 +286,87 @@ t.describe("logger redaction", function()
         })
         lg:error("boom")
         t.expect(dump_events(records[1]):find(plain, 1, true)).to.be_type("number")
+    end)
+end)
+
+t.describe("logger:error 的日志结构", function()
+    t.it("把调用方的第一个参数当作 msg", function()
+        local lg, records = capture_logger()
+        lg:error("db write failed", "coll", "role")
+        t.expect(records[1].msg).to.equal("db write failed")
+    end)
+
+    t.it("把 traceback 放在值的位置而不是键的位置", function()
+        local lg, records = capture_logger()
+        lg:error("db write failed", "coll", "role")
+        t.expect(event_value(records[1], "traceback")).to.equal("<traceback>")
+        -- 反过来：不能再出现"整段 traceback 当 key"的情况
+        for _, pair in ipairs(records[1].events) do
+            t.expect(pair[1]).to_not.equal("<traceback>")
+        end
+    end)
+
+    t.it("保留调用方的 kv 并把 traceback 排在它们之后", function()
+        local lg, records = capture_logger()
+        lg:error("db write failed", "coll", "role", "id", 42)
+        local events = records[1].events
+        t.expect(#events).to.equal(3)
+        t.expect(events[1][1]).to.equal("coll")
+        t.expect(events[1][2]).to.equal("role")
+        t.expect(events[2][1]).to.equal("id")
+        t.expect(events[2][2]).to.equal("42")
+        t.expect(events[3][1]).to.equal("traceback")
+    end)
+
+    t.it("没有额外 kv 时只产生 traceback 一项", function()
+        local lg, records = capture_logger()
+        lg:error("boom")
+        t.expect(#records[1].events).to.equal(1)
+        t.expect(records[1].events[1][1]).to.equal("traceback")
+        t.expect(records[1].msg).to.equal("boom")
+    end)
+
+    t.it("kv 个数为奇数时仍然报错", function()
+        local lg = capture_logger()
+        -- _log 用 pcall 兜底，这里直接打 _raw_log 以便看到断言
+        t.expect(function()
+            lg:_raw_log(log_level.ERROR, 1, "boom", "only_key")
+        end).to
+            .throw("log args not even")
+    end)
+end)
+
+t.describe("logger 堆栈日志的结构", function()
+    t.it("xpcall_msgh 把错误信息放在 msg 而不是固定标题", function()
+        local lg, records = capture_logger()
+        lg:xpcall_msgh("lualib/foo.lua:12: attempt to index a nil value")
+        t.expect(records[1].msg).to.equal("lualib/foo.lua:12: attempt to index a nil value")
+        t.expect(event_value(records[1], "err_type")).to.equal("error")
+        t.expect(event_value(records[1], "traceback")).to.equal("<traceback>")
+        -- err_msg 已经是 msg 了，不该再重复成一个事件
+        t.expect(event_value(records[1], "err_msg")).to.be_nil()
+    end)
+
+    t.it("sys_assert 失败时记录断言信息", function()
+        local lg, records = capture_logger()
+        pcall(lg.sys_assert, lg, false, "role not loaded")
+        t.expect(records[1].msg).to.equal("role not loaded")
+        t.expect(event_value(records[1], "err_type")).to.equal("assert")
+    end)
+end)
+
+t.describe("logger msg 归一化", function()
+    t.it("把非字符串 msg 转成字符串，避免 json formatter 整条丢弃", function()
+        local lg, records = capture_logger()
+        lg:info(42)
+        t.expect(records[1].msg).to.equal("42")
+    end)
+
+    t.it("表形式的 msg 会被展开并脱敏", function()
+        local lg, records = capture_logger()
+        lg:info({ token = "eyJhbGciOi", stage = "login" })
+        t.expect(records[1].msg).to.be_type("string")
+        t.expect(records[1].msg:find("eyJhbGciOi", 1, true)).to.be_nil()
+        t.expect(records[1].msg:find('stage="login"', 1, true)).to.be_type("number")
     end)
 end)

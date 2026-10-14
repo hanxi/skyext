@@ -15,6 +15,8 @@ local setmetatable = setmetatable
 
 local sformat = string.format
 local supper = string.upper
+local tpack = table.pack
+local tunpack = table.unpack
 
 local DEBUG = log_level.DEBUG
 local INFO = log_level.INFO
@@ -118,6 +120,9 @@ end
 
 function logger:_raw_log(level, stack_depth, msg, ...)
     local events = self:_pack_events(level, ...)
+    -- msg 最终要进 json/text 两种 formatter，非字符串在 json 编码时会整条丢掉，
+    -- 这里统一归一化（表走 _serialize，顺带脱敏）
+    msg = tostring(self:_serialize(level, msg))
     local timestamp = time.time()
     local src = ""
     if self.log_src then
@@ -159,14 +164,20 @@ function logger:warn(...)
     return self:_log(WARN, ext_stack_depth, ...)
 end
 
-function logger:error(...)
+function logger:error(msg, ...)
     -- 被级别过滤时不要付出抓取堆栈的代价
     if not self:is_enabled(ERROR) then
         return
     end
     -- traceback 会把每帧的 arg/upvalue 连值一起打出来，其中可能有凭据
     local tcb = redact.filter_traceback(self.traceback(nil, 2))
-    return self:_log(ERROR, ext_stack_depth, "traceback", tcb, ...)
+    -- traceback 追加在调用方 kv 之后：它体积最大，排在前面会把有用字段挤到视线外。
+    -- 这里的 pack/unpack 开销远小于刚刚抓的那次堆栈。
+    local args = tpack(...)
+    local n = args.n
+    args[n + 1] = "traceback"
+    args[n + 2] = tcb
+    return self:_log(ERROR, ext_stack_depth, msg, tunpack(args, 1, n + 2))
 end
 
 local function log_traceback(self, log_lv, stack_depth, err_type, err_msg)
@@ -174,7 +185,9 @@ local function log_traceback(self, log_lv, stack_depth, err_type, err_msg)
         return
     end
     local tcb = redact.filter_traceback(self.traceback(nil, stack_depth + 1))
-    return self:_log(log_lv, stack_depth, "stack traceback", "err_type", err_type, "err_msg", err_msg, "traceback", tcb)
+    -- msg 位置放真正的错误信息，而不是 "stack traceback" 这种固定串，
+    -- 否则日志检索只能看到千篇一律的标题
+    return self:_log(log_lv, stack_depth, err_msg, "err_type", err_type, "traceback", tcb)
 end
 
 local do_error_stack_depth = 1
