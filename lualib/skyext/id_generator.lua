@@ -1,4 +1,5 @@
 local skynet = require "skynet"
+local log = require "skyext.log"
 local snowflake = require "skyext.snowflake"
 
 local M = {}
@@ -38,7 +39,7 @@ local function refill_cache()
         -- 批量获取新ID
         local ok, new_ids = pcall(M.raw_newids, REFILL_SIZE)
         if not ok then
-            skynet.error("refill_cache failed:", new_ids)
+            log.error("id_generator refill failed", "err", tostring(new_ids))
             is_refilling = false
             return
         end
@@ -49,7 +50,7 @@ local function refill_cache()
             cache_size = cache_size + 1
         end
 
-        skynet.error(string.format("Cache refilled, current size: %d", cache_size))
+        log.debug("id_generator cache refilled", "size", cache_size)
         is_refilling = false
     end
 
@@ -62,7 +63,9 @@ local function get_cached_id()
     -- 获取任意一个ID
     local id = next(id_cache)
     if not id then
-        -- 缓存为空，直接从原始接口获取
+        -- 缓存空了说明上一次补充失败了（启动时机器号还没抢到就会这样）。
+        -- 这里必须再发起一次，否则缓存永远是空的，之后每个 ID 都要同步打一次 snowflake。
+        refill_cache()
         return M.raw_newid()
     end
 
