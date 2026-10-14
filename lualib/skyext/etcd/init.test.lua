@@ -2,7 +2,6 @@ local t = require "skytest"
 local cjson = require "cjson.safe"
 local crypt = require "skynet.crypt"
 local util_table = require "skyext.util.table"
-local redact = require "skyext.log.redact"
 
 -- 这里要的是"整条链路"：init 聚合出来的客户端 → kv/lease → transport → httpc。
 -- 各层自己的 require 在加载时就固定了，用 loadfile 注入只能换掉一层，
@@ -61,13 +60,13 @@ local function last_request()
     return state.requests[#state.requests]
 end
 
--- 按真实 logger 的方式渲染捕获到的日志参数：表走带脱敏的序列化，其它走 tostring。
+-- 按真实 logger 的方式渲染捕获到的日志参数：表走序列化，其它走 tostring。
 -- 这样断言的是"最终落到日志里的文本"，而不是 etcd 自己拼出来的中间值。
 local function dump_logs()
     local out = {}
     for _, entry in ipairs(state.logs) do
         for _, v in ipairs(entry) do
-            out[#out + 1] = type(v) == "table" and util_table.tostring(v, redact) or tostring(v)
+            out[#out + 1] = type(v) == "table" and util_table.tostring(v) or tostring(v)
         end
     end
     return table.concat(out, "\n")

@@ -7,7 +7,6 @@ etcd 客户端的 HTTP 传输层：端点解析、故障摘除、请求发送。
 
 local httpc = require "http.httpc"
 local log = require "skyext.log"
-local redact = require "skyext.log.redact"
 local time = require "skyext.time"
 local codec = require "skyext.etcd.codec"
 
@@ -96,11 +95,13 @@ local function working_endpoint(self)
     return endpoint
 end
 
--- 认证接口的请求体是 etcd 用户名密码，响应体就是 jwt token 本身。
--- 两者都是整段 JSON 字符串，凭据在字符串内部，按 key 脱敏救不了，只能整体打码。
+-- 认证接口的请求体是 etcd 用户名密码，响应体就是签发的 jwt token，
+-- 整段都是凭据，没有可留下来排障的信息，干脆不记。
+local AUTH_BODY_OMITTED = "[auth body omitted]"
+
 local function loggable(body, ignore_auth)
     if ignore_auth then
-        return redact.mask(body)
+        return AUTH_BODY_OMITTED
     end
     return body
 end

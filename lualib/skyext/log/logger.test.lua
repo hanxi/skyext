@@ -189,7 +189,7 @@ local function capture_logger(opts)
     local mod = assert(loadfile(source, "t", env))()
     local lg = mod.new()
     lg:config({
-        name = "redact_test",
+        name = "logger_test",
         level = opts.level or log_level.DEBUG,
         log_src = false,
         log_table = opts.log_table,
@@ -207,87 +207,6 @@ local function event_value(record, key)
         end
     end
 end
-
-local function dump_events(record)
-    local parts = {}
-    for _, pair in ipairs(record.events) do
-        parts[#parts + 1] = tostring(pair[1]) .. "=" .. tostring(pair[2])
-    end
-    return table.concat(parts, "\n")
-end
-
-t.describe("logger redaction", function()
-    t.it("masks values whose key names a credential", function()
-        local lg = spy_logger()
-        local events = lg:_pack_events(log_level.INFO, "token", "eyJhbGciOi", "account", "abc")
-        t.expect(events[1][1]).to.equal("token")
-        t.expect(events[1][2]).to.equal("***REDACTED(len=10)***")
-        t.expect(events[2][1]).to.equal("account")
-        t.expect(events[2][2]).to.equal("abc")
-    end)
-
-    t.it("masks credentials nested inside a logged table", function()
-        local lg, records = capture_logger()
-        lg:info("request_uri end", "uri", "/v3/authenticate", "body", { token = "eyJhbGciOi", cluster_id = 7 })
-        local body = event_value(records[1], "body")
-        t.expect(body).to.be_type("string")
-        t.expect(body:find("eyJhbGciOi", 1, true)).to.be_nil()
-        t.expect(body:find("REDACTED", 1, true)).to.be_type("number")
-        -- 非敏感字段照常输出，否则排障就没有信息了
-        t.expect(body:find("cluster_id=7", 1, true)).to.be_type("number")
-    end)
-
-    t.it("does not treat an ordinary key as a credential", function()
-        local lg = spy_logger()
-        local events = lg:_pack_events(log_level.INFO, "key", "/skyext/node/role1", "keys", "k1", "monkey", "m")
-        t.expect(events[1][2]).to.equal("/skyext/node/role1")
-        t.expect(events[2][2]).to.equal("k1")
-        t.expect(events[3][2]).to.equal("m")
-    end)
-
-    t.it("masks a credential before the table is ever serialized", function()
-        -- log_table = false 时表本来就不展开，但敏感键仍然要变成占位串，
-        -- 不能退化成 "table: 0x..." 之外还把原值带出去
-        local lg, records = capture_logger({ log_table = false })
-        lg:info("auth", "password", { plain = "hunter2" })
-        t.expect(event_value(records[1], "password")).to.equal("***REDACTED***")
-    end)
-
-    t.it("masks credential arguments dumped by the C traceback", function()
-        local fake = table.concat({
-            "stack traceback:",
-            "\n\t@lualib/skyext/etcd.lua:351: in function 'refresh'",
-            '\n\t\t<arg 1> self = {user="root"}',
-            '\n\t\t<arg 2> access_token = "eyJhbGciOiJIUzUxMiJ9.secret"',
-            '\n\t\t<upvalue 1> login_jwt_secret = "your_access_secret"',
-            '\n\t\t<upvalue 2> node_name = "role1"',
-        })
-        local lg, records = capture_logger({
-            traceback = function()
-                return fake
-            end,
-        })
-        lg:error("boom", "k", "v")
-        local dumped = dump_events(records[1])
-        t.expect(dumped:find("eyJhbGciOiJIUzUxMiJ9.secret", 1, true)).to.be_nil()
-        t.expect(dumped:find("your_access_secret", 1, true)).to.be_nil()
-        -- 非敏感的栈信息保持不变
-        t.expect(dumped:find("etcd.lua:351", 1, true)).to.be_type("number")
-        t.expect(dumped:find('<upvalue 2> node_name = "role1"', 1, true)).to.be_type("number")
-        t.expect(dumped:find("REDACTED", 1, true)).to.be_type("number")
-    end)
-
-    t.it("leaves a plain debug.traceback untouched", function()
-        local plain = "stack traceback:\n\tlualib/skyext/etcd.lua:351: in function 'refresh'"
-        local lg, records = capture_logger({
-            traceback = function()
-                return plain
-            end,
-        })
-        lg:error("boom")
-        t.expect(dump_events(records[1]):find(plain, 1, true)).to.be_type("number")
-    end)
-end)
 
 t.describe("logger:error 的日志结构", function()
     t.it("把调用方的第一个参数当作 msg", function()
@@ -362,11 +281,11 @@ t.describe("logger msg 归一化", function()
         t.expect(records[1].msg).to.equal("42")
     end)
 
-    t.it("表形式的 msg 会被展开并脱敏", function()
+    t.it("表形式的 msg 会被展开", function()
         local lg, records = capture_logger()
-        lg:info({ token = "eyJhbGciOi", stage = "login" })
+        lg:info({ stage = "login", retry = 2 })
         t.expect(records[1].msg).to.be_type("string")
-        t.expect(records[1].msg:find("eyJhbGciOi", 1, true)).to.be_nil()
         t.expect(records[1].msg:find('stage="login"', 1, true)).to.be_type("number")
+        t.expect(records[1].msg:find("retry=2", 1, true)).to.be_type("number")
     end)
 end)

@@ -80,7 +80,7 @@ local function append_result(result, ...)
     end
 end
 
-local function val_to_str(v, result, seen, redact)
+local function val_to_str(v, result, seen)
     local tp = type(v)
     if "string" == tp then
         v = gsub(v, "\n", "\\n")
@@ -100,7 +100,7 @@ local function val_to_str(v, result, seen, redact)
         if getmetatable(v) and getmetatable(v).__tostring then
             append_result(result, tostring(v))
         else
-            M.tostring_tbl(v, result, seen, redact)
+            M.tostring_tbl(v, result, seen)
         end
     elseif "function" == tp then
         append_result(result, '"', tostring(v), '"')
@@ -119,9 +119,7 @@ local function key_to_str(k, result, seen)
     end
 end
 
--- redact: 可选的脱敏器 { is_sensitive = function(key), mask = function(value) }，
--- 命中敏感键时不展开原值，只写入打码后的占位串（见 skyext.log.redact）
-M.tostring_tbl = function(tbl, result, seen, redact)
+M.tostring_tbl = function(tbl, result, seen)
     if not result.i then
         result.i = 0
     end
@@ -140,11 +138,7 @@ M.tostring_tbl = function(tbl, result, seen, redact)
         end
         key_to_str(k, result, seen)
         append_result(result, "=")
-        if redact and redact.is_sensitive(k) then
-            val_to_str(redact.mask(v), result, seen, redact)
-        else
-            val_to_str(v, result, seen, redact)
-        end
+        val_to_str(v, result, seen)
         first = false
     end
     append_result(result, "}")
@@ -155,11 +149,11 @@ M.concat_tostring_tbl = function(result)
     return table.concat(result, "")
 end
 
-M.tostring = function(tbl, redact)
+M.tostring = function(tbl)
     local result = {}
     result.i = 0
     local seen = {} -- 初始化访问记录表
-    val_to_str(tbl, result, seen, redact)
+    val_to_str(tbl, result, seen)
     return M.concat_tostring_tbl(result)
 end
 
