@@ -7,8 +7,16 @@ local errcode = require "skyext.errcode"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "service/entity_agent.lua")
 
-local function harness()
-    local h = { events = {}, bound = {}, calls = {}, deliveries = 0, cluster_calls = 0 }
+local function harness(opts)
+    opts = opts or {}
+    local h = {
+        events = {},
+        bound = {},
+        calls = {},
+        deliveries = 0,
+        cluster_calls = 0,
+        registered_modules = {},
+    }
     local noop = function() end
     local gates = {}
     local entity = { id = 7, data = { name = "before" } }
@@ -154,7 +162,16 @@ local function harness()
         ["skyext.errcode"] = errcode,
         ["skynet.cluster"] = fake_cluster,
         ["entity_handler.role"] = h.handler,
+        ["skyext.sproto_api"] = {
+            register_module = function(name, module, request)
+                t.expect(module).to.equal(fake_client)
+                h.registered_modules[#h.registered_modules + 1] = { name = name, request = request }
+            end,
+        },
     }
+    for name, mod in pairs(opts.module_sources or {}) do
+        imports[name] = mod
+    end
     local env = setmetatable({
         require = function(name)
             return imports[name] or require(name)
@@ -162,7 +179,10 @@ local function harness()
     }, { __index = _G })
     assert(loadfile(source, "t", env))("role", "1")
     h.boot()
-    h.CMD.start({ modules_path = "modules", modules = {}, watchdog = 123 })
+    h.start_conf = { modules_path = "modules", modules = opts.modules or {}, watchdog = 123 }
+    if not opts.manual_start then
+        h.CMD.start(h.start_conf)
+    end
     return h
 end
 
@@ -326,5 +346,78 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.CMD.unload_entity(7)).to.equal(false)
         h.unload_ok = true
         t.expect(h.CMD.unload_entity(7)).to.equal(true)
+    end)
+end)
+
+t.describe("entity_agent module loading", function()
+    local MODULES = {
+        { name = "bag", init = true, request = true },
+        { name = "mail", init = false, request = true },
+        { name = "note", init = true, request = false },
+    }
+
+    local function sources()
+        return {
+            ["modules.bag"] = { new = function() end },
+            ["modules.bag.request"] = { use = function() end },
+            ["modules.mail.request"] = { read = function() end },
+            ["modules.note"] = { new = function() end },
+        }
+    end
+
+    t.it("registers exactly the request modules that exist on disk", function()
+        local src = sources()
+        local h = harness({ modules = MODULES, module_sources = src })
+        t.expect(h.registered_modules).to.equal({
+            { name = "bag", request = src["modules.bag.request"] },
+            { name = "mail", request = src["modules.mail.request"] },
+        })
+    end)
+
+    t.it("only keeps init modules that expose new", function()
+        local h = harness({
+            modules = {
+                { name = "bag", init = true, request = false },
+                { name = "plain", init = true, request = false },
+            },
+            module_sources = {
+                ["modules.bag"] = { new = function() end },
+                ["modules.plain"] = { helper = function() end },
+            },
+        })
+        t.expect(h.registered_modules).to.equal({})
+    end)
+
+    -- 回归：路径配错时 require 失败必须炸掉启动。
+    -- 以前这里是 pcall 吞掉的，结果协议一个都没注册，客户端只能看到超时。
+    t.it("fails agent start when a request module cannot be loaded", function()
+        local src = sources()
+        src["modules.mail.request"] = nil
+        local h = harness({ modules = MODULES, module_sources = src, manual_start = true })
+        t.expect(function()
+            h.CMD.start(h.start_conf)
+        end).to
+            .throw("modules.mail.request")
+        t.expect(h.registered_modules).to.equal({ { name = "bag", request = src["modules.bag.request"] } })
+    end)
+
+    t.it("fails agent start when an init module cannot be loaded", function()
+        local src = sources()
+        src["modules.bag"] = nil
+        local h = harness({ modules = MODULES, module_sources = src, manual_start = true })
+        t.expect(function()
+            h.CMD.start(h.start_conf)
+        end).to
+            .throw("modules.bag")
+    end)
+
+    t.it("rejects a request module that does not return a table", function()
+        local src = sources()
+        src["modules.mail.request"] = function() end
+        local h = harness({ modules = MODULES, module_sources = src, manual_start = true })
+        t.expect(function()
+            h.CMD.start(h.start_conf)
+        end).to
+            .throw("modules%.mail%.request must return a table")
     end)
 end)

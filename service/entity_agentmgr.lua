@@ -29,22 +29,34 @@ local function discover_modules(modules_path, start_name)
         if entry ~= "." and entry ~= ".." then
             local full = dir .. "/" .. entry
             if lfs.attributes(full, "mode") == "directory" then
-                local has_init = lfs.attributes(full .. "/init.lua")
-                local has_request = lfs.attributes(full .. "/request.lua")
+                local has_init = lfs.attributes(full .. "/init.lua") ~= nil
+                local has_request = lfs.attributes(full .. "/request.lua") ~= nil
                 if has_init or has_request then
-                    result[#result + 1] = entry
+                    -- 把「磁盘上有哪些文件」一并带给 agent：agent 据此精确 require，
+                    -- 文件在却 require 不到时能直接报错，而不是当成「这个模块没有客户端协议」
+                    result[#result + 1] = { name = entry, init = has_init, request = has_request }
                 end
             end
         end
     end
-    table.sort(result)
+    table.sort(result, function(a, b)
+        return a.name < b.name
+    end)
     return result
+end
+
+local function module_names(modules)
+    local names = {}
+    for i, mod in ipairs(modules) do
+        names[i] = mod.name
+    end
+    return names
 end
 
 local CMD = {}
 
 local g_modules_path
-local g_module_names = {}
+local g_modules = {}
 
 -- 两段式启动：skynet.start 只做本地准备，agent 必须等 CMD.start 送来
 -- 合法的 watchdog 之后才创建，全部创建并注册完成后才算 ready。
@@ -93,7 +105,7 @@ local function create_agents(agent_count, watchdog)
             local agent = skynet.newservice("entity_agent", type_name, i)
             agents[#agents + 1] = agent
             skynet.call(agent, "lua", "start", {
-                modules = g_module_names,
+                modules = g_modules,
                 modules_path = g_modules_path or "",
                 watchdog = watchdog,
             })
@@ -177,8 +189,8 @@ end
 skynet.start(function()
     g_modules_path = type_config.modules_path
     if g_modules_path then
-        g_module_names = discover_modules(g_modules_path, skynet.getenv("start"))
-        log.info("discovered modules", "type", type_name, "modules", g_module_names)
+        g_modules = discover_modules(g_modules_path, skynet.getenv("start"))
+        log.info("discovered modules", "type", type_name, "modules", module_names(g_modules))
     end
 
     cmd_api.dispatch(CMD)

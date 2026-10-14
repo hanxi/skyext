@@ -18,6 +18,14 @@ local g_watchdog
 
 local CMD = {}
 
+local function module_names(modules)
+    local names = {}
+    for i, mod in ipairs(modules) do
+        names[i] = mod.name
+    end
+    return names
+end
+
 -- 路由跟着集群成员走，实体会换节点，而上一个节点可能还持有着它的分布式锁。
 -- 向持有者要一次卸载再重试；只要一次：两边的成员视图短暂分歧时，无限重试会变成互相抢。
 local function request_handoff(entity_id, holder_node)
@@ -145,20 +153,24 @@ function CMD.start(conf)
     local modules_path = conf.modules_path
     g_watchdog = conf.watchdog
 
-    for _, name in ipairs(conf.modules) do
-        local mod_path = modules_path .. "." .. name
+    -- conf.modules 是 entity_agentmgr 扫磁盘得到的，文件一定存在。
+    -- 这里不能吞 require 失败：漏掉一个 request 模块，它的所有协议都不会注册，
+    -- 客户端发过来的包会被 skynet 当未知协议丢掉，两端都没有日志，只剩超时。
+    for _, mod in ipairs(conf.modules) do
+        local mod_path = modules_path .. "." .. mod.name
 
-        local ok, mod = pcall(require, mod_path)
-        if ok and type(mod) == "table" and mod.new then
-            g_data_modules[name] = mod
+        if mod.init then
+            local data_mod = require(mod_path)
+            if type(data_mod) == "table" and data_mod.new then
+                g_data_modules[mod.name] = data_mod
+            end
         end
 
-        if type_config.client_enabled then
-            local ok2, request = pcall(require, mod_path .. ".request")
-            if ok2 and type(request) == "table" and next(request) then
-                local sproto_api = require "skyext.sproto_api"
-                sproto_api.register_module(name, client_ext, request)
-            end
+        if mod.request and type_config.client_enabled then
+            local request = require(mod_path .. ".request")
+            assert(type(request) == "table", mod_path .. ".request must return a table")
+            local sproto_api = require "skyext.sproto_api"
+            sproto_api.register_module(mod.name, client_ext, request)
         end
     end
 
@@ -169,7 +181,7 @@ function CMD.start(conf)
         client_ext.init(entitymgr)
     end
 
-    log.info("entity_agent started", "type", type_name, "index", agent_index, "modules", conf.modules)
+    log.info("entity_agent started", "type", type_name, "index", agent_index, "modules", module_names(conf.modules))
 end
 
 skynet.start(function()

@@ -181,7 +181,11 @@ t.describe("entity_agentmgr 两段式启动", function()
         for _, item in ipairs(h.agent_starts) do
             t.expect(item.conf.watchdog).to.equal(watchdog)
             t.expect(item.conf.modules_path).to.equal("modules")
-            t.expect(item.conf.modules).to.equal({ "bag", "mail" })
+            -- 带上磁盘上有哪些文件，agent 才能对「文件在却 require 不到」直接报错
+            t.expect(item.conf.modules).to.equal({
+                { name = "bag", init = true, request = false },
+                { name = "mail", init = false, request = true },
+            })
         end
         t.expect(h.CMD.agents()).to.equal(h.agents)
     end)

@@ -8,8 +8,12 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
 luaservice = luaservice .. skyext_root .. "service/?/main.lua;"
 luaservice = luaservice .. skyext_root .. "skynet/service/?.lua;"
 
--- Lua 库搜索路径（游戏库 → 引擎库 → skynet 库）
-lua_path = game_root .. "lualib/?.lua;"
+-- Lua 库搜索路径（节点目录 → 游戏库 → 引擎库 → skynet 库）
+-- 节点目录必须在最前面：entity_types.modules_path 是相对节点目录的 require 前缀，
+-- entity_agent 是引擎服务，不加这条就 require 不到 nodes/<start>/modules/*。
+lua_path = game_root .. "nodes/" .. start .. "/?.lua;"
+lua_path = lua_path .. game_root .. "nodes/" .. start .. "/?/init.lua;"
+lua_path = lua_path .. game_root .. "lualib/?.lua;"
 lua_path = lua_path .. game_root .. "lualib/?/init.lua;"
 lua_path = lua_path .. game_root .. "build/lualib/?.lua;"
 lua_path = lua_path .. game_root .. "build/lualib/?/init.lua;"
