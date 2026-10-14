@@ -40,6 +40,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 能力 | 入口或实现 | 说明 |
 | --- | --- | --- |
 | 服务发现 | `lualib/skyext/cluster_discovery.lua`、`service/cluster_discovery.lua` | etcd 注册、租约续期、服务节点查询与变更通知 |
+| etcd 客户端 | `lualib/skyext/etcd/` | etcd v3 HTTP 客户端，按 transport/auth/kv/lease/watch 分层，服务发现与分布式锁的底座 |
 | 数据持久化 | `lualib/skyext/dbmgr.lua`、`lualib/orm/`、`service/mongo_conn.lua` | 加载/缓存 ORM 对象、跟踪变更、定时与卸载时写入 MongoDB |
 | 协议与鉴权 | `lualib/skyext/sproto_api.lua`、`example/lualib/jwt.lua` | sproto 编解码、示例 JWT 登录 |
 | HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`service/gm.lua` | HTTP 路由及命令注册/执行；见 [HTTP 服务端](guide/http_server.md)、[GM HTTP API](guide/gm_api.md) |

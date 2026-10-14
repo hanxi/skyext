@@ -658,8 +658,8 @@ function CMD.query_service(service)
 end
 
 skynet.start(function()
-    local etcd_config = config.get_table("etcd_config")
-    g_etcd_client = etcd.new(etcd_config)
+    -- 配置写错时在这里就要炸：带着 nil 客户端起来，第一次心跳才报错更难查
+    g_etcd_client = assert(etcd.new(config.get_table("etcd_config")))
 
     g_heartbeat_timer = timer.repeat_immediately("cluster_discovery_heartbeat", HEARTBEAT_INTERVAL, function()
         if not g_keepalive_timer then
