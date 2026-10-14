@@ -58,14 +58,14 @@ local function new_node(node_name)
             end,
         },
         ["skyext.timer"] = {
-            repeat_immediately = function(_, _, fn)
+            repeat_delayed = function(_, _, fn)
                 node.heartbeat = fn
             end,
         },
         ["skyext.log"] = log,
     })
+    -- init 内部已经同步申请过租约，这里不用再手工跑一轮心跳
     node.init()
-    node.heartbeat()
 
     node.machine_id = load_module(id_source, {
         skynet = setmetatable({

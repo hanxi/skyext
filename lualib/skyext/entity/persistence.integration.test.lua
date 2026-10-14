@@ -42,14 +42,14 @@ local function new_holder(etcd_config)
             end,
         },
         ["skyext.timer"] = {
-            repeat_immediately = function(_, _, fn)
+            repeat_delayed = function(_, _, fn)
                 holder.heartbeat = fn
             end,
         },
         ["skyext.log"] = log,
     })
+    -- init 内部已经同步申请过租约，这里不用再手工跑一轮心跳
     holder.init()
-    holder.heartbeat()
 
     holder.dbmgr = load_module(db_source, {
         skynet = { init = noop },

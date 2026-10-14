@@ -5,11 +5,16 @@ local crypt = require "skynet.crypt"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "lualib/skyext/distributed_lock.lua")
 
-local function harness()
-    local h = { now = 0, revision = 0, lease = 0, locks = {} }
+local function harness(opts)
+    opts = opts or {}
+    local h = { now = 0, revision = 0, lease = 0, locks = {}, grants = 0 }
     local client = {}
     function client:grant(ttl)
         t.expect(ttl).to.equal(30)
+        h.grants = h.grants + 1
+        if h.fail_grant then
+            return nil, "no quorum"
+        end
         h.lease = h.lease + 1
         return { status = 200, body = { ID = h.lease } }
     end
@@ -72,7 +77,9 @@ local function harness()
             end,
         },
         ["skyext.timer"] = {
-            repeat_immediately = function(_, _, fn)
+            repeat_delayed = function(name, sec, fn)
+                h.heartbeat_name = name
+                h.heartbeat_interval = sec
                 h.heartbeat = fn
             end,
         },
@@ -89,15 +96,15 @@ local function harness()
         end,
     }, { __index = _G })
     h.lock = assert(loadfile(source, "t", env))()
+    h.fail_grant = opts.fail_grant
     h.init()
+    h.fail_grant = nil
     return h
 end
 
 t.describe("distributed lock lease and fencing", function()
     t.it("returns a fenced handle only with a live lease and never revives an expired one", function()
         local h = harness()
-        t.expect(h.lock.try_lock("role:7", "owner")).to.equal(false)
-        h.heartbeat()
         local ok, first = h.lock.try_lock("role:7", "owner")
         t.expect(ok).to.equal(true)
         t.expect(first.fence).to.equal(1)
@@ -122,7 +129,6 @@ t.describe("distributed lock lease and fencing", function()
 
     t.it("invalidates all handles once when keepalive fails", function()
         local h = harness()
-        h.heartbeat()
         local calls = 0
         local _, first = h.lock.try_lock("role:1", "owner", function(expired)
             t.expect(expired.valid).to.equal(false)
@@ -143,7 +149,6 @@ t.describe("distributed lock lease and fencing", function()
 
     t.it("releases the held revision without firing an expiry callback", function()
         local h = harness()
-        h.heartbeat()
         local expired = 0
         local _, handle = h.lock.try_lock("role:4", "owner", function()
             expired = expired + 1
@@ -156,7 +161,6 @@ t.describe("distributed lock lease and fencing", function()
 
     t.it("does not delete a successor's key when the compare-and-delete fails", function()
         local h = harness()
-        h.heartbeat()
         local expired = 0
         local _, first = h.lock.try_lock("role:3", "old", function()
             expired = expired + 1
@@ -169,5 +173,35 @@ t.describe("distributed lock lease and fencing", function()
         t.expect(h.lock.is_valid(first)).to.equal(false)
         local acquired = h.lock.try_lock("role:3", "old")
         t.expect(acquired).to.equal(false)
+    end)
+
+    -- 回归：租约以前是心跳定时器异步申请的，模块加载完到第一轮心跳之间
+    -- 所有 try_lock 都会失败。snowflake 抢机器号正好落在这个窗口里。
+    t.it("holds a usable lease as soon as init returns", function()
+        local h = harness()
+        t.expect(h.grants).to.equal(1)
+        local ok, handle = h.lock.try_lock("role:9", "owner")
+        t.expect(ok).to.equal(true)
+        t.expect(h.lock.is_valid(handle)).to.equal(true)
+        -- 心跳只续租，不会再批一个租约出来
+        t.expect(h.heartbeat_name).to.equal("distributed_lock_heartbeat")
+        t.expect(h.heartbeat_interval).to.equal(10)
+        h.heartbeat()
+        t.expect(h.grants).to.equal(1)
+        t.expect(h.keepalives).to.equal(1)
+        t.expect(h.lock.is_valid(handle)).to.equal(true)
+    end)
+
+    t.it("starts anyway when etcd cannot grant a lease and recovers on the next heartbeat", function()
+        local h = harness({ fail_grant = true })
+        t.expect(h.grants).to.equal(1)
+        local ok, err = h.lock.try_lock("role:9", "owner")
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.equal("etcd lease unavailable")
+
+        h.heartbeat()
+        t.expect(h.grants).to.equal(2)
+        t.expect(h.keepalives).to.be_nil()
+        t.expect(h.lock.try_lock("role:9", "owner")).to.equal(true)
     end)
 end)

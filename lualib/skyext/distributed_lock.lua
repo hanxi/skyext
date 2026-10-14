@@ -187,7 +187,12 @@ end
 
 skynet.init(function()
     g_etcd_client = assert(etcd.new(config.get_table("etcd_config")))
-    timer.repeat_immediately("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
+    -- 同步拿到租约再往下走：require 一返回调用方就能加锁。
+    -- 以前租约是交给心跳定时器异步申请的，模块加载完到定时器跑第一轮之间
+    -- 所有 try_lock 都会拿到 etcd lease unavailable，snowflake 抢机器号就栽在这里。
+    -- etcd 此刻不可用不挡启动，继续交给心跳重试。
+    grant_lease()
+    timer.repeat_delayed("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
         if g_leaseid and not keepalive() then
             invalidate_all("keepalive failed or lease expired")
         end
