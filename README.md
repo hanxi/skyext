@@ -42,7 +42,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 
 可另开终端运行 `./bin/skyext serve robot` 测试示例客户端。`serve` 会将工作目录设为仓库根目录；直接调用 skynet 时也必须在根目录执行，例如 `./bin/skynet example/etc/account1.conf.lua`，因为示例的 `root = "./"`。
 
-> `example/etc/nodes/common.app.lua` 包含演示用 JWT 密钥和 GM token。连接真实网络或部署前必须替换密钥，并按环境配置数据库、etcd 与接口访问控制。
+> `example/etc/nodes/common.app.lua` 包含演示用 JWT 密钥，GM 账号默认不配（接口关闭）。连接真实网络或部署前必须替换密钥、按角色配置 GM 账号，并按环境配置数据库、etcd 与接口访问控制。
 
 ## 项目结构
 

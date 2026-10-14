@@ -72,6 +72,7 @@ end
 
 GM_CMD.list = {
     desc = "List all the service",
+    level = "read",
     handler = function()
         return true, skynet.call(".launcher", "lua", "LIST")
     end,
@@ -79,6 +80,7 @@ GM_CMD.list = {
 
 GM_CMD.stat = {
     desc = "Dump all stats",
+    level = "read",
     params = {
         timeout = "timeout in seconds (optional)",
     },
@@ -89,6 +91,7 @@ GM_CMD.stat = {
 
 GM_CMD.mem = {
     desc = "Show memory status",
+    level = "read",
     params = {
         timeout = "timeout in seconds (optional)",
     },
@@ -99,6 +102,7 @@ GM_CMD.mem = {
 
 GM_CMD.kill = {
     desc = "kill address : kill service",
+    level = "admin",
     params = {
         address = "service address",
     },
@@ -109,6 +113,7 @@ GM_CMD.kill = {
 
 GM_CMD.gc = {
     desc = "Force every lua service do garbage collect",
+    level = "write",
     params = {
         timeout = "timeout in seconds (optional)",
     },
@@ -119,6 +124,7 @@ GM_CMD.gc = {
 
 GM_CMD.exit = {
     desc = "Exit a lua service",
+    level = "admin",
     params = {
         address = "service address",
     },
@@ -130,6 +136,7 @@ GM_CMD.exit = {
 
 GM_CMD.clearcache = {
     desc = "Clear lua code cache",
+    level = "write",
     handler = function()
         skynet.cache.clear()
         return true, "Code cache cleared"
@@ -138,6 +145,7 @@ GM_CMD.clearcache = {
 
 GM_CMD.start = {
     desc = "Launch a new lua service",
+    level = "admin",
     params = {
         service = "service name",
         args = "service arguments (optional)",
@@ -158,6 +166,7 @@ GM_CMD.start = {
 
 GM_CMD.log = {
     desc = "Launch a new lua service with log",
+    level = "admin",
     params = {
         service = "service name",
         args = "service arguments (optional)",
@@ -178,6 +187,7 @@ GM_CMD.log = {
 
 GM_CMD.snax = {
     desc = "Launch a new snax service",
+    level = "admin",
     params = {
         service = "snax service name",
         args = "service arguments (optional)",
@@ -195,6 +205,7 @@ GM_CMD.snax = {
 
 GM_CMD.service = {
     desc = "List unique service",
+    level = "read",
     handler = function()
         return true, skynet.call("SERVICE", "lua", "LIST")
     end,
@@ -202,6 +213,7 @@ GM_CMD.service = {
 
 GM_CMD.inject = {
     desc = "Inject lua script to service",
+    level = "admin",
     params = {
         address = "service address",
         filename = "lua script filename",
@@ -225,6 +237,7 @@ GM_CMD.inject = {
 
 GM_CMD.dbgcmd = {
     desc = "Run service debug command",
+    level = "admin",
     params = {
         address = "service address",
         cmd = "debug command",
@@ -238,6 +251,7 @@ GM_CMD.dbgcmd = {
 
 GM_CMD.task = {
     desc = "Show service task detail",
+    level = "read",
     params = {
         address = "service address",
     },
@@ -249,6 +263,7 @@ GM_CMD.task = {
 
 GM_CMD.killtask = {
     desc = "Kill service task thread",
+    level = "admin",
     params = {
         address = "service address",
         threadname = "thread name",
@@ -261,6 +276,7 @@ GM_CMD.killtask = {
 
 GM_CMD.uniqtask = {
     desc = "Show service unique task detail",
+    level = "read",
     params = {
         address = "service address",
     },
@@ -272,6 +288,7 @@ GM_CMD.uniqtask = {
 
 GM_CMD.info = {
     desc = "Get service information",
+    level = "read",
     params = {
         address = "service address",
         args = "info arguments (optional)",
@@ -284,6 +301,7 @@ GM_CMD.info = {
 
 GM_CMD.logon = {
     desc = "Enable log for service",
+    level = "write",
     params = {
         address = "service address",
     },
@@ -296,6 +314,7 @@ GM_CMD.logon = {
 
 GM_CMD.logoff = {
     desc = "Disable log for service",
+    level = "write",
     params = {
         address = "service address",
     },
@@ -308,6 +327,7 @@ GM_CMD.logoff = {
 
 GM_CMD.signal = {
     desc = "Send signal to service",
+    level = "admin",
     params = {
         address = "service address",
         sig = "signal number (optional)",
@@ -325,6 +345,7 @@ GM_CMD.signal = {
 
 GM_CMD.cmem = {
     desc = "Show C memory info",
+    level = "read",
     handler = function()
         local info = memory.info()
         local tmp = {}
@@ -339,6 +360,7 @@ GM_CMD.cmem = {
 
 GM_CMD.jmem = {
     desc = "Show jemalloc mem stats",
+    level = "read",
     handler = function()
         local info = memory.jestat()
         local tmp = {}
@@ -351,6 +373,7 @@ GM_CMD.jmem = {
 
 GM_CMD.ping = {
     desc = "Ping service",
+    level = "read",
     params = {
         address = "service address",
     },
@@ -365,6 +388,7 @@ GM_CMD.ping = {
 
 GM_CMD.trace = {
     desc = "Trace service protocol",
+    level = "write",
     params = {
         address = "service address",
         proto = "protocol name or on/off",
@@ -393,6 +417,7 @@ GM_CMD.trace = {
 
 GM_CMD.netstat = {
     desc = "Show network statistics",
+    level = "read",
     handler = function()
         local stat = socket.netstat()
         for _, info in ipairs(stat) do
@@ -404,6 +429,7 @@ GM_CMD.netstat = {
 
 GM_CMD.dumpheap = {
     desc = "Dump heap profiling",
+    level = "write",
     handler = function()
         memory.dumpheap()
         return true, "Heap dump completed"
@@ -412,6 +438,7 @@ GM_CMD.dumpheap = {
 
 GM_CMD.profactive = {
     desc = "Active/deactive jemalloc heap profiling",
+    level = "write",
     params = {
         flag = "on/off (optional)",
     },
@@ -433,6 +460,7 @@ GM_CMD.profactive = {
 
 GM_CMD.getenv = {
     desc = "Get skynet environment variable",
+    level = "admin",
     params = {
         name = "environment variable name",
     },
@@ -444,6 +472,7 @@ GM_CMD.getenv = {
 
 GM_CMD.setenv = {
     desc = "Set skynet environment variable",
+    level = "admin",
     params = {
         name = "environment variable name",
         value = "environment variable value",
@@ -451,6 +480,18 @@ GM_CMD.setenv = {
     handler = function(params)
         skynet.setenv(params.name, params.value)
         return true, "Environment variable set"
+    end,
+}
+
+GM_CMD.audit = {
+    desc = "Show recent GM audit records",
+    level = "admin",
+    params = {
+        limit = "max records (default 20)",
+    },
+    handler = function(params)
+        -- 只有内存里那一份；更早的记录在 gm_audit.jsonl 里
+        return true, skynet.call(".gm", "lua", "recent_audit", tonumber(params.limit))
     end,
 }
 

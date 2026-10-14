@@ -2,15 +2,19 @@ local skynet = require "skynet"
 local http_server = require "skyext.http_server"
 local cmd_api = require "skyext.cmd_api"
 local config = require "skyext.config"
+local errcode = require "skyext.errcode"
+local gm_auth = require "skyext.gm_auth"
+local gm_audit = require "skyext.gm_audit"
 local log = require "skyext.log"
 
-local g_commands = {} -- 指令注册表：cmd_name -> { handler_name, desc, params, services }
+local g_commands = {} -- 指令注册表：cmd_name -> { handler_name, desc, params, level, services }
 local g_service_commands = {} -- 反向索引：service_address -> { cmd_name1, cmd_name2, ... }
 
 local CMD = {}
 -- 注册 GM 指令
-local function register_command(service_address, cmd_name, handler_name, desc, params)
+local function register_command(service_address, cmd_name, handler_name, desc, params, level)
     params = params or {}
+    level = gm_auth.normalize_level(level, cmd_name)
 
     local cmd_info = g_commands[cmd_name]
     if not cmd_info then
@@ -19,6 +23,7 @@ local function register_command(service_address, cmd_name, handler_name, desc, p
             handler_name = handler_name,
             desc = desc,
             params = params,
+            level = level,
             services = {
                 [service_address] = true,
             },
@@ -44,6 +49,25 @@ local function register_command(service_address, cmd_name, handler_name, desc, p
         if cmd_info.desc ~= desc then
             log.warn("GM command desc updated", "cmd", cmd_name, "old_desc", cmd_info.desc, "new_desc", desc)
             cmd_info.desc = desc
+            need_update = true
+        end
+
+        if cmd_info.level ~= level then
+            -- 同名指令在不同服务上标了不同等级，取更严的那个：
+            -- 执行时是广播到所有服务的，按最松的放行等于绕过了严的那一侧
+            local strict = gm_auth.LEVELS[level] > gm_auth.LEVELS[cmd_info.level] and level or cmd_info.level
+            log.warn(
+                "GM command level mismatch",
+                "cmd",
+                cmd_name,
+                "old_level",
+                cmd_info.level,
+                "new_level",
+                level,
+                "used",
+                strict
+            )
+            cmd_info.level = strict
             need_update = true
         end
 
@@ -95,7 +119,7 @@ end
 -- 批量注册 GM 指令
 -- @param service_address 服务地址
 -- @param commands 指令列表，格式：{
---   { cmd_name = "指令名", service_address = 服务地址, handler_name = "处理函数名", desc = "描述", params = {} },
+--   { cmd_name = "指令名", handler_name = "处理函数名", desc = "描述", params = {}, level = "read|write|admin" },
 --   ...
 -- }
 function CMD.register_commands(service_address, commands)
@@ -103,7 +127,8 @@ function CMD.register_commands(service_address, commands)
     local failed_commands = {}
 
     for _, cmd in ipairs(commands) do
-        local ok, err = pcall(register_command, service_address, cmd.cmd_name, cmd.handler_name, cmd.desc, cmd.params)
+        local ok, err =
+            pcall(register_command, service_address, cmd.cmd_name, cmd.handler_name, cmd.desc, cmd.params, cmd.level)
         if ok then
             success_count = success_count + 1
         else
@@ -161,23 +186,52 @@ function CMD.unregister_service(service_address)
     return true
 end
 
--- 列出所有已注册指令
-function CMD.list_commands()
+-- 鉴权：cred 为 nil 表示进程内部调用，按系统身份放行。
+-- 失败时把审计写掉并返回 nil + 可以直接回给调用方的应答。
+local function authenticate(cred, cmd_name)
+    if not cred then
+        return gm_auth.SYSTEM, "internal"
+    end
+    local peer = cred.peer or "unknown"
+    local account, err = gm_auth.authenticate(cred.token)
+    if not account then
+        gm_audit.record({ account = "-", role = "-", peer = peer, cmd = cmd_name, result = "auth_failed", detail = err })
+        return nil, peer, { code = errcode.AUTH_FAILED, error = err }
+    end
+    return account, peer
+end
+
+-- 列出调用方有权执行的指令。看不到的指令就是跑不了的指令，
+-- 没必要在面板上列出来给人试。
+function CMD.list_commands(cred)
+    local account, _, denied = authenticate(cred, "list_commands")
+    if not account then
+        return denied
+    end
+
     local result = {}
     for cmd_name, cmd_info in pairs(g_commands) do
-        local service_count = 0
-        for _ in pairs(cmd_info.services) do
-            service_count = service_count + 1
-        end
+        if gm_auth.authorize(account, cmd_name, cmd_info.level) then
+            local service_count = 0
+            for _ in pairs(cmd_info.services) do
+                service_count = service_count + 1
+            end
 
-        table.insert(result, {
-            cmd = cmd_name,
-            desc = cmd_info.desc,
-            params = cmd_info.params,
-            service_count = service_count,
-        })
+            table.insert(result, {
+                cmd = cmd_name,
+                desc = cmd_info.desc,
+                params = cmd_info.params,
+                level = cmd_info.level,
+                service_count = service_count,
+            })
+        end
     end
-    return result
+    return { code = errcode.OK, account = account.name, role = account.role, commands = result }
+end
+
+-- 最近的审计记录，给 GM 指令 audit 用
+function CMD.recent_audit(limit)
+    return gm_audit.recent(limit)
 end
 
 -- 将服务标识转换为服务地址
@@ -211,14 +265,33 @@ local function parse_service_address(service)
 end
 
 -- 执行 GM 指令
+-- @param cred 调用方凭证 { token, peer }；nil 表示进程内部调用
 -- @param cmd_name 指令名称
 -- @param params 指令参数
 -- @param target_services 可选，指定要执行的服务列表，每个元素可以是：
 --   - 整数：服务地址
 --   - 字符串：服务名字（如 ".gm" 或 "gm"）或十六进制地址（如 ":01000002"）
-function CMD.execute_command(cmd_name, params, target_services)
+function CMD.execute_command(cred, cmd_name, params, target_services)
+    local account, peer, denied = authenticate(cred, cmd_name)
+    if not account then
+        return denied
+    end
+
+    local function audit(result, detail)
+        gm_audit.record({
+            account = account.name,
+            role = account.role,
+            peer = peer,
+            cmd = cmd_name,
+            params = params,
+            result = result,
+            detail = detail,
+        })
+    end
+
     local cmd_info = g_commands[cmd_name]
     if not cmd_info then
+        audit("unknown_command")
         return {
             code = 1,
             error = "command not found",
@@ -226,8 +299,29 @@ function CMD.execute_command(cmd_name, params, target_services)
         }
     end
 
+    local allowed, reason = gm_auth.authorize(account, cmd_name, cmd_info.level)
+    if not allowed then
+        audit("denied", reason)
+        return {
+            code = errcode.AUTH_FAILED,
+            error = reason,
+            cmd = cmd_name,
+        }
+    end
+
     local results = {}
     local handler_name = cmd_info.handler_name
+    local succeeded, failed, first_error = 0, 0, nil
+
+    local function add_failure(service, err)
+        failed = failed + 1
+        first_error = first_error or err
+        table.insert(results, {
+            service = service,
+            success = false,
+            error = err,
+        })
+    end
 
     -- 如果指定了 target_services，则只在这些服务上执行
     local services_to_execute = {}
@@ -237,20 +331,12 @@ function CMD.execute_command(cmd_name, params, target_services)
             local service_address = parse_service_address(service)
             if not service_address then
                 log.warn("GM command invalid service", "cmd", cmd_name, "service", service)
-                table.insert(results, {
-                    service = tostring(service),
-                    success = false,
-                    error = "invalid service address or name",
-                })
+                add_failure(tostring(service), "invalid service address or name")
             elseif cmd_info.services[service_address] then
                 services_to_execute[service_address] = true
             else
                 log.warn("GM command service not registered", "cmd", cmd_name, "service", service)
-                table.insert(results, {
-                    service = tostring(service),
-                    success = false,
-                    error = "service not registered for this command",
-                })
+                add_failure(tostring(service), "service not registered for this command")
             end
         end
     else
@@ -262,6 +348,7 @@ function CMD.execute_command(cmd_name, params, target_services)
     for service_address, _ in pairs(services_to_execute) do
         local ok, ret, data = pcall(skynet.call, service_address, "lua", handler_name, params)
         if ok and ret then
+            succeeded = succeeded + 1
             table.insert(results, {
                 service = skynet.address(service_address),
                 success = true,
@@ -269,17 +356,21 @@ function CMD.execute_command(cmd_name, params, target_services)
             })
         else
             log.warn("GM command execute failed", "cmd", cmd_name, "service", service_address, "ret", ret, "data", data)
-            local result = {
-                service = skynet.address(service_address),
-                success = false,
-                error = tostring(ret or data),
-            }
+            add_failure(skynet.address(service_address), tostring(ret or data))
+            local result = results[#results]
             if data ~= result.error then
                 result.data = data
             end
-            table.insert(results, result)
         end
     end
+
+    -- 审计记在执行之后：一条记录就能看出这次操作到底落没落地。
+    -- 代价是执行中进程挂掉就没有记录，这种情况去查进程日志。
+    local outcome = "ok"
+    if failed > 0 then
+        outcome = succeeded > 0 and "partial" or "failed"
+    end
+    audit(outcome, first_error)
 
     return {
         code = 0,

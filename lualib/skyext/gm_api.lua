@@ -1,4 +1,5 @@
 local skynet = require "skynet"
+local gm_auth = require "skyext.gm_auth"
 local log = require "skyext.log"
 
 local M = {}
@@ -41,6 +42,7 @@ end
 --         desc = "指令描述",
 --         handler = "处理器名称",
 --         params = { param_name = "参数描述", ... },
+--         level = "read|write|admin", -- 危险等级，不写按 admin 算
 --     },
 --     ...
 -- }
@@ -64,6 +66,12 @@ function M.register(GM_CMD)
         -- params 可选，默认为空表
         local params = cmd_def.params or {}
 
+        -- level 可选，不写按 admin 算；写错了直接报错，不要让它悄悄降级
+        local level = cmd_def.level
+        if level ~= nil and not gm_auth.LEVELS[level] then
+            error(string.format("GM command '%s' has an unknown level '%s'", cmd_name, tostring(level)))
+        end
+
         -- GM 命令的处理函数名
         local handler_name = "GM_" .. string.upper(cmd_name)
 
@@ -76,6 +84,7 @@ function M.register(GM_CMD)
             handler_name = handler_name,
             desc = desc,
             params = params,
+            level = level,
         })
     end
 
@@ -113,7 +122,7 @@ function M.register(GM_CMD)
     return true
 end
 
--- 执行 GM 指令
+-- 执行 GM 指令。进程内部调用，不带凭证，按系统身份执行（一样进审计）。
 -- @param cmd_name 指令名称
 -- @param params 指令参数（表）
 -- @param target_services 可选，目标服务列表
@@ -128,7 +137,7 @@ function M.execute_command(cmd_name, params, target_services)
         }
     end
 
-    local ok, result = pcall(skynet.call, gm_service, "lua", "execute_command", cmd_name, params, target_services)
+    local ok, result = pcall(skynet.call, gm_service, "lua", "execute_command", nil, cmd_name, params, target_services)
     if not ok then
         log.error("GM execute_command failed", "cmd", cmd_name, "error", result)
         return {

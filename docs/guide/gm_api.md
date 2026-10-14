@@ -6,7 +6,9 @@ GM（Game Master）命令系统提供了一套 HTTP RESTful API，用于执行�
 
 **基础 URL**: `http://localhost:<gm_http_port>`（代码默认 `9090`，由各节点 `gm_http_port` 配置覆盖；以下示例使用 RoleNode1 的端口 `9092`）
 
-GM HTTP 服务是独立的命名实例，与节点的业务 HTTP 端口（如 Account 的 `account_http_port`）互不共用路由：业务端口不会暴露 `/gm/*`，GM 端口也不会暴露业务接口。监听地址默认只绑定 `127.0.0.1`，需要对外暴露时显式配置 `gm_http_host`（务必同时配置好 `gm_auth_token` 并限制来源）。
+GM HTTP 服务是独立的命名实例，与节点的业务 HTTP 端口（如 Account 的 `account_http_port`）互不共用路由：业务端口不会暴露 `/gm/*`，GM 端口也不会暴露业务接口。监听地址默认只绑定 `127.0.0.1`，需要对外暴露时显式配置 `gm_http_host`（务必同时配好 `gm_accounts` 并限制来源）。
+
+所有接口都要鉴权，每条指令按危险等级授权，每次执行都进审计，详见[鉴权与权限](#鉴权与权限)。
 
 ---
 
@@ -27,6 +29,8 @@ GET /gm/list
 ```json
 {
   "code": 0,
+  "account": "ops",
+  "role": "operator",
   "commands": [
     {
       "cmd": "命令名称",
@@ -35,21 +39,27 @@ GET /gm/list
         "参数名1": "参数描述1",
         "参数名2": "参数描述2"
       },
+      "level": "write",
       "service_count": 2
     }
   ]
 }
 ```
 
+只返回**当前账号有权执行**的命令：看不到的命令就是跑不了的命令。
+
 **字段说明**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | code | number | 状态码，0 表示成功，非 0 表示失败 |
+| account | string | 当前 token 对应的账号名 |
+| role | string | 该账号的角色 |
 | commands | array | 命令列表 |
 | commands[].cmd | string | 命令名称 |
 | commands[].desc | string | 命令描述 |
 | commands[].params | object | 命令参数定义，key 为参数名，value 为参数描述 |
+| commands[].level | string | 命令危险等级：`read` / `write` / `admin` |
 | commands[].service_count | number | 注册该命令的服务数量 |
 
 **示例**
@@ -248,18 +258,82 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=st
 
 ---
 
-## 鉴权
+## 鉴权与权限
 
-`/gm/execute`（GET/POST）需要鉴权 token，传递方式二选一：
+### 传 token
+
+`/gm/execute`（GET/POST）和 `/gm/list` 都需要账号 token，传递方式二选一：
 
 - HTTP Header: `Authorization: Bearer <token>`
 - 请求参数（query 或 body）: `token=<token>`
 
-Token 在 `example/etc/nodes/common.app.lua` 中通过 `gm_auth_token` 配置，由 `skyext.secret` 校验强度。**未配置、仍为占位符（如 `CHANGE_ME_TO_RANDOM_TOKEN`）、或少于 16 字符时，`/gm/execute` 接口一律拒绝**，并在启动日志里打一条 `gm_auth_token is unusable` 的 ERROR。`allow_insecure_secret` 只放宽登录密钥，对 GM 鉴权无效。用 `openssl rand -hex 32` 生成一个即可。
+### 配账号
 
-`/gm/list` 同样需要鉴权。
+账号配在 `example/etc/nodes/common.app.lua`，一人一个 token：
 
----
+```lua
+gm_accounts = {
+    { name = "viewer", role = "readonly", token = "..." },
+    { name = "ops", role = "operator", token = "..." },
+    { name = "root", role = "admin", token = "..." },
+}
+```
+
+token 用 `openssl rand -hex 32` 现生成，由 `skyext.secret` 校验强度。**未配置、命中占位符黑名单（如 `CHANGE_ME_TO_RANDOM_TOKEN`）、少于 16 字符、或与别的账号共用**的 token，对应账号会被丢弃并打一条 ERROR 日志；一个可用账号都没有时 `/gm/*` 全部拒绝。`allow_insecure_secret` 只放宽登录密钥，对 GM 鉴权无效。
+
+### 指令等级与角色
+
+每条 GM 指令注册时声明一个危险等级，**没声明的按 `admin` 算**（漏标的新指令应该是最难执行到的那一类）：
+
+| 等级 | 含义 | 例子 |
+|------|------|------|
+| `read` | 只读查询，看不出手脚 | `list`、`stat`、`mem`、`netstat`、`dlq_list`、`hotfix_history` |
+| `write` | 改运行时状态，但不碰代码和进程 | `gc`、`clearcache`、`reload_res`、`reload_orm_schema`、`dlq_replay` |
+| `admin` | 能拿到进程控制权或机密 | `kill`、`exit`、`inject`、`setenv`、`getenv`、`hotfix`、`audit` |
+
+内置角色：
+
+| 角色 | 能执行到 |
+|------|----------|
+| `readonly` | `read` |
+| `operator` | `read` + `write` |
+| `admin` | 全部 |
+
+需要"只读 + 几条指定指令"时自定义角色，`extra` 只能加不能减：
+
+```lua
+gm_roles = {
+    release = { level = "read", extra = { "hotfix", "hotfix_history" } },
+}
+```
+
+自定义角色与内置角色同名时覆盖内置的；`level` 写错或缺失的角色会被整个丢弃（挂在它下面的账号跟着失效），不会退化成放行。
+
+同一条指令在多个服务上注册且等级不一致时，取**更严**的那个——执行是广播到所有服务的，按最松的放行等于绕过了严的那一侧。
+
+### 审计
+
+每次指令执行都写一条审计记录，包括越权被拒和鉴权失败的尝试（`/gm/list` 只在鉴权失败时记，成功的列表查询不记）。记录追加到 skynet `root` 下的 `gm_audit.jsonl`（可用 `gm_audit_path` 改路径），同时打一条 `GM audit` 的 INFO 日志：
+
+```json
+{"time":"2026-10-14 12:00:00","account":"ops","role":"operator","peer":"10.0.0.9:51324","cmd":"gc","result":"ok"}
+```
+
+| 字段 | 说明 |
+|------|------|
+| account / role | 账号与角色；鉴权失败记 `-`，进程内部调用记 `system` |
+| peer | 调用方地址；内部调用记 `internal` |
+| params | 指令参数；`token`、`password`、`secret` 替换为 `[redacted]`，超长值截断 |
+| result | `ok` / `partial`（部分服务失败）/ `failed` / `denied`（越权）/ `auth_failed` / `unknown_command` |
+| detail | 失败原因或拒绝原因 |
+
+记录写在指令执行**之后**，一条记录就能看出操作有没有落地；执行途中进程挂掉则不会留下记录，这种情况查进程日志。审计文件写失败不会让 GM 指令跟着失败（磁盘满了还得能 kill 服务），但会打 ERROR 日志。
+
+最近 100 条记录留在内存里，用 `audit` 指令查（`admin` 级）：
+
+```bash
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=audit&limit=20"
+```
 
 ## 热更命令
 
@@ -314,7 +388,7 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ## 注意事项
 
-1. **权限控制**：`/gm/execute` 已实现 token 鉴权，详见上文「鉴权」一节
+1. **权限控制**：账号 token 鉴权 + 按指令等级授权 + 操作审计，详见上文[鉴权与权限](#鉴权与权限)
 2. **服务地址**：执行命令前请确认服务地址的正确性
 3. **参数验证**：某些命令的参数有特定格式要求，请参考具体命令的文档
 4. **多服务执行**：不指定 `services` 时，GM 服务会逐个调用所有已注册该命令的服务；当前实现是顺序调用，并非并发
@@ -346,6 +420,7 @@ local GM_CMD = {}
 
 GM_CMD.my_command = {
     desc = "我的命令描述",
+    level = "write", -- read / write / admin，不写按 admin 算
     params = {
         param1 = "参数1的描述",
         param2 = "参数2的描述",
@@ -367,3 +442,4 @@ gm_api.register(GM_CMD)
 - **返回值**：返回两个值
   - 第一个值：布尔类型，表示执行是否成功
   - 第二个值：任意类型，成功时为结果数据，失败时为错误信息
+- **等级**：`level` 决定谁能执行，按"这条指令被滥用能造成多大后果"来定；能改进程状态的至少 `write`，能执行代码、控制进程或读出机密的必须 `admin`。写了不认识的等级会在注册时直接报错，不写则按 `admin` 处理

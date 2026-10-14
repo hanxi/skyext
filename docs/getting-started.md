@@ -97,14 +97,16 @@ local enabled = config.get_boolean("proto_checksum_enable")
 local secret = config.get("login_jwt_secret")
 ```
 
-`config.get*` 在配置不存在时返回 `nil`；应用配置中的 table 会序列化进 skynet 环境，再由 `get_table` 反序列化。示例中的 `login_jwt_secret = "your_access_secret"` 和 `gm_auth_token = "CHANGE_ME_TO_RANDOM_TOKEN"` **不是生产密钥**；在真实部署前务必更换，并保护 GM、Account、数据库与 etcd 的访问边界。
+`config.get*` 在配置不存在时返回 `nil`；应用配置中的 table 会序列化进 skynet 环境，再由 `get_table` 反序列化。示例中的 `login_jwt_secret = "your_access_secret"` **不是生产密钥**；在真实部署前务必更换，并保护 GM、Account、数据库与 etcd 的访问边界。
 
 密钥强度由 `skyext.secret` 统一校验（`openssl rand -hex 32` 生成即可）：未配置、命中已知占位符黑名单、或少于 16 字符的密钥一律视为不可用。不可用时的行为是"拒绝而不是放行"：
 
 - `login_jwt_secret` 不可用 → 登录请求返回 `TOKEN_ERROR`，机器人压测无法签发 token；
-- `gm_auth_token` 不可用 → `/gm/execute`、`/gm/list` 全部拒绝。
+- GM 账号（`gm_accounts`）的 token 不可用 → 该账号被丢弃；一个可用账号都没有时 `/gm/execute`、`/gm/list` 全部拒绝。
 
 示例配置里额外写了 `allow_insecure_secret = true`，这是**仅供本地开发**的逃生口：它只放宽 `login_jwt_secret`（放行时打一条 ERROR 日志），不影响 GM 鉴权。生产环境不要设置这一项。
+
+GM 不是一个 token 走天下：每个使用者配一个账号，账号挂一个角色，角色决定能执行到哪一级指令，所有操作进审计文件。示例默认不配账号（即 GM 接口关闭），配法见 [GM HTTP API](guide/gm_api.md#鉴权与权限)。
 
 ## 6. 测试、检查与打包
 
@@ -133,6 +135,6 @@ make -C example lint                       # 示例游戏 luacheck
 | 生成 schema 失败 | 检查 `3rd/sprotodump` 是否已初始化，`stylua` 是否已安装且在 `PATH` 中。 |
 | MongoDB/etcd 连接失败 | 检查 Compose 服务、端口与 `common.app.lua` 中的连接地址；容器环境需替换 `127.0.0.1`。 |
 | 客户端/机器人无法连接 | 核对 Account HTTP、Role 网关监听端口，以及 `robot.app.lua` 的 `gate_nodes`。 |
-| GM 接口不可用 | 核对对应节点 GM 端口与 `gm_auth_token`，详见 [GM HTTP API](guide/gm_api.md)。 |
+| GM 接口不可用 | 核对对应节点 GM 端口与 `gm_accounts`（账号/角色/token），详见 [GM HTTP API](guide/gm_api.md)。 |
 
 下一步可阅读[登录流程](guide/login.md)、[热更新操作](guide/hotfix.md)与[架构概览](overview.md)。

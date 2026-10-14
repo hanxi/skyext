@@ -715,6 +715,7 @@ end
 
 GM_CMD.hotfix = {
     desc = "执行热更新",
+    level = "admin",
     params = {
         hotfix_dir = "热更包目录路径（相对于工程根目录，如 hotfix/20260120-patch1）",
         mode = "执行模式：run（默认执行）/ dry_run（仅预演，不实际执行）",
@@ -744,6 +745,7 @@ GM_CMD.hotfix = {
 
 GM_CMD.hotfix_history = {
     desc = "查看热更历史",
+    level = "read",
     params = {
         limit = "返回最近 N 条记录（可选，默认 10）",
     },

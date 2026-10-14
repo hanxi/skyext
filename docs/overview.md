@@ -43,12 +43,12 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | etcd 客户端 | `lualib/skyext/etcd/` | etcd v3 HTTP 客户端，按 transport/auth/kv/lease/watch 分层，服务发现与分布式锁的底座 |
 | 数据持久化 | `lualib/skyext/dbmgr.lua`、`lualib/skyext/save_wheel.lua`、`lualib/orm/`、`service/mongo_conn.lua` | 加载/缓存 ORM 对象、跟踪变更、按回存轮定时与卸载时写入 MongoDB |
 | 协议与鉴权 | `lualib/skyext/sproto_api.lua`、`example/lualib/jwt.lua` | sproto 编解码、示例 JWT 登录 |
-| HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`service/gm.lua` | HTTP 路由及命令注册/执行；见 [HTTP 服务端](guide/http_server.md)、[GM HTTP API](guide/gm_api.md) |
+| HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`lualib/skyext/gm_auth.lua`、`lualib/skyext/gm_audit.lua`、`service/gm.lua` | HTTP 路由、命令注册/执行、账号与角色鉴权、操作审计；见 [HTTP 服务端](guide/http_server.md)、[GM HTTP API](guide/gm_api.md) |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
 | 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、实体生命周期、业务模块扩展 |
 | 测试与覆盖率 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程，生成 lcov 报告 |
 
-**数据可靠性边界**：`dbmgr` 对脏数据制作快照，在 MongoDB 确认更新后才清除脏标记；写入失败、不确定或未匹配时保留脏对象及缓存，卸载不得先释放实体锁。进程异常退出时仍不能据此推断数据已持久化；可靠消息为至少一次投递，业务 handler 需以 `msg_id` 幂等处理。生产使用前应结合一致性、失败日志和恢复策略评估。示例 JWT/GM 密钥也必须更换并限制相关接口访问。
+**数据可靠性边界**：`dbmgr` 对脏数据制作快照，在 MongoDB 确认更新后才清除脏标记；写入失败、不确定或未匹配时保留脏对象及缓存，卸载不得先释放实体锁。进程异常退出时仍不能据此推断数据已持久化；可靠消息为至少一次投递，业务 handler 需以 `msg_id` 幂等处理。生产使用前应结合一致性、失败日志和恢复策略评估。示例 JWT 密钥必须更换，GM 账号要按角色分配并限制接口来源。
 
 ## 当前状态与延伸阅读
 

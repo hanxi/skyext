@@ -229,14 +229,14 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ### GM 鉴权
 
-`/gm/execute` 接口需要携带鉴权 token：
+`/gm/execute` 接口需要携带账号 token：
 
 - HTTP Header: `Authorization: Bearer <token>`
 - 或请求参数: `token=<token>`
 
-Token 在 `example/etc/nodes/common.app.lua` 中配置 `gm_auth_token`。**未配置、仍使用占位符（如 `CHANGE_ME_TO_RANDOM_TOKEN`）、或少于 16 字符时，GM 接口禁用**，启动日志里会有一条 `gm_auth_token is unusable` 的 ERROR。`allow_insecure_secret` 对 GM 鉴权无效。
+账号在 `example/etc/nodes/common.app.lua` 的 `gm_accounts` 里配置，每人一个 token。`hotfix` 是 `admin` 级指令，只有 `admin` 角色（或在自定义角色的 `extra` 里显式放开 `hotfix` 的账号）才能执行；`hotfix_history` 是 `read` 级，谁都能看。**token 未配置、仍是占位符、或少于 16 字符时该账号被丢弃**，一个可用账号都没有时 GM 接口整体禁用。`allow_insecure_secret` 对 GM 鉴权无效。详见 [GM HTTP API](gm_api.md#鉴权与权限)。
 
-`/gm/list` 接口同样需要鉴权。
+`/gm/list` 接口同样需要鉴权，且只列出当前账号有权执行的指令。每次热更都会记进 GM 审计文件，能查到是谁发起的。
 
 ### hotfix 二次确认
 
@@ -271,7 +271,7 @@ Token 在 `example/etc/nodes/common.app.lua` 中配置 `gm_auth_token`。**未�
 
 - **Breaking**: 注入模板不再静默吞错，load/xpcall 失败改为 `error()` 传播
 - **Breaking**: `fail_fast` 默认为 `true`（旧配置隐式为 false）。如需旧行为请显式设置 `fail_fast = false`
-- **Breaking**: `/gm/execute` 新增鉴权，未配置 `gm_auth_token` 时接口禁用
+- **Breaking**: `/gm/execute` 新增鉴权，未配置可用 GM 账号时接口禁用
 - **Breaking**: `hotfix` 命令执行模式需传 `confirm=true`
 - 新增 `dry_run` 预演模式
 - 新增注入超时保护（默认 30s）

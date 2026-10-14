@@ -166,6 +166,21 @@ http_keepalive_timeout = 60 -- keep-alive 空闲时限（秒），0 表示关闭
 http_keepalive_requests = 100 -- 单条连接最多服务多少个请求
 http_request_body_size = 1024 * 1024 -- 请求 body 字节上限，超过返回 413
 
--- GM 鉴权 token，部署时替换为随机长串（不少于 16 字符）；
--- 未配置或仍是占位符时 /gm/execute 接口禁用
-gm_auth_token = "CHANGE_ME_TO_RANDOM_TOKEN"
+-- GM 账号：一人一个 token，角色决定能执行到哪一级指令。
+-- 内置角色 readonly（只读查询）/ operator（再加 gc、重载这类运维操作）/
+-- admin（再加 kill、inject、setenv、热更这类能拿到进程控制权和机密的指令）。
+-- token 部署时用 openssl rand -hex 32 现生成，不少于 16 字符且不能是占位符；
+-- 一个可用账号都没有时 /gm/* 全部拒绝（allow_insecure_secret 对 GM 无效）。
+-- 示例里默认不配账号，所以 GM 接口是关着的，本地要用就在这里加一条。
+gm_accounts = {
+    -- { name = "ops", role = "operator", token = "..." },
+    -- { name = "root", role = "admin", token = "..." },
+}
+
+-- 自定义角色：在某个等级之上额外放开几条指令，只能加不能减
+-- gm_roles = {
+--     release = { level = "read", extra = { "hotfix", "hotfix_history" } },
+-- }
+
+-- GM 操作审计文件，默认写到 skynet root 下的 gm_audit.jsonl
+-- gm_audit_path = "logs/gm_audit.jsonl"

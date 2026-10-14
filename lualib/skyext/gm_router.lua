@@ -2,7 +2,6 @@ local skynet = require "skynet"
 local log = require "skyext.log"
 local errcode = require "skyext.errcode"
 local config = require "skyext.config"
-local secret = require "skyext.secret"
 
 local M = {
     GET = {},
@@ -10,7 +9,6 @@ local M = {
 }
 
 local g_gm_service
-local g_gm_auth_token
 
 local function get_gm_service()
     if not g_gm_service then
@@ -19,61 +17,45 @@ local function get_gm_service()
     return g_gm_service
 end
 
-local function get_auth_token()
-    if g_gm_auth_token == nil then
-        local token = skynet.getenv("gm_auth_token")
-        local ok, reason = secret.check(token)
-        if ok then
-            g_gm_auth_token = token
-        else
-            if token and token ~= "" then
-                -- 配了但不能用（占位符/太短）：必须显式报错，
-                -- 否则运维会以为 GM 接口是开着的
-                log.error("gm_auth_token is unusable, /gm/execute is disabled", "reason", reason)
-            end
-            g_gm_auth_token = false
-        end
-    end
-    return g_gm_auth_token
-end
-
-local function check_auth(req, params)
-    local expected = get_auth_token()
-    if not expected then
-        return false, "GM auth token not configured, /gm/execute is disabled"
-    end
-
+-- 路由层只负责把凭证从请求里取出来，认谁、准不准、记不记审计都在 .gm 服务里做：
+-- HTTP agent 有多个实例，鉴权和审计分散在每个实例上既难对齐也难查
+local function credential(req, params)
     local token
     local auth_header = req.header and req.header["authorization"]
     if auth_header then
         token = auth_header:match("^Bearer%s+(.+)$")
     end
-
     if not token then
         token = params and params.token
     end
+    return { token = token, peer = req.addr or "unknown" }
+end
 
-    if not token or token ~= expected then
-        local peer = req.addr or "unknown"
-        log.warn("GM auth failed", "peer", peer)
-        return false, "Authentication failed"
+-- 把请求转给 .gm 服务，应答原样回给调用方
+local function forward(res, cmd, ...)
+    local gm_service = get_gm_service()
+    if not gm_service then
+        log.error("GM service not found")
+        return res.write_json({
+            code = 1,
+            error = "GM service not available",
+        })
     end
 
-    return true
+    local ok, result = pcall(skynet.call, gm_service, "lua", cmd, ...)
+    if not ok then
+        log.error("GM call failed", "cmd", cmd, "error", result)
+        return res.write_json({
+            code = 1,
+            error = tostring(result),
+        })
+    end
+    return res.write_json(result)
 end
 
 -- GET /gm/execute - 执行 GM 指令
 M.GET["/gm/execute"] = function(req, res)
     local q = req.parse_query()
-
-    local auth_ok, auth_err = check_auth(req, q)
-    if not auth_ok then
-        return res.write_json({
-            code = errcode.AUTH_FAILED,
-            error = auth_err,
-        })
-    end
-
     local cmd = q.cmd
 
     if not cmd or cmd == "" then
@@ -98,25 +80,7 @@ M.GET["/gm/execute"] = function(req, res)
         end
     end
 
-    local gm_service = get_gm_service()
-    if not gm_service then
-        log.error("GM service not found")
-        return res.write_json({
-            code = 1,
-            error = "GM service not available",
-        })
-    end
-
-    local ok, result = pcall(skynet.call, gm_service, "lua", "execute_command", cmd, params, services)
-    if not ok then
-        log.error("GM execute failed", "cmd", cmd, "error", result)
-        return res.write_json({
-            code = 1,
-            error = tostring(result),
-        })
-    end
-
-    return res.write_json(result)
+    return forward(res, "execute_command", credential(req, q), cmd, params, services)
 end
 
 -- POST /gm/execute - 执行 GM 指令
@@ -126,14 +90,6 @@ M.POST["/gm/execute"] = function(req, res)
         return res.write_json({
             code = errcode.PARAM_ERROR,
             error = "invalid json body",
-        })
-    end
-
-    local auth_ok, auth_err = check_auth(req, body)
-    if not auth_ok then
-        return res.write_json({
-            code = errcode.AUTH_FAILED,
-            error = auth_err,
         })
     end
 
@@ -154,60 +110,12 @@ M.POST["/gm/execute"] = function(req, res)
         end
     end
 
-    local gm_service = get_gm_service()
-    if not gm_service then
-        log.error("GM service not found")
-        return res.write_json({
-            code = 1,
-            error = "GM service not available",
-        })
-    end
-
-    local ok, result = pcall(skynet.call, gm_service, "lua", "execute_command", cmd, params, services)
-    if not ok then
-        log.error("GM execute failed", "cmd", cmd, "error", result)
-        return res.write_json({
-            code = 1,
-            error = tostring(result),
-        })
-    end
-
-    return res.write_json(result)
+    return forward(res, "execute_command", credential(req, body), cmd, params, services)
 end
 
 -- GET /gm/list - 列出所有已注册的 GM 指令
 M.GET["/gm/list"] = function(req, res)
-    local q = req.parse_query()
-    local auth_ok, auth_err = check_auth(req, q)
-    if not auth_ok then
-        return res.write_json({
-            code = errcode.AUTH_FAILED,
-            error = auth_err,
-        })
-    end
-
-    local gm_service = get_gm_service()
-    if not gm_service then
-        log.error("GM service not found")
-        return res.write_json({
-            code = 1,
-            error = "GM service not available",
-        })
-    end
-
-    local ok, commands = pcall(skynet.call, gm_service, "lua", "list_commands")
-    if not ok then
-        log.error("GM list_commands failed", "error", commands)
-        return res.write_json({
-            code = 1,
-            error = tostring(commands),
-        })
-    end
-
-    return res.write_json({
-        code = 0,
-        commands = commands,
-    })
+    return forward(res, "list_commands", credential(req, req.parse_query()))
 end
 
 -- GET / - index.html

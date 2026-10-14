@@ -293,7 +293,7 @@ t.describe("gm HTTP integration", function()
 
     t.before_all(function()
         skynet.setenv("gm_http_port", "19090")
-        skynet.setenv("gm_auth_token", TOKEN)
+        skynet.setenv("gm_accounts", string.format([[{{name="test",role="admin",token=%q}}]], TOKEN))
 
         skynet.newservice("gm")  -- 实际服务名
         GM = "http://127.0.0.1:19090"
