@@ -5,7 +5,7 @@ local mongo_conn = require "skyext.mongo_conn"
 local orm = require "orm"
 local SCHEMA_PATH = "game.orm.schema"
 local schema = require(SCHEMA_PATH)
-local timer = require "skyext.timer"
+local save_wheel = require "skyext.save_wheel"
 local queue = require "skynet.queue"
 
 local M = {}
@@ -219,6 +219,39 @@ local function save_doc(coll_obj, key, unique_id, doc, handle)
     return true
 end
 
+-- 回存轮用的落库入口：等行锁期间文档可能已经被卸载或被新的持有者换掉，
+-- 所以拿到锁之后要确认缓存里还是同一个条目，否则这一轮就不该再碰它
+local function sweep_save(entry)
+    return with_row_lock(entry.dbname, entry.dbcoll, entry.unique_id, function()
+        if get_cache_collection(entry.dbname, entry.dbcoll)[entry.unique_id] ~= entry then
+            return true
+        end
+        local coll_obj = get_collection_obj(entry.dbname, entry.dbcoll)
+        return save_doc(coll_obj, entry.key, entry.unique_id, entry.doc, entry.handle)
+    end)
+end
+
+-- 所有缓存文档共用一个回存轮，而不是一个文档挂一个定时器
+local g_save_wheel
+local function save_wheel_obj()
+    if not g_save_wheel then
+        g_save_wheel = save_wheel.new("dbmgr", db_save_interval(), function(entry)
+            if not sweep_save(entry) then
+                log.error(
+                    "sweep save failed",
+                    "dbname",
+                    entry.dbname,
+                    "dbcoll",
+                    entry.dbcoll,
+                    "unique_id",
+                    entry.unique_id
+                )
+            end
+        end)
+    end
+    return g_save_wheel
+end
+
 function M.load(dbname, dbcoll, key, unique_id, default, handle)
     check_collection(dbname, dbcoll)
     return with_row_lock(dbname, dbcoll, unique_id, function()
@@ -234,7 +267,7 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
             if orm.is_dirty(cached.doc) then
                 return nil, "stale dirty cache requires recovery"
             end
-            cached.timer_obj:cancel()
+            save_wheel_obj():remove(cached)
             cache_collection[unique_id] = nil
         end
 
@@ -312,13 +345,16 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
 
         local schema_type = assert(schema[dbcoll], "missing schema for " .. dbcoll)
         local doc = schema_type.new(value)
-        local timer_obj = timer.repeat_random_delayed("dbmgr", db_save_interval(), function()
-            local ok = M.save(dbname, dbcoll, key, unique_id)
-            if not ok then
-                log.error("timer save failed", "dbname", dbname, "dbcoll", dbcoll, "unique_id", unique_id)
-            end
-        end)
-        cache_collection[unique_id] = { doc = doc, timer_obj = timer_obj, handle = handle }
+        local entry = {
+            doc = doc,
+            handle = handle,
+            dbname = dbname,
+            dbcoll = dbcoll,
+            key = key,
+            unique_id = unique_id,
+        }
+        cache_collection[unique_id] = entry
+        save_wheel_obj():add(entry)
         return doc
     end)
 end
@@ -355,7 +391,7 @@ function M.unload(dbname, dbcoll, key, unique_id)
             )
             return false
         end
-        cache.timer_obj:cancel()
+        save_wheel_obj():remove(cache)
         cache_collection[unique_id] = nil
         return true
     end)
@@ -369,7 +405,7 @@ function M.discard_clean(dbname, dbcoll, unique_id, handle)
         if not cache or cache.handle ~= handle or orm.is_dirty(cache.doc) then
             return false
         end
-        cache.timer_obj:cancel()
+        save_wheel_obj():remove(cache)
         cache_collection[unique_id] = nil
         return true
     end)

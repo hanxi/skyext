@@ -96,7 +96,16 @@ local DEFAULT_ROW = { rid = 7, _version = 0, name = "original" }
 --   stored: nil 用默认行；false 表示集合里还没有这条文档；table 则作为初始文档
 --   defer:  true 时不自动 load，由用例自己调用
 local function harness(handle, stored, defer)
-    local h = { calls = 0, fam = {}, updates = {}, cancelled = false, fail = false, handle = handle, duplicates = 0 }
+    local h = {
+        calls = 0,
+        fam = {},
+        updates = {},
+        errors = {},
+        cancelled = false,
+        fail = false,
+        handle = handle,
+        duplicates = 0,
+    }
     if stored == nil then
         h.store = copy(DEFAULT_ROW)
     elseif stored then
@@ -213,7 +222,13 @@ local function harness(handle, stored, defer)
                 return 10
             end,
         },
-        ["skyext.log"] = { debug = function() end, info = function() end, error = function() end },
+        ["skyext.log"] = {
+            debug = function() end,
+            info = function() end,
+            error = function(msg)
+                h.errors[#h.errors + 1] = msg
+            end,
+        },
         ["skyext.mongo_conn"] = {
             get_collection = function()
                 return collection
@@ -225,12 +240,18 @@ local function harness(handle, stored, defer)
             end,
         },
         ["game.orm.schema"] = schema_mock,
-        ["skyext.timer"] = {
-            repeat_random_delayed = function(_, _, fn)
-                h.timer = fn
+        ["skyext.save_wheel"] = {
+            new = function(_, period, on_entry)
+                h.wheel_period = period
+                h.sweep_entry = on_entry
                 return {
-                    cancel = function()
+                    add = function(_, entry)
+                        h.entry = entry
+                    end,
+                    remove = function(_, entry)
+                        t.expect(entry).to.equal(h.entry)
                         h.cancelled = true
+                        return true
                     end,
                 }
             end,
@@ -252,6 +273,11 @@ local function harness(handle, stored, defer)
             assert(h.doc, h.load_error)
         end
     end
+    -- 模拟回存轮转到这个条目：与真实轮子调用 dbmgr 回调的方式一致
+    function h.sweep(entry)
+        h.sweep_entry(entry or assert(h.entry, "no entry on the wheel"))
+    end
+
     return h
 end
 
@@ -396,7 +422,7 @@ t.describe("dbmgr persistence", function()
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("fence claim failed")
         t.expect(h.store._fence).to.be_nil()
-        t.expect(h.timer).to.be_nil()
+        t.expect(h.entry).to.be_nil()
         h.fam_fail = "exception"
         doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 5, valid = true })
         t.expect(doc).to.be_nil()
@@ -464,7 +490,7 @@ t.describe("dbmgr persistence", function()
         local doc, err = h.db.load("demo", "role", "rid", 7, nil, handle)
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("lease expired during fence claim")
-        t.expect(h.timer).to.be_nil()
+        t.expect(h.entry).to.be_nil()
         -- fence 已落库且不回滚：旧持有者本就该被拒，后继者的 fence 一定更大
         t.expect(h.store._fence).to.equal(30)
         local successor = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 31, valid = true }))
@@ -560,6 +586,65 @@ t.describe("dbmgr persistence", function()
         t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
         t.expect(h.updates[2].query._version).to.equal(1)
         t.expect(h.updates[2].update["$set"].name).to.equal("later")
+    end)
+end)
+
+t.describe("dbmgr save wheel", function()
+    t.it("puts every loaded document on one wheel keyed by the configured interval", function()
+        local h = harness()
+        t.expect(h.wheel_period).to.equal(10)
+        t.expect(h.entry.dbname).to.equal("demo")
+        t.expect(h.entry.dbcoll).to.equal("role")
+        t.expect(h.entry.key).to.equal("rid")
+        t.expect(h.entry.unique_id).to.equal(7)
+        t.expect(h.entry.doc).to.equal(h.doc)
+    end)
+
+    t.it("writes a dirty document back when the wheel sweeps it", function()
+        local h = harness()
+        h.sweep()
+        -- 干净的文档不该产生任何写入
+        t.expect(#h.updates).to.equal(0)
+        h.doc.name = "swept"
+        h.sweep()
+        t.expect(#h.updates).to.equal(1)
+        t.expect(h.store.name).to.equal("swept")
+        t.expect(h.doc._version).to.equal(1)
+        t.expect(#h.errors).to.equal(0)
+    end)
+
+    t.it("reports a failed sweep without dropping the document", function()
+        local h = harness()
+        h.doc.name = "swept"
+        h.fail = true
+        h.sweep()
+        t.expect(h.errors[#h.errors]).to.equal("sweep save failed")
+        t.expect(orm.is_dirty(h.doc)).to.equal(true)
+        t.expect(h.cancelled).to.equal(false)
+        h.fail = false
+        h.sweep()
+        t.expect(h.store.name).to.equal("swept")
+    end)
+
+    t.it("ignores a wheel entry the cache has already replaced", function()
+        local h = harness()
+        local stale = h.entry
+        h.doc.name = "updated"
+        t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
+        local writes = #h.updates
+
+        local doc = assert(h.db.load("demo", "role", "rid", 7))
+        -- equal 是深比较，这里要的是“不是同一个条目”
+        t.expect(h.entry == stale).to.equal(false)
+        doc.name = "again"
+        -- 上一轮排队的旧条目不能再碰这一行
+        h.sweep(stale)
+        t.expect(#h.updates).to.equal(writes)
+        t.expect(#h.errors).to.equal(0)
+
+        h.sweep()
+        t.expect(#h.updates).to.equal(writes + 1)
+        t.expect(h.store.name).to.equal("again")
     end)
 end)
 

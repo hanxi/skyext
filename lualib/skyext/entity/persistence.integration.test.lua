@@ -75,9 +75,10 @@ local function new_holder(etcd_config)
             end,
         },
         ["skyext.distributed_lock"] = holder.lock,
-        ["skyext.timer"] = {
-            repeat_random_delayed = function()
-                return { cancel = noop }
+        -- 集成测试只验证落库语义，不需要真的转起回存轮
+        ["skyext.save_wheel"] = {
+            new = function()
+                return { add = noop, remove = noop }
             end,
         },
         ["game.orm.schema"] = schema,

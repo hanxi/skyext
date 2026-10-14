@@ -48,6 +48,7 @@
 |------|------|------|
 | distributed_lock | `lualib/skyext/distributed_lock.lua` | etcd 分布式锁，用于协调跨节点实体加载 |
 | dbmgr | `lualib/skyext/dbmgr.lua` | MongoDB ORM 加载/存盘/卸载，含脏数据定时刷盘 |
+| save_wheel | `lualib/skyext/save_wheel.lua` | 回存轮：所有缓存文档共用一个定时器轮转刷盘 |
 | cluster_discovery | `lualib/skyext/cluster_discovery.lua` | 服务注册/发现 |
 | id_generator | `lualib/skyext/id_generator.lua` | snowflake ID 生成（reliable_msg 消息 ID） |
 | mongo_conn | `lualib/skyext/mongo_conn.lua` + `service/mongo_conn.lua` | MongoDB 连接池 |
