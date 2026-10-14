@@ -80,19 +80,15 @@ local function load_bind_role(fd, rid)
 end
 
 function M:login(fd, client_obj)
-    local login_jwt_secret, secret_err = jwt.login_secret()
-    if not login_jwt_secret then
-        -- 密钥不可用（没配 / 还是示例里的公开默认值）时不能放行任何登录
-        log.error("login rejected, login_jwt_secret is unusable", "reason", secret_err)
-        return {
-            code = errcode.TOKEN_ERROR,
-        }
-    end
-
-    local data, err = jwt.verify(self.token, login_jwt_secret)
+    local data, err, kind = jwt.verify_login(self.token)
     if not data then
-        -- token 是登录凭据，不能进日志
-        log.warn("jwt failed", "err", err)
+        if kind == "config" then
+            -- 密钥不可用（没配 / 还是示例里的公开默认值）时不能放行任何登录
+            log.error("login rejected, login_jwt_secret is unusable", "reason", err)
+        else
+            -- token 是登录凭据，不能进日志
+            log.warn("jwt failed", "err", err)
+        end
         return {
             code = errcode.TOKEN_ERROR,
         }

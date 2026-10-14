@@ -26,15 +26,21 @@ local function max_role_count()
     return g_max_role_count
 end
 
--- 登录密钥不可用（没配 / 还是示例里的公开默认值）时不能放行任何请求
-local function login_secret(res)
-    local secret, reason = jwt.login_secret()
-    if not secret then
-        log.error("request rejected, login_jwt_secret is unusable", "reason", reason)
+-- 校验登录 token。不通过时已经把应答写回去了，调用方直接 return。
+local function verify_token(res, token)
+    local data, err, kind = jwt.verify_login(token)
+    if not data then
+        if kind == "config" then
+            -- 密钥不可用（没配 / 还是示例里的公开默认值）：是部署问题，不是调用方的错
+            log.error("request rejected, login_jwt_secret is unusable", "reason", err)
+        else
+            -- token 是登录凭据，不能进日志
+            log.warn("jwt failed", "err", err)
+        end
         res.write_json({ code = errcode.TOKEN_ERROR })
         return nil
     end
-    return secret
+    return data
 end
 
 local M = {
@@ -48,23 +54,9 @@ end
 
 M.GET["/roles"] = function(req, res)
     local q = req.parse_query()
-    local secret = login_secret(res)
-    if not secret then
-        return
-    end
-    local token = q.token
-    if not token or token == "" then
-        return res.write_json({
-            code = errcode.TOKEN_ERROR,
-        })
-    end
-    local data, err = jwt.verify(token, secret)
+    local data = verify_token(res, q.token)
     if not data then
-        -- token 是登录凭据，不能进日志
-        log.warn("jwt failed", "err", err)
-        return res.write_json({
-            code = errcode.TOKEN_ERROR,
-        })
+        return
     end
 
     local account = data.account
@@ -94,23 +86,9 @@ end
 
 M.POST["/create_role"] = function(req, res)
     local b = req.read_json()
-    local secret = login_secret(res)
-    if not secret then
-        return
-    end
-    local token = b.token
-    if not token or token == "" then
-        return res.write_json({
-            code = errcode.TOKEN_ERROR,
-        })
-    end
-    local data, err = jwt.verify(token, secret)
+    local data = verify_token(res, b.token)
     if not data then
-        -- token 是登录凭据，不能进日志
-        log.warn("jwt failed", "err", err)
-        return res.write_json({
-            code = errcode.TOKEN_ERROR,
-        })
+        return
     end
 
     -- 检查 account 的角色数量

@@ -106,6 +106,8 @@ local secret = config.get("login_jwt_secret")
 
 示例配置里额外写了 `allow_insecure_secret = true`，这是**仅供本地开发**的逃生口：它只放宽 `login_jwt_secret`（放行时打一条 ERROR 日志），不影响 GM 鉴权。生产环境不要设置这一项。
 
+登录 token 除签名外还校验签发方和有效期：`login_jwt_issuer` / `login_jwt_audience` 两边必须一致，`login_jwt_ttl` 决定有效期（缺 `exp` 的 token 一律拒绝），`login_jwt_leeway` 容忍节点间时钟差。详见 [登录流程](guide/login_diagram.md#jwt-token)。
+
 GM 不是一个 token 走天下：每个使用者配一个账号，账号挂一个角色，角色决定能执行到哪一级指令，所有操作进审计文件。示例默认不配账号（即 GM 接口关闭），配法见 [GM HTTP API](guide/gm_api.md#鉴权与权限)。
 
 ## 6. 测试、检查与打包

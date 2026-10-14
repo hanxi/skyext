@@ -26,18 +26,13 @@ end
 
 function CMD.start(conf)
     -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
-    -- 所以密钥和 gate_nodes 都要在这里读
-    local login_jwt_secret, secret_err = jwt.login_secret()
-    if not login_jwt_secret then
-        log.error("cannot sign login token, login_jwt_secret is unusable", "reason", secret_err)
+    -- 所以 token 和 gate_nodes 都要在这里取
+    local token, sign_err = jwt.sign_login({ account = "robot3" }, "HS512")
+    if not token then
+        log.error("cannot sign login token", "reason", sign_err)
         return
     end
     local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
-
-    local data = {
-        account = "robot3",
-    }
-    local token = jwt.sign(data, login_jwt_secret, "HS512", 60)
     -- token 是登录凭据，只能记录长度这类非敏感信息
     log.info("generate token", "len", #token)
 

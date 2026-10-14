@@ -11,7 +11,7 @@
 
 ## 登录步骤
 
-1. 客户端获取 JWT Token（正式客户端经 GamePass OAuth 回调获得；机器人客户端调用 `jwt.sign` 本地生成）
+1. 客户端获取 JWT Token（正式客户端经 GamePass OAuth 回调获得；机器人客户端调用 `jwt.sign_login` 本地生成）
 2. 发送 HTTP GET `/roles?token=xxx` 到 Account 服务获取角色列表
 3. 如果没有角色，发送 HTTP POST `/create_role` 到 Account 服务创建角色
 4. 创建角色返回角色信息，其中包含 `rolenode` 字段
@@ -26,11 +26,12 @@
 
 ```lua
 function CMD.start(conf)
-    local data = {
-        account = "robot3",
-    }
-    local token = jwt.sign(data, login_jwt_secret, "HS512", 60)
-    log.info("generate token", "token", token)
+    -- 密钥、签发方（iss）、接收方（aud）和有效期都来自配置，调用方只给业务 claim
+    local token, sign_err = jwt.sign_login({ account = "robot3" }, "HS512")
+    if not token then
+        log.error("cannot sign login token", "reason", sign_err)
+        return
+    end
 
     local account_host = config.get("account_host")
     local status, body = httpc.get(account_host, "/roles?token=" .. token)

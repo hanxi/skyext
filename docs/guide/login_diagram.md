@@ -204,7 +204,7 @@ sequenceDiagram
     participant R as RoleNode
 
     Note over RC: 1. 直接生成JWT Token（模拟OAuth结果）
-    RC->>RC: 本地生成JWT Token<br/>jwt.sign({account: "robot3"}, secret, "HS512", 60)
+    RC->>RC: 本地生成JWT Token<br/>jwt.sign_login({account: "robot3"}, "HS512")
 
     Note over RC: 2. 使用模拟Token获取角色
     RC->>A: HTTP GET /roles?token=xxx
@@ -234,27 +234,33 @@ sequenceDiagram
 
 **正式客户端**（通过 GamePass OAuth 获取）：
 
-JWT payload 的具体字段由 GamePass OAuth 服务决定。服务端 `jwt.verify`（`example/lualib/jwt.lua`）会校验签名和时效，业务代码仅使用 `account` 字段：
+服务端 `jwt.verify_login`（`example/lualib/jwt.lua`）校验签名、`iss`、`aud` 和时效，业务代码仅使用 `account` 字段：
 
 ```json
 {
   "account": "user_account_id",
+  "iss": "skyext",
+  "aud": "skyext-game",
   "iat": 1638360000,
-  "exp": 1638363600
+  "exp": 1638360300
 }
 ```
 
-> 上述为最小必要字段。GamePass 实际返回的 token 可能包含更多字段（如 `sub`、`iss`），`jwt.verify` 会忽略未知字段。
+| 字段 | 说明 |
+|------|------|
+| iss / aud | 签发方与接收方，必须与 `login_jwt_issuer` / `login_jwt_audience` 一致。签名密钥只保证"是我们签的"，这两项保证"是这套服务签的、签给这套服务的"——同一密钥被别的系统或别的用途复用时不会互相串 |
+| exp | **必填**，缺失直接拒绝：没有过期时间的登录 token 等于永久有效，一旦泄漏就收不回来。有效期由 `login_jwt_ttl` 决定 |
+| iat / nbf | 可选。比较时都放宽 `login_jwt_leeway` 秒，容忍节点间时钟差 |
+
+未知字段会被忽略。GamePass 这类外部签发方必须按上面的 `iss`/`aud` 签，否则服务端会拒绝。
 
 **机器人客户端**（本地生成，仅用于测试）：
 
-```json
-{
-  "account": "robot3"
-}
+```lua
+local token = jwt.sign_login({ account = "robot3" }, "HS512")
 ```
 
-`jwt.sign` 会自动补充 `iat` 和 `exp` 字段（见 `example/lualib/jwt.lua`）。支持的签名算法：`HS256`、`HS512`。
+`jwt.sign_login` 从配置取密钥和 `iss`/`aud`/`ttl`，自动补上 `iss`、`aud`、`iat`、`exp`。支持的签名算法：`HS256`、`HS512`。
 
 ### Account 服务 API
 

@@ -150,6 +150,13 @@ login_jwt_secret = "your_access_secret"
 -- 生产环境不要设置这一项——弱密钥会直接导致登录被拒绝。
 allow_insecure_secret = true
 
+-- 登录 token 的签发方与接收方。签名密钥只保证"是我们签的"，这两项进一步保证
+-- "是这套服务签的、是签给这套服务的"：密钥被别的系统或别的用途复用时不会互相串。
+login_jwt_issuer = "skyext"
+login_jwt_audience = "skyext-game"
+login_jwt_ttl = 300 -- 登录 token 有效期秒数，拿到就用，不需要长
+login_jwt_leeway = 30 -- 允许的节点间时钟差秒数，给大了等于延长 token 寿命
+
 -- 客户端看到到服务器与游戏服的映射
 server2game = {
     ["s1"] = "game1",
