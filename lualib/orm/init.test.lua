@@ -264,3 +264,133 @@ t.describe("ORM schema reload", function()
         t.expect(orm.to_bson(fresh).exp).to.equal(7)
     end)
 end)
+
+t.describe("orm.decode", function()
+    local int_t = { type = "integer" }
+    local str_t = { type = "string" }
+    local bool_t = { type = "boolean" }
+
+    -- 按生成器产出的形状造 schema：字段直接挂在表上，带 fields() 和类型检查
+    local function struct(name, fields)
+        local obj = { type = "struct" }
+        local names = {}
+        for k, v in pairs(fields) do
+            obj[k] = v
+            names[#names + 1] = k
+        end
+        table.sort(names)
+        obj.fields = function()
+            return names
+        end
+        obj._parse_k = function(self, k)
+            assert(self[k], "not exist key: " .. tostring(k))
+            return k
+        end
+        obj._check_k = obj._parse_k
+        obj._check_kv = function(self, k, v)
+            local field = self[k]
+            assert(field, "not exist key: " .. tostring(k))
+            if field == int_t then
+                assert(math.tointeger(v), "need integer")
+            elseif field == str_t then
+                assert(type(v) == "string", "need string")
+            elseif field == bool_t then
+                assert(type(v) == "boolean", "need boolean")
+            else
+                assert(field == v, "need " .. name .. "." .. k)
+            end
+        end
+        return obj
+    end
+
+    local function container(tp, value_t)
+        local obj = { type = tp }
+        setmetatable(obj, {
+            __index = function()
+                return value_t
+            end,
+        })
+        obj._parse_k = function(_, k)
+            return math.tointeger(k) or k
+        end
+        obj._check_k = obj._parse_k
+        obj._check_kv = function(_, _, v)
+            if value_t == int_t then
+                assert(math.tointeger(v), "need integer")
+            else
+                assert(value_t == v, "need " .. tp .. " value")
+            end
+        end
+        return obj
+    end
+
+    t.it("drops fields the schema no longer declares and reports their paths", function()
+        local role = struct("role", { rid = int_t, name = str_t })
+        local doc, dropped = orm.decode(role, { rid = 1, name = "a", nick = "old", level = 3 })
+        t.expect(dropped).to.equal({ "level", "nick" })
+        t.expect(doc.rid).to.equal(1)
+        t.expect(doc.name).to.equal("a")
+        -- 丢掉的字段连读都不该读到
+        t.expect(function()
+            return doc.nick
+        end).to
+            .throw("not exist key")
+    end)
+
+    t.it("fills a newly declared scalar with its zero value", function()
+        local role = struct("role", { rid = int_t, name = str_t, vip = bool_t, exp = int_t })
+        local doc = orm.decode(role, { rid = 1 })
+        t.expect(doc.rid).to.equal(1)
+        t.expect(doc.exp).to.equal(0)
+        t.expect(doc.name).to.equal("")
+        t.expect(doc.vip).to.equal(false)
+    end)
+
+    t.it("fills a newly declared struct, map and array", function()
+        local attach = struct("attach", { res_id = int_t, res_size = int_t })
+        local mails = container("map", attach)
+        local tags = container("array", int_t)
+        local role = struct("role", { rid = int_t, attach = attach, mails = mails, tags = tags })
+
+        local doc = orm.decode(role, { rid = 1 })
+        -- 新结构体的标量同样补到底，玩法代码可以直接 doc.attach.res_id
+        t.expect(doc.attach.res_id).to.equal(0)
+        t.expect(orm.to_bson(doc.mails)).to.equal({})
+        t.expect(#doc.tags).to.equal(0)
+    end)
+
+    t.it("keeps the filled-in values clean so they are never written back", function()
+        local role = struct("role", { rid = int_t, exp = int_t })
+        local doc = orm.decode(role, { rid = 1, extra = 1 })
+        t.expect(orm.is_dirty(doc)).to.equal(false)
+        local is_dirty, update = orm.snapshot_mongo(doc)
+        t.expect(is_dirty).to.equal(false)
+        t.expect(update).to.equal({})
+    end)
+
+    t.it("aligns nested structs and the values inside a map", function()
+        local mail = struct("mail", { mail_id = int_t, title = str_t })
+        local mails = container("map", mail)
+        local modules = struct("modules", { mails = mails })
+        local role = struct("role", { rid = int_t, modules = modules })
+
+        local doc, dropped = orm.decode(role, {
+            rid = 1,
+            modules = { mails = { [1] = { mail_id = 7, subject = "old" } }, legacy = 1 },
+        })
+        t.expect(dropped).to.equal({ "modules.legacy", "modules.mails.1.subject" })
+        t.expect(doc.modules.mails[1].mail_id).to.equal(7)
+        t.expect(doc.modules.mails[1].title).to.equal("")
+    end)
+
+    t.it("leaves a self-referencing struct field empty instead of recursing forever", function()
+        local node = struct("node", { id = int_t })
+        node.next = node
+        node.fields = function()
+            return { "id", "next" }
+        end
+        local doc = orm.decode(node, { id = 1 })
+        t.expect(doc.id).to.equal(1)
+        t.expect(doc.next).to.be_nil()
+    end)
+end)

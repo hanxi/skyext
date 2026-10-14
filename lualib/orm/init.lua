@@ -281,6 +281,87 @@ function orm.new(schema, init)
     return doc
 end
 
+local ZERO = { integer = 0, number = 0, string = "", boolean = false }
+
+local function is_container(schema)
+    return schema.type == "map" or schema.type == "array"
+end
+
+local align
+-- schema 新加的字段在旧文档里没有值。补零值而不是留 nil：玩法代码不该为
+-- "这个字段是上个版本加的" 多分一条支路。
+local function zero_value(schema, path, dropped, seen)
+    local scalar = ZERO[schema.type]
+    if scalar ~= nil then
+        return scalar
+    end
+    if is_container(schema) then
+        return {}
+    end
+    if seen[schema] then
+        -- 结构直接或间接包含自己，没有有限的零值，只能留空
+        return nil
+    end
+    local sub = {}
+    align(schema, sub, path, dropped, seen)
+    return sub
+end
+
+local function sub_path(path, k)
+    if path == "" then
+        return tostring(k)
+    end
+    return path .. "." .. tostring(k)
+end
+
+-- 把存储里读出来的普通表原地对齐到当前 schema，返回被丢弃的字段路径。
+align = function(schema, value, path, dropped, seen)
+    if is_container(schema) then
+        for k, v in pairs(value) do
+            local field = schema[k]
+            if field ~= nil and type(v) == "table" then
+                align(field, v, sub_path(path, k), dropped, seen)
+            end
+        end
+        return
+    end
+
+    seen[schema] = true
+    for k, v in pairs(value) do
+        local field = schema[k]
+        if field == nil then
+            value[k] = nil
+            dropped[#dropped + 1] = sub_path(path, k)
+        elseif type(v) == "table" then
+            align(field, v, sub_path(path, k), dropped, seen)
+        end
+    end
+
+    local fields = assert(schema.fields, "schema has no fields(), cannot decode")()
+    for _, name in ipairs(fields) do
+        if value[name] == nil then
+            value[name] = zero_value(schema[name], sub_path(path, name), dropped, seen)
+        end
+    end
+    seen[schema] = nil
+end
+
+--- 从存储里解码一份文档，返回 doc 和被丢弃的字段路径列表。
+--
+-- 库里躺着的文档是旧版本代码写下的，形状不一定还等于当前 schema。多出来的字段
+-- 丢掉（代码已经删了它，留着只会撞在类型检查上），缺掉的字段补零值。补出来的值
+-- 不算脏，不会被写回数据库。
+--
+-- 这样增删字段不需要任何迁移脚本；改名和改类型仍然是不兼容变更，由
+-- ./bin/skyext schema check 在提交前拦下。
+function orm.decode(schema, init)
+    local dropped = {}
+    align(schema, init, "", dropped, {})
+    -- 排个序，同一份文档每次打出来的告警都一样，便于比对
+    table.sort(dropped)
+    return orm.new(schema, init), dropped
+end
+
 function orm.check_type(doc)
     if type(doc) ~= "table" then
         return false

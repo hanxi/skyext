@@ -6,17 +6,39 @@ local skynet = require "skynet"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "lualib/skyext/dbmgr.lua")
 
-local schema = { type = "message", rid = true, _version = true, name = true }
-function schema:_parse_k(k)
-    assert(self[k], "unknown key: " .. tostring(k))
-    return k
-end
-function schema:_check_k(k)
-    self:_parse_k(k)
-end
-function schema:_check_kv(k, value)
-    assert(self[k])
-    assert(type(value) == (k == "name" and "string" or "number"))
+-- 与 generate schema 产出的结构体同形：dbmgr 会把它直接交给 orm.decode，
+-- 所以字段必须是真的类型表，fields() 也得能列出来
+local function role_schema(extra)
+    local self =
+        { type = "struct", rid = { type = "integer" }, _version = { type = "integer" }, name = { type = "string" } }
+    for k, v in pairs(extra or {}) do
+        self[k] = v
+    end
+    local names = {}
+    for k, v in pairs(self) do
+        if type(v) == "table" and v.type then
+            names[#names + 1] = k
+        end
+    end
+    table.sort(names)
+    function self.fields()
+        return names
+    end
+    function self:_parse_k(k)
+        assert(self[k], "unknown key: " .. tostring(k))
+        return k
+    end
+    function self:_check_k(k)
+        self:_parse_k(k)
+    end
+    function self:_check_kv(k, value)
+        assert(self[k])
+        assert(type(value) == (k == "name" and "string" or "number"))
+    end
+    function self.new(data)
+        return orm.new(self, data)
+    end
+    return self
 end
 
 -- 下面是一个极小的 Mongo 行为模型：只支持 dbmgr 真正用到的算子，
@@ -105,6 +127,7 @@ local function harness(handle, stored, defer)
         fam = {},
         updates = {},
         errors = {},
+        warnings = {},
         cancelled = false,
         fail = false,
         handle = handle,
@@ -198,13 +221,7 @@ local function harness(handle, stored, defer)
 
     -- dbmgr 加载时 require 到的那张 schema 表；reload_orm_schema 的用例会把
     -- imports["game.orm.schema"] 换成新版本，模拟热更后重新 require 的结果
-    local schema_mock = {
-        role = {
-            new = function(data)
-                return orm.new(schema, data)
-            end,
-        },
-    }
+    local schema_mock = { role = role_schema() }
     h.schema = schema_mock
 
     local imports = {
@@ -229,6 +246,9 @@ local function harness(handle, stored, defer)
         ["skyext.log"] = {
             debug = function() end,
             info = function() end,
+            warn = function(msg)
+                h.warnings[#h.warnings + 1] = msg
+            end,
             error = function(msg)
                 h.errors[#h.errors + 1] = msg
             end,
@@ -652,200 +672,40 @@ t.describe("dbmgr save wheel", function()
     end)
 end)
 
-t.describe("dbmgr schema migration", function()
-    local MIGRATION_PATH = "game.orm.migrations"
-
-    -- 一条最小但有代表性的迁移链：既加字段又删字段，顺带记下自己跑过几次
-    local function rename_nick(calls)
-        return {
-            role = {
-                {
-                    version = 1,
-                    desc = "nick 改名为 name",
-                    migrate = function(doc)
-                        calls[#calls + 1] = doc.nick
-                        doc.name = doc.nick
-                        doc.nick = nil
-                    end,
-                },
-            },
-        }
-    end
-
-    t.it("migrates a legacy document and persists it before handing it out", function()
-        local calls = {}
-        local h = harness(nil, { rid = 7, _version = 3, nick = "legacy" }, true)
-        h.imports[MIGRATION_PATH] = rename_nick(calls)
-
-        -- 没有迁移的话，nick 这个字段会直接撞在 schema 的类型检查上
+t.describe("dbmgr schema drift", function()
+    t.it("loads a document carrying fields the schema no longer declares", function()
+        -- 删字段不需要任何迁移脚本：旧文档里残留的 nick 丢掉就行，
+        -- 否则它会直接撞在 orm 的类型检查上，这一行永远加载不起来
+        local h = harness(nil, { rid = 7, _version = 0, name = "legacy", nick = "old" }, true)
         local doc = assert(h.db.load("demo", "role", "rid", 7))
-        t.expect(calls).to.equal({ "legacy" })
         t.expect(doc.name).to.equal("legacy")
-        t.expect(doc._version).to.equal(4)
-        -- _schema_version 由 dbmgr 维护，不能漏进 orm 文档
-        t.expect(rawget(doc, "_schema_version")).to.be_nil()
-
-        t.expect(h.store.name).to.equal("legacy")
-        t.expect(h.store.nick).to.be_nil()
-        t.expect(h.store._schema_version).to.equal(1)
-        t.expect(h.store._version).to.equal(4)
-        t.expect(h.updates[1].query._version).to.equal(3)
-        t.expect(h.updates[1].update["$unset"].nick).to.equal(true)
-
-        -- 结果已经落库，下次加载不会重跑这条链
-        t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
-        local again = assert(h.db.load("demo", "role", "rid", 7))
-        t.expect(again.name).to.equal("legacy")
-        t.expect(#calls).to.equal(1)
+        t.expect(rawget(doc, "nick")).to.be_nil()
+        t.expect(#h.warnings).to.equal(1)
+        -- 库里那份文档不动：丢字段只是这份内存文档的事
+        t.expect(h.store.nick).to.equal("old")
     end)
 
-    t.it("stamps the current version onto a new document instead of migrating it", function()
-        local calls = {}
-        local h = harness(nil, false, true)
-        h.imports[MIGRATION_PATH] = rename_nick(calls)
-        local doc = assert(h.db.load("demo", "role", "rid", 7, { name = "fresh" }))
-        t.expect(doc.name).to.equal("fresh")
-        t.expect(calls).to.equal({})
-        t.expect(h.fam[1].update["$setOnInsert"]._schema_version).to.equal(1)
-        t.expect(h.store._schema_version).to.equal(1)
-        t.expect(h.store._version).to.equal(0)
+    t.it("fills a field the document predates without marking it dirty", function()
+        -- 加字段同样不需要迁移：补零值，玩法代码不用为"上个版本没有这个字段"分支
+        local h = harness(nil, { rid = 7, _version = 0 }, true)
+        local doc = assert(h.db.load("demo", "role", "rid", 7))
+        t.expect(doc.name).to.equal("")
+        t.expect(#h.warnings).to.equal(0)
+        -- 补出来的零值不算改动，不该因此产生一次回写
+        t.expect(orm.is_dirty(doc)).to.equal(false)
+        h.sweep()
         t.expect(#h.updates).to.equal(0)
-    end)
-
-    t.it("keeps the version field off documents when the game defines no migrations", function()
-        local h = harness(nil, false, true)
-        local doc = assert(h.db.load("demo", "role", "rid", 7, { name = "fresh" }))
-        t.expect(doc.name).to.equal("fresh")
-        t.expect(h.fam[1].update["$setOnInsert"]._schema_version).to.be_nil()
-        t.expect(h.store._schema_version).to.be_nil()
-        t.expect(#h.updates).to.equal(0)
-    end)
-
-    t.it("refuses to load a document written by a newer build", function()
-        local h = harness(nil, { rid = 7, _version = 0, name = "x", _schema_version = 9 }, true)
-        h.imports[MIGRATION_PATH] = rename_nick({})
-        local doc, err = h.db.load("demo", "role", "rid", 7)
-        t.expect(doc).to.be_nil()
-        t.expect(err).to.match("ahead of code version 1")
-        t.expect(h.entry).to.be_nil()
-        t.expect(#h.updates).to.equal(0)
-    end)
-
-    t.it("fails the load without caching or writing when a migration raises", function()
-        local h = harness(nil, { rid = 7, _version = 0, nick = "legacy" }, true)
-        h.imports[MIGRATION_PATH] = {
-            role = {
-                {
-                    version = 1,
-                    desc = "炸了",
-                    migrate = function()
-                        error("boom")
-                    end,
-                },
-            },
-        }
-        local doc, err = h.db.load("demo", "role", "rid", 7)
-        t.expect(doc).to.be_nil()
-        t.expect(err).to.match("role migration 1 %(炸了%) failed")
-        t.expect(h.entry).to.be_nil()
-        t.expect(#h.updates).to.equal(0)
-        t.expect(h.store.nick).to.equal("legacy")
-        t.expect(h.store._schema_version).to.be_nil()
-    end)
-
-    t.it("fails the load when the migration write is rejected", function()
-        local h = harness(nil, { rid = 7, _version = 0, nick = "legacy" }, true)
-        h.imports[MIGRATION_PATH] = rename_nick({})
-        h.matched = false
-        local doc, err = h.db.load("demo", "role", "rid", 7)
-        t.expect(doc).to.be_nil()
-        t.expect(err).to.equal("schema migration write failed")
-        t.expect(h.entry).to.be_nil()
-        t.expect(h.store.nick).to.equal("legacy")
-
-        h.matched = true
-        local retried = assert(h.db.load("demo", "role", "rid", 7))
-        t.expect(retried.name).to.equal("legacy")
-        t.expect(h.store._schema_version).to.equal(1)
-    end)
-
-    t.it("guards the migration write with the holder's fence", function()
-        local h = harness(nil, { rid = 7, _version = 2, nick = "legacy", _fence = 5 }, true)
-        h.imports[MIGRATION_PATH] = rename_nick({})
-        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 11, valid = true }))
-        t.expect(doc.name).to.equal("legacy")
-        t.expect(h.updates[1].query._fence).to.equal(11)
-        t.expect(h.updates[1].query._version).to.equal(2)
-        t.expect(h.store._fence).to.equal(11)
-        t.expect(h.store._schema_version).to.equal(1)
-        t.expect(h.store._version).to.equal(3)
-    end)
-
-    t.it("does not silently skip migrations when the module itself fails to load", function()
-        local h = harness(nil, { rid = 7, _version = 0, nick = "legacy" }, true)
-        h.require_error = { [MIGRATION_PATH] = "syntax error in migrations" }
-        t.expect(function()
-            h.db.load("demo", "role", "rid", 7)
-        end).to
-            .throw("syntax error in migrations")
-        t.expect(h.store.nick).to.equal("legacy")
-    end)
-
-    t.it("swaps the migration chain together with the schema", function()
-        local calls = {}
-        local h = harness(nil, { rid = 7, _version = 0, name = "original" }, true)
-        h.imports[MIGRATION_PATH] = { role = {} }
-        assert(h.db.load("demo", "role", "rid", 7))
-        t.expect(h.store._schema_version).to.be_nil()
-        t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
-
-        h.imports[MIGRATION_PATH] = rename_nick(calls)
-        h.imports["game.orm.schema"] = { role = { new = h.schema.role.new } }
-        t.expect(h.gm.reload_orm_schema.handler()).to.equal(true)
-
-        h.store = { rid = 9, _version = 0, nick = "legacy" }
-        local doc = assert(h.db.load("demo", "role", "rid", 9))
-        t.expect(doc.name).to.equal("legacy")
-        t.expect(calls).to.equal({ "legacy" })
-        t.expect(h.store._schema_version).to.equal(1)
-    end)
-
-    t.it("refuses the whole reload when the new migration chain is invalid", function()
-        local h = harness(nil, nil, true)
-        local v1_role = h.schema.role
-        v1_role.rid = true
-        h.imports[MIGRATION_PATH] = { role = { { version = 2, desc = "x", migrate = function() end } } }
-        h.imports["game.orm.schema"] = { role = { new = v1_role.new } }
-
-        local ok, err = h.gm.reload_orm_schema.handler()
-        t.expect(ok).to.equal(false)
-        t.expect(err).to.match("version must be 1")
-        -- schema 必须原封不动：迁移链没对齐就换 schema，旧文档会直接加载失败
-        t.expect(v1_role.rid).to.equal(true)
-        t.expect(package.loaded[MIGRATION_PATH]).to.be_nil()
     end)
 end)
 
 t.describe("dbmgr reload_orm_schema", function()
     local SCHEMA_PATH = "game.orm.schema"
 
-    local function role_type(extra)
-        local obj = {
-            new = function(data)
-                return orm.new(schema, data)
-            end,
-        }
-        for k, v in pairs(extra or {}) do
-            obj[k] = v
-        end
-        return obj
-    end
-
     t.it("reloads definitions in place and keeps one canonical schema table", function()
         local h = harness(nil, nil, true)
         local v1_role = h.schema.role
-        local v2_role = role_type({ mail = true })
-        local v2_bag = role_type()
+        local v2_role = role_schema({ mail = true })
+        local v2_bag = role_schema()
         h.imports[SCHEMA_PATH] = { role = v2_role, bag = v2_bag }
 
         local ok, err = h.gm.reload_orm_schema.handler()
@@ -895,7 +755,7 @@ t.describe("dbmgr reload_orm_schema", function()
         t.expect(package.loaded[SCHEMA_PATH]).to.equal(h.schema)
 
         h.require_error = nil
-        h.imports[SCHEMA_PATH] = { role = role_type({ mail = true }) }
+        h.imports[SCHEMA_PATH] = { role = role_schema({ mail = true }) }
         t.expect(h.gm.reload_orm_schema.handler()).to.equal(true)
         t.expect(v1_role.mail).to.equal(true)
     end)
@@ -905,7 +765,7 @@ t.describe("dbmgr reload_orm_schema", function()
         local doc = h.doc
         t.expect(doc).to.be_type("table")
 
-        h.imports[SCHEMA_PATH] = { role = role_type({ mail = true }) }
+        h.imports[SCHEMA_PATH] = { role = role_schema({ mail = true }) }
         t.expect(h.gm.reload_orm_schema.handler()).to.equal(true)
 
         -- 已加载的 doc 仍然可写、可落库
