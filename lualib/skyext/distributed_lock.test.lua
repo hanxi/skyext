@@ -204,4 +204,25 @@ t.describe("distributed lock lease and fencing", function()
         t.expect(h.keepalives).to.be_nil()
         t.expect(h.lock.try_lock("role:9", "owner")).to.equal(true)
     end)
+
+    t.it("锁被别的节点占着时如实返回持锁节点名", function()
+        local h = harness()
+        -- 另一个节点先拿到了锁：etcd 里是它写的裸字符串，响应里 base64 过一道
+        h.locks["/skynet/lock/entity/role/7"] = { revision = 41, lease = 999, value = "rolenode2" }
+        local ok, reason, owner = h.lock.try_lock("entity/role/7", "rolenode1")
+        t.expect(ok).to.equal(false)
+        t.expect(reason).to.equal("lock held")
+        -- 回归保护：这里曾经对裸字符串做 cjson.decode，owner 恒为 nil，
+        -- 上层据此做的实体交接从来没触发过
+        t.expect(owner).to.equal("rolenode2")
+    end)
+
+    t.it("持锁方没写锁值时 owner 是 nil 而不是空串", function()
+        local h = harness()
+        h.locks["/skynet/lock/entity/role/7"] = { revision = 41, lease = 999, value = "" }
+        local ok, reason, owner = h.lock.try_lock("entity/role/7", "rolenode1")
+        t.expect(ok).to.equal(false)
+        t.expect(reason).to.equal("lock held")
+        t.expect(owner).to.be_nil()
+    end)
 end)
