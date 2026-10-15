@@ -37,8 +37,13 @@ local function lua_sampler(duration, target_service)
     end
 
     debug.sethook(hook, "", 10000)
-    skynet.sleep(duration * 100)
+    -- 摘钩子必须无条件执行：采样一旦中途抛错，钩子和它闭包里的 stacks 表
+    -- 会永远挂在这个服务上，之后每 10000 条指令都白跑一次
+    local ok, err = pcall(skynet.sleep, duration * 100)
     debug.sethook()
+    if not ok then
+        error(err, 0)
+    end
 
     return stacks, sample_count
 end
