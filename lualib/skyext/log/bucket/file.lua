@@ -161,7 +161,8 @@ end
 local function parse_bytes(u)
     local num, unit = smatch(u:upper(), "^([%d.]+)([KMGTP]?)B?$")
     num = assert(unit and tonumber(num), "invalid format")
-    local index = (sfind("KMGTP", unit) or 0) * 10
+    -- 空单位要当字节算。`sfind(s, "")` 返回 1，不加这层判断的话 "100" 会被当成 100K
+    local index = (unit ~= "" and sfind("KMGTP", unit, 1, true) or 0) * 10
     return num * (1 << index)
 end
 
