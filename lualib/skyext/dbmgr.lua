@@ -423,6 +423,106 @@ function M.discard_clean(dbname, dbcoll, unique_id, handle)
     end)
 end
 
+-- 租约没了之后把条目从回存轮上摘下来，但保留缓存。
+-- 摘掉是为了止血：租约已经失效，save_doc 必然拒绝写入，留在轮上只会让每一轮都刷
+-- 一条 "refusing save without lease"。缓存本身不能丢，里面可能还有没落库的改动，
+-- 它的去向由 M.recover 决定。
+function M.quarantine(dbname, dbcoll, unique_id, handle)
+    check_collection(dbname, dbcoll)
+    return with_row_lock(dbname, dbcoll, unique_id, function()
+        local cache = get_cache_collection(dbname, dbcoll)[unique_id]
+        if not cache or cache.handle ~= handle then
+            return false
+        end
+        return save_wheel_obj():remove(cache)
+    end)
+end
+
+-- 放弃一份再也写不回去的缓存。调用方必须已经确认这些改动不能要了，
+-- 并且自己留下了记录——走到这里就是一次确定的数据回退。
+function M.discard(dbname, dbcoll, unique_id, handle)
+    check_collection(dbname, dbcoll)
+    return with_row_lock(dbname, dbcoll, unique_id, function()
+        local cache_collection = get_cache_collection(dbname, dbcoll)
+        local cache = cache_collection[unique_id]
+        if not cache or cache.handle ~= handle then
+            return false
+        end
+        save_wheel_obj():remove(cache)
+        cache_collection[unique_id] = nil
+        return true
+    end)
+end
+
+-- 失去租约时内存里还有没落库的改动，拿到新租约后尝试把它接回去。
+--
+-- 安全性由两道独立的闸门保证：
+-- 新 fence 认领把旧持有者挡在门外，而 _version 比较判断失租期间有没有人真的写过
+-- 这个文档。只有 _version 没变才说明这份内存改动仍然是库里状态的延续——接管者
+-- 可能只是把实体加载起来又原样卸载，什么都没改，那份改动依然作数。_version 变了
+-- 就说明改动已经基于一份过时的快照，再写回去就是拿旧数据盖新数据。
+--
+-- 返回 true 表示改动已落库且缓存已清理；返回 false, "superseded" 表示改动已作废、
+-- 缓存已清理，调用方可以安全丢掉实体；其余 false 表示这次没成功，缓存仍然留着，
+-- 应该重试。
+function M.recover(dbname, dbcoll, key, unique_id, old_handle, new_handle)
+    check_collection(dbname, dbcoll)
+    assert(new_handle, "recover requires a new lock handle")
+    return with_row_lock(dbname, dbcoll, unique_id, function()
+        local cache_collection = get_cache_collection(dbname, dbcoll)
+        local cache = cache_collection[unique_id]
+        if not cache or cache.handle ~= old_handle then
+            return false, "cache replaced"
+        end
+        local function drop()
+            save_wheel_obj():remove(cache)
+            cache_collection[unique_id] = nil
+        end
+        if not orm.is_dirty(cache.doc) then
+            drop()
+            return true
+        end
+        if not lease_valid(new_handle) then
+            return false, "lease expired"
+        end
+
+        local coll_obj = get_collection_obj(dbname, dbcoll)
+        local initial = { [key] = unique_id, _version = 0, _fence = new_handle.fence }
+        local claimed, reason, detail = claim_with_fence(coll_obj, key, unique_id, initial, new_handle.fence)
+        if not claimed then
+            return false, reason, detail
+        end
+
+        local cached_version = cache.doc._version
+        if claimed._version ~= cached_version then
+            log.error(
+                "dirty cache superseded while lease was lost",
+                "dbname",
+                dbname,
+                "dbcoll",
+                dbcoll,
+                "unique_id",
+                unique_id,
+                "cached_version",
+                cached_version,
+                "db_version",
+                claimed._version
+            )
+            drop()
+            return false, "superseded"
+        end
+
+        -- 只把 new_handle 传给这一次写入，不改 cache.handle：写失败时缓存要原样留着，
+        -- 下一轮重试仍然按 old_handle 找得到它。
+        if not save_doc(coll_obj, key, unique_id, cache.doc, new_handle) then
+            return false, "save failed"
+        end
+        drop()
+        log.info("dirty cache recovered", "dbname", dbname, "dbcoll", dbcoll, "unique_id", unique_id)
+        return true
+    end)
+end
+
 local GM_CMD = {}
 GM_CMD.reload_orm_schema = {
     desc = "重载 orm schema",

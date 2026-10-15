@@ -23,6 +23,10 @@ end
 local UNLOAD_RETRY_DELAY = 5
 -- 退避上限，避免数据库/etcd 长时间故障时持续重试刷日志
 local UNLOAD_RETRY_MAX_DELAY = 300
+-- 失租后把脏数据接回来的尝试次数上限。退避累计远超租约 TTL 仍然拿不到锁，
+-- 说明实体已经被别的节点接管，对方正基于库里的数据在工作，这份内存改动
+-- 再接回去就是拿旧状态覆盖新状态，只能丢。
+local DIRTY_RECOVERY_MAX_ATTEMPTS = 8
 
 function M.new(type_name, type_config, handler, data_modules)
     local self = setmetatable({
@@ -548,6 +552,93 @@ function M:_abort_unload(entity, reason)
     self:_schedule_unload_retry(entity)
 end
 
+-- 失租时内存里还有没落库的改动。先把条目从回存轮上摘掉止血，再重新抢一次锁，
+-- 拿到新 fence 之后由 dbmgr 判断这份改动还能不能接回去（见 dbmgr.recover）。
+--
+-- 不管走哪条路，实体最终都必须离开内存。以前这里一发现缓存是脏的就直接返回 false，
+-- 实体会永远留在 entities 里：它不服务任何请求，却让后续 ensure_loaded 恒定失败，
+-- 同时还挂在回存轮上每一轮刷一条写入被拒的日志，只能靠重启进程清掉。
+function M:_recover_dirty(entity)
+    local entity_id = entity.id
+    local tc = self.type_config
+    dbmgr.quarantine(tc.db_name, tc.db_coll, entity_id, entity.handle)
+
+    local attempts = (entity.recovery_attempts or 0) + 1
+    entity.recovery_attempts = attempts
+
+    local function give_up(reason, detail)
+        log.error(
+            "dirty entity changes discarded",
+            "type",
+            self.type_name,
+            "id",
+            entity_id,
+            "attempts",
+            attempts,
+            "reason",
+            reason,
+            "detail",
+            detail
+        )
+        dbmgr.discard(tc.db_name, tc.db_coll, entity_id, entity.handle)
+        self:_forget_entity(entity)
+        return true
+    end
+
+    local lock_key = make_lock_key(self.type_name, entity_id)
+    local locked, handle = distributed_lock.try_lock(lock_key, make_lock_value(), function(expired)
+        self:_on_lock_expired(entity_id, expired)
+    end)
+    if not locked then
+        if attempts >= DIRTY_RECOVERY_MAX_ATTEMPTS then
+            return give_up("lock unreachable", handle)
+        end
+        log.warn("dirty entity recovery deferred", "type", self.type_name, "id", entity_id, "err", handle)
+        self:_abort_unload(entity, "recovery lock unavailable")
+        return false
+    end
+
+    local recovered, reason, detail =
+        dbmgr.recover(tc.db_name, tc.db_coll, tc.id_field, entity_id, entity.handle, handle)
+    if recovered then
+        -- 改动已经在新租约下落库，dbmgr 缓存也清掉了，只剩释放这把新锁
+        entity.handle = handle
+        entity.invalid = nil
+        entity.persisted = true
+        log.info("dirty entity recovered", "type", self.type_name, "id", entity_id, "fence", handle.fence)
+        return self:_release_lock(entity)
+    end
+
+    distributed_lock.unlock(lock_key, handle)
+    if reason == "superseded" then
+        -- 版本号对不上的细节 dbmgr 已经记过，这里只负责把实体清出内存
+        log.error("dirty entity discarded after takeover", "type", self.type_name, "id", entity_id)
+        self:_forget_entity(entity)
+        return true
+    end
+    if reason == "cache replaced" then
+        -- 缓存已经不归这个实体了，没有东西需要恢复
+        self:_forget_entity(entity)
+        return true
+    end
+    if attempts >= DIRTY_RECOVERY_MAX_ATTEMPTS then
+        return give_up(reason, detail)
+    end
+    log.warn(
+        "dirty entity recovery failed",
+        "type",
+        self.type_name,
+        "id",
+        entity_id,
+        "reason",
+        reason,
+        "detail",
+        detail
+    )
+    self:_abort_unload(entity, "recovery failed")
+    return false
+end
+
 -- 数据已经落库、dbmgr 缓存也已清掉，只剩释放锁。失败时必须保留实体（handle 不能丢），
 -- 否则没有人能再去释放这把锁。
 function M:_release_lock(entity)
@@ -587,13 +678,12 @@ function M:_unload_entity(entity)
     if entity.invalid or not distributed_lock.is_valid(entity.handle) then
         entity.invalid = true
         self:_kick_client(entity, "lease lost")
-        -- 失去租约后既不能写回，也不能丢弃脏数据，只能保留等待恢复流程
-        if not dbmgr.discard_clean(tc.db_name, tc.db_coll, entity_id, entity.handle) then
-            log.error("cannot unload quarantined dirty entity", "type", self.type_name, "id", entity_id)
-            return false
+        -- 干净的缓存直接丢掉就行，库里已经是最新的
+        if dbmgr.discard_clean(tc.db_name, tc.db_coll, entity_id, entity.handle) then
+            self:_forget_entity(entity)
+            return true
         end
-        self:_forget_entity(entity)
-        return true
+        return self:_recover_dirty(entity)
     end
 
     if not entity.unload_hooks_run then

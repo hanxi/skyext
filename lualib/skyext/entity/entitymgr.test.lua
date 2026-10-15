@@ -95,6 +95,42 @@ local function harness(opts)
         h.cache[id] = nil
         return true
     end
+    function fake_db.quarantine(_, _, id, handle)
+        record("quarantine")
+        return h.cache[id] ~= nil and h.cache[id] == handle
+    end
+    -- 强制丢弃：调用方已经确认这份改动再也写不回去了
+    function fake_db.discard(_, _, id, handle)
+        record("force_discard")
+        if h.cache[id] ~= handle then
+            return false
+        end
+        h.cache[id] = nil
+        h.dirty = false
+        return true
+    end
+    -- 真实实现：成功和 superseded 都会清掉缓存，其余失败保留缓存等下一轮重试
+    function fake_db.recover(_, _, _, id, old_handle, new_handle)
+        record("recover")
+        if h.cache[id] ~= old_handle then
+            return false, "cache replaced"
+        end
+        -- 恢复必须拿着一把有效的新租约，否则写入照样会被 fence 拒绝
+        t.expect(new_handle.valid).to.equal(true)
+        t.expect(new_handle.fence).to.be_gt(old_handle.fence)
+        local result = h.recover_result or "ok"
+        if result == "ok" then
+            h.cache[id] = nil
+            h.dirty = false
+            return true
+        end
+        if result == "superseded" then
+            h.cache[id] = nil
+            h.dirty = false
+            return false, "superseded"
+        end
+        return false, result
+    end
 
     local fake_msg = { DEFAULT_PAGE_SIZE = 200 }
     function fake_msg.load_pending(_, _, opts)
@@ -335,17 +371,88 @@ t.describe("entitymgr lease and delivery", function()
         t.expect(h.handles[2].fence).to.be_gt(entity.handle.fence)
     end)
 
-    t.it("retains dirty quarantine when its lease expires", function()
+    t.it("失租时把脏数据接到新租约上落库，然后正常卸载", function()
         local h = harness()
-        local _, entity = h.mgr:ensure_loaded(7)
+        h.mgr:ensure_loaded(7)
+        local first_fence = h.handles[1].fence
         h.dirty = true
         h:expire()
         h:run_jobs()
+        -- 先把条目从回存轮摘掉：旧租约已经失效，留着只会每轮重试一次注定失败的落库
+        t.expect(index_of(h.events, "quarantine")).to.be_type("number")
+        t.expect(index_of(h.events, "recover")).to.be_gt(index_of(h.events, "quarantine"))
+        -- 接回来用的是重新抢到的租约，fence 必须更大
+        t.expect(#h.handles).to.equal(2)
+        t.expect(h.handles[2].fence).to.be_gt(first_fence)
+        t.expect(index_of(h.events, "unlock")).to.be_type("number")
+        -- 实体必须离开内存，而不是永远留在 entities 里砖化
+        t.expect(h.mgr.entities[7]).to.be_nil()
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(true)
+    end)
+
+    t.it("失租期间文档已被改过时丢弃脏数据并放掉实体", function()
+        local h = harness()
+        h.mgr:ensure_loaded(7)
+        h.dirty = true
+        h.recover_result = "superseded"
+        h:expire()
+        h:run_jobs()
+        -- 写回去就是拿旧状态盖新状态，只能丢；但实体同样不能留在内存里
+        t.expect(index_of(h.events, "recover")).to.be_type("number")
+        t.expect(h.mgr.entities[7]).to.be_nil()
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(true)
+    end)
+
+    t.it("抢不回锁时保留实体并安排重试，而不是直接丢掉改动", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        h.dirty = true
+        h.owner = "other-node"
+        h:expire()
+        h:run_jobs()
+        -- 锁在别人手上，这一轮接不回来：改动必须留着，等退避后再试
+        t.expect(index_of(h.events, "recover")).to.be_nil()
+        t.expect(index_of(h.events, "force_discard")).to.be_nil()
         t.expect(h.mgr.entities[7]).to.equal(entity)
-        t.expect(h.mgr:get(7)).to.be_nil()
-        t.expect(h.mgr:ensure_loaded(7)).to.equal(false)
-        t.expect(index_of(h.events, "unlock")).to.be_nil()
-        t.expect(index_of(h.events, "persist")).to.be_nil()
+        t.expect(h.cache[7]).to.equal(entity.handle)
+        t.expect(entity.unload_retry).to.exist()
+    end)
+
+    t.it("重试到上限仍然抢不回锁就丢弃改动，不无限占着内存", function()
+        local h = harness()
+        h.mgr:ensure_loaded(7)
+        h.dirty = true
+        h.owner = "other-node"
+        h:expire()
+        h:run_jobs()
+        -- 退避累计远超租约 TTL 还拿不到锁，说明实体已经被别的节点接管，
+        -- 这份内存改动再接回去就是拿旧状态盖新状态
+        for _ = 1, 16 do
+            local retry = h.timers["entity_unload_retry:7"]
+            if not retry or retry.cancelled then
+                break
+            end
+            h.timers["entity_unload_retry:7"] = nil
+            retry.fire()
+            h:run_jobs()
+        end
+        t.expect(index_of(h.events, "force_discard")).to.be_type("number")
+        t.expect(h.mgr.entities[7]).to.be_nil()
+        t.expect(h.cache[7]).to.be_nil()
+    end)
+
+    t.it("恢复时落库失败保留缓存等下一轮，不丢改动", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        h.dirty = true
+        h.recover_result = "save failed"
+        h:expire()
+        h:run_jobs()
+        -- 这一轮没写进去，缓存必须原样留着，下一轮还能按旧 handle 找到它
+        t.expect(h.mgr.entities[7]).to.equal(entity)
+        t.expect(h.cache[7]).to.equal(entity.handle)
+        t.expect(index_of(h.events, "force_discard")).to.be_nil()
+        t.expect(entity.unload_retry).to.exist()
     end)
 
     t.it("persists each message before ack, preserving seq and passing msg_id to handlers", function()
@@ -700,20 +807,20 @@ t.describe("entitymgr load failure recovery", function()
         t.expect(h.mgr.entities[7]).to.be_nil()
     end)
 
-    t.it("retains a dirty entity whose lease dies during initialization", function()
+    t.it("初始化途中失租的脏实体会被接回去落库并清出内存", function()
         local h = harness({ no_modules = true })
         h.handler.on_load = function()
             h.dirty = true
             h:expire()
         end
         t.expect(h.mgr:ensure_loaded(7)).to.equal(false)
-        local entity = h.mgr.entities[7]
-        t.expect(entity).to.be_type("table")
-        t.expect(entity.invalid).to.equal(true)
-        t.expect(index_of(h.events, "persist")).to.be_nil()
-        t.expect(index_of(h.events, "unlock")).to.be_nil()
-        -- 脏数据不能在失去租约后被丢弃，也不能有重试去偷偷扔掉它
-        t.expect(h.timers["entity_unload_retry:7"]).to.be_nil()
+        h:run_jobs()
+        -- 半初始化的实体同样不能砖化：改动接到新租约上落库，实体离开内存
+        t.expect(index_of(h.events, "recover")).to.be_type("number")
+        t.expect(h.mgr.entities[7]).to.be_nil()
+        t.expect(h.cache[7]).to.be_nil()
+        h.handler.on_load = nil
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(true)
     end)
 end)
 

@@ -178,13 +178,28 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 1. 同一实体 ID 的加载、handler、消息投递、客户端请求及卸载经 `skynet.queue` 串行化；命中有效缓存后重置卸载定时器
 2. 未命中 → `distributed_lock.try_lock(lock_key, node_name, expired_cb)`；例如锁键 `"entity/role/12345"`、持有者值 `"rolenode1"`，成功返回带 etcd create revision (`fence`) 的句柄
 3. `dbmgr.load(..., handle)` 通过一次 Mongo `findAndModify` 原子认领 fencing token 并读取最新文档，旧持有者后续写入必须同时匹配 `_fence` 与 `_version`；首次创建文档依赖实体 ID 字段的 **唯一索引** 防止并发创建重复行（示例 `role.rid` 已配置），业务集合也必须配置。初始化模块和 handler 后异步处理 pending 消息，启动卸载定时器
-4. 租约失效回调立即隔离实体并断开客户端；旧实体不能重获原锁继续执行，也不能清理脏缓存；锁竞争返回独立的 `"lock held"` 原因及持锁节点名
+4. 租约失效回调立即隔离实体并断开客户端；旧实体不能重获原锁继续执行；锁竞争返回独立的 `"lock held"` 原因及持锁节点名
 
 **unload(entity_id) 流程：**
 1. 取消闲置卸载与消息重试定时器，标记 `unloading` 并拒绝新请求
 2. `handler.on_unload(entity)` → `_call_modules_on_unload`（`mod:on_unload()`）；重试时跳过已成功的钩子
 3. `dbmgr.unload()` 确认最后一次持久化并清除缓存 **之后** 才按 create revision 比较并解锁；卸载完成或中途失败时均断开仍绑定的客户端。保存或解锁失败时保留实体与句柄，并通过独立定时器以 5 秒为初始间隔退避重试（实体配置 `unload_retry_delay` 可覆盖初始秒数，最长 300 秒）。数据已落库但解锁失败时只重试解锁，不重复落库或执行钩子
-4. 租约已失效时仅允许丢弃无脏数据的缓存，脏缓存隔离等待人工恢复，不得写库或覆盖新持有者的数据；已经落库的实体若租约失效可直接释放内存对象
+4. 租约已失效时，干净缓存（库里已是最新）直接丢弃，实体出内存；已经落库的实体若租约失效可直接释放内存对象
+5. 租约已失效**且缓存是脏的**走失租恢复（见下）。不论恢复成功与否，实体最终都必须离开内存——留在 `entities` 里既不服务请求，又让后续 `ensure_loaded` 恒定失败
+
+**失租恢复流程（`_recover_dirty` → `dbmgr.recover`）：**
+
+租约断了但内存里还有没落库的改动时，这份改动能不能写回去，唯一的判据是 `_version`：
+
+1. `dbmgr.quarantine` 先把条目从回存轮上摘掉止血——租约已经没了，`save_doc` 必然拒绝写入，留在轮上只会让每一轮刷一条 `refusing save without lease`
+2. 重新 `try_lock` 拿一把新租约（新 fence）
+3. `dbmgr.recover` 用新 fence 原子认领文档，然后比较库里的 `_version` 和缓存里的 `_version`：
+   - **相等** → 失租期间没有人真的写过这个文档（接管者可能只是把实体加载起来又原样卸载），这份改动仍然是库里状态的延续，在新 fence 下落库，返回 `true`
+   - **不等** → 改动已经基于一份过时的快照，写回去就是拿旧数据盖新数据。返回 `false, "superseded"`，记一条 error，清掉缓存；调用方可以安全地把实体忘掉
+4. 抢不到锁或写入失败时保留缓存并退避重试。关键实现细节：`recover` 只把新 handle 传给这一次写入，**不改 `cache.handle`**——写失败时缓存要原样留着，下一轮重试仍然按旧 handle 找得到它
+5. 重试次数达到 `DIRTY_RECOVERY_MAX_ATTEMPTS`（8 次，退避累计约 15 分钟，远超 30 秒的租约 TTL）仍拿不到锁，说明实体已被别的节点接管且对方正基于库里的数据在工作。此时 `dbmgr.discard` 强行丢弃改动并记 error。这是一次确定的数据回退，但代价小于让实体永久占着内存且永远无法再加载
+
+新 fence 认领只能挡住旧持有者的写入，挡不住「接管者已经完整写过一轮」这件事——所以 `_version` 比较是不可省的第二道闸门。
 
 **调用时序**：加载时模块先于 handler 初始化（先有数据再处理业务），卸载时 handler 先于模块清理（先完成业务再释放数据）。
 
@@ -481,7 +496,8 @@ mongo_config.entity = {
 
 - per-target `seq` 分配与消息 insert 未使用多文档事务：单目标并发发送不保证跨节点严格全序投递，详见上文。
 - `persistence.integration.test.lua` 已用真实 MongoDB/etcd 验证两个独立锁/DB 实例的租约撤销、fence 接管和旧 token 写入被拒绝；仍需部署多进程节点交接、网络分区和真实客户端重连的故障注入测试。
-- 租约失效后如 ORM 缓存仍有未确认的修改，会隔离并保留脏缓存，须制定人工恢复/对账流程，不能自动丢弃或直接由后继覆盖。schema 热更的旧模块缓存与活跃对象迁移也尚未验证（见 `docs/guide/hotfix.md`）。
+- 失租恢复在重试 8 次（约 15 分钟）后会丢弃脏改动，这是一次无人值守的数据回退。日志里的 `dirty entity changes discarded` 和 `dirty cache superseded while lease was lost` 都是 error 级，应当接到告警上做事后对账；目前没有把被丢弃的改动落盘留档的机制。
+- schema 热更的旧模块缓存与活跃对象迁移尚未验证（见 `docs/guide/hotfix.md`）。
 
 ---
 

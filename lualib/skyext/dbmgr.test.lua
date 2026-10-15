@@ -613,6 +613,134 @@ t.describe("dbmgr persistence", function()
     end)
 end)
 
+-- 失租恢复：租约断了但内存里还有没落库的改动时，这三个接口决定这份改动的去向。
+-- 判定安全的唯一依据是 _version——新 fence 只能挡住旧持有者，挡不住“接管者已经
+-- 写过一轮”这件事。
+t.describe("dbmgr lease loss recovery", function()
+    local function dirty_cache()
+        local handle = { fence = 13, valid = true }
+        local h = harness(handle)
+        h.doc.name = "unsaved"
+        handle.valid = false
+        return h, handle
+    end
+
+    -- 探测缓存是否还在：带着新租约去 load，脏缓存会挡住加载并要求先恢复
+    local function dirty_cache_remains(h)
+        local doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 31, valid = true })
+        return doc == nil and err == "stale dirty cache requires recovery"
+    end
+
+    t.it("quarantine 把条目摘下回存轮但保留缓存", function()
+        local h, handle = dirty_cache()
+        t.expect(h.db.quarantine("demo", "role", 7, handle)).to.equal(true)
+        t.expect(h.cancelled).to.equal(true)
+        -- 缓存必须还在：里面的改动还没决定去向
+        t.expect(dirty_cache_remains(h)).to.equal(true)
+    end)
+
+    t.it("quarantine 拒绝对不上 handle 的调用", function()
+        local h = dirty_cache()
+        t.expect(h.db.quarantine("demo", "role", 7, { fence = 99, valid = true })).to.equal(false)
+        t.expect(h.cancelled).to.equal(false)
+    end)
+
+    t.it("recover 在文档没被改过时用新租约把改动落库", function()
+        local h, old = dirty_cache()
+        local new = { fence = 21, valid = true }
+        t.expect(h.db.recover("demo", "role", "rid", 7, old, new)).to.equal(true)
+        -- 认领抬高 fence，然后在新 fence 下写入
+        t.expect(h.store._fence).to.equal(21)
+        t.expect(h.store.name).to.equal("unsaved")
+        t.expect(h.store._version).to.equal(1)
+        -- 缓存已经清掉：同一个 id 再 load 会回数据库重新认领
+        local reloaded = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 22, valid = true }))
+        t.expect(reloaded.name).to.equal("unsaved")
+        t.expect(h.store._fence).to.equal(22)
+    end)
+
+    t.it("recover 对干净缓存直接丢掉，不多写一次库", function()
+        local handle = { fence = 13, valid = true }
+        local h = harness(handle)
+        handle.valid = false
+        local writes = #h.updates
+        t.expect(h.db.recover("demo", "role", "rid", 7, handle, { fence = 21, valid = true })).to.equal(true)
+        t.expect(#h.updates).to.equal(writes)
+        t.expect(h.cancelled).to.equal(true)
+    end)
+
+    t.it("文档在失租期间被改过时判定 superseded 并丢弃改动", function()
+        local h, old = dirty_cache()
+        -- 接管者拿着更高的 fence 写了一轮，_version 跟着涨
+        h.store._fence = 20
+        h.store._version = 5
+        h.store.name = "written-by-successor"
+        local ok, reason = h.db.recover("demo", "role", "rid", 7, old, { fence = 21, valid = true })
+        t.expect(ok).to.equal(false)
+        t.expect(reason).to.equal("superseded")
+        -- 绝不能拿旧状态盖掉接管者写的内容
+        t.expect(h.store.name).to.equal("written-by-successor")
+        t.expect(#h.errors).to.be_gte(1)
+        -- 缓存清掉，调用方可以安全地把实体忘掉
+        local reloaded = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 22, valid = true }))
+        t.expect(reloaded.name).to.equal("written-by-successor")
+    end)
+
+    t.it("新租约本身已经失效时拒绝恢复并保留缓存", function()
+        local h, old = dirty_cache()
+        local ok, reason = h.db.recover("demo", "role", "rid", 7, old, { fence = 21, valid = false })
+        t.expect(ok).to.equal(false)
+        t.expect(reason).to.equal("lease expired")
+        t.expect(orm.is_dirty(h.doc)).to.equal(true)
+        t.expect(dirty_cache_remains(h)).to.equal(true)
+    end)
+
+    t.it("落库失败时保留缓存，下一轮仍能按旧 handle 找到它", function()
+        local h, old = dirty_cache()
+        h.fail = true
+        local ok = h.db.recover("demo", "role", "rid", 7, old, { fence = 21, valid = true })
+        t.expect(ok).to.equal(false)
+        t.expect(orm.is_dirty(h.doc)).to.equal(true)
+        t.expect(dirty_cache_remains(h)).to.equal(true)
+        -- 关键：cache.handle 没有被改成新 handle，否则下一轮按 old 就找不到缓存了；
+        -- 重试传的仍然是 old，成功说明改动真的落了库
+        h.fail = false
+        t.expect(h.db.recover("demo", "role", "rid", 7, old, { fence = 22, valid = true })).to.equal(true)
+        t.expect(h.store.name).to.equal("unsaved")
+    end)
+
+    t.it("缓存已经换人时报 cache replaced，不碰数据库", function()
+        local h = dirty_cache()
+        local writes = #h.updates
+        local ok, reason = h.db.recover(
+            "demo",
+            "role",
+            "rid",
+            7,
+            { fence = 99, valid = false },
+            { fence = 100, valid = true }
+        )
+        t.expect(ok).to.equal(false)
+        t.expect(reason).to.equal("cache replaced")
+        t.expect(#h.updates).to.equal(writes)
+    end)
+
+    t.it("discard 强行丢掉写不回去的缓存", function()
+        local h, handle = dirty_cache()
+        t.expect(h.db.discard("demo", "role", 7, handle)).to.equal(true)
+        t.expect(h.cancelled).to.equal(true)
+        -- 库里还是旧内容：这是一次确定的数据回退，调用方必须已经记过账
+        t.expect(h.store.name).to.equal("original")
+        local reloaded = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 21, valid = true }))
+        t.expect(reloaded.name).to.equal("original")
+    end)
+
+    t.it("discard 拒绝对不上 handle 的调用", function()
+        local h = dirty_cache()
+        t.expect(h.db.discard("demo", "role", 7, { fence = 99, valid = true })).to.equal(false)
+    end)
+end)
+
 t.describe("dbmgr save wheel", function()
     t.it("puts every loaded document on one wheel keyed by the configured interval", function()
         local h = harness()
