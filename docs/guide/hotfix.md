@@ -4,7 +4,7 @@
 
 热更体系由四部分组成：
 
-- **热更包** `example/hotfix/<日期>-patch<N>/`：`hotfix.conf.lua`（元信息 + 开关 + 文件清单）+ `codeN.lua`（手写 patcher）；CLI 使用相对于 `example/` 的 `hotfix/...` 路径，GM 接口使用相对于仓库根目录的 `example/hotfix/...` 路径
+- **热更包** `example/hotfix/<日期>-patch<N>/`：`hotfix.conf.lua`（元信息 + 开关 + 文件清单）+ `codeN.lua`（手写 patcher）。热更包目录和 `update_files` 里的路径**都相对于工程根目录**（skynet 的 `root`，示例配置里是仓库根目录），CLI 与 GM 接口取值完全一致，例如 `example/hotfix/20260120-patch1`
 - **编排服务** `service/hotfix.lua`：加载配置 → 校验 checksum → clearcache → reload_res → reload_sproto → reload_orm_schema → inject_code
 - **支撑 GM 命令**：`clearcache`、`reload_res`、`reload_sproto_schema`、`reload_orm_schema`
 - **CLI 工具** `./bin/skyext hotfix`（实现位于 `scripts/commands/hotfix.lua`）：`refresh` 子命令回写 checksum 和 time
@@ -35,7 +35,7 @@ ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文�
 
 代码热更采用 inject 的方式执行，只进行小范围的代码替换。当热更包中的 `clearcache` 为 `true` 时，会 clear lua code cache。当有代码文件需要热更时，需在 `hotfix.conf.lua` 中手动设置 `clearcache = true`。
 
-正式发布包含 `code_files` 时，还应准备对应修复问题后的 `update_files`。旧服务会执行 `code_files` 中的补丁；新服务启动后则应加载已替换的正常源码。只注入 patcher 而不部署更新文件，重启后修复将失效；当前 `update_files` 的路径限制见第 4 节。
+正式发布包含 `code_files` 时，还应准备对应修复问题后的 `update_files`。旧服务会执行 `code_files` 中的补丁；新服务启动后则应加载已替换的正常源码。只注入 patcher 而不部署更新文件，重启后修复将失效。
 
 ---
 
@@ -104,7 +104,10 @@ return {
     reload_sproto = false,
     reload_orm_schema = false,
 
-    update_files = {},  -- 此示例只展示 code_files；普通文件更新的路径限制见下文
+    update_files = {    -- 相对于工程根目录，引擎文件和游戏文件写在同一套路径下
+        "service/gm.lua",
+        "example/lualib/errcode.lua",
+    },
     code_files = {
         "code1.lua",
         "code2.lua",
@@ -128,7 +131,20 @@ run = function()
 end
 ```
 
-> **当前目录布局的限制**：`hotfix refresh` 从 `example/` 读取 `update_files` 计算 checksum，而服务端从 skynet 的 `root = "./"`（仓库根目录）读取同名相对路径。两者不一致时，即使刷新成功，服务端校验也可能失败。本节下方的操作示例仅针对 `update_files = {}`、只注入 `code_files` 的热更；需要替换普通文件时，必须先统一这两个路径的解析并验证校验结果，不能直接套用该示例。
+### 路径基准
+
+`update_files` 的每一项、以及热更包目录本身，都相对于**工程根目录**——即 skynet 配置里的 `root`（示例配置中 `root = "./"`，就是仓库根目录）。`code_files` 不带路径，只能是热更包目录下的文件。
+
+选这个基准的原因：skynet 自己的 `luaservice`、`lua_path` 就以 `root` 解析，热更要替换的文件最终由 skynet 按这组路径加载，checksum 若按另一个基准计算必然对不上；而且 `update_files` 需要同时覆盖引擎文件（`service/gm.lua`、`lualib/skyext/...`）和游戏文件（`example/lualib/...`），只有工程根目录能同时容纳两者。
+
+因此 `./bin/skyext hotfix refresh <dir>` 和 GM `hotfix` 接口的 `hotfix_dir` 取**同一个字符串**：
+
+```bash
+./bin/skyext hotfix refresh example/hotfix/20260120-patch1
+# GM: {"cmd":"hotfix","hotfix_dir":"example/hotfix/20260120-patch1"}
+```
+
+> 早期版本中 CLI 以 `example/` 为基准、服务端以仓库根为基准，两边靠 `hotfix_dir` 写法不同相互抵消，`code_files` 侥幸能对上，但 `update_files` 的同一条目会指向两个不同文件——只要 `update_files` 非空，服务端校验必失败。现已统一，带 `update_files` 的热更包可以正常发布。
 
 ---
 
@@ -136,20 +152,20 @@ end
 
 ### 5.1 开发机准备热更包
 
-以下步骤仅演示 `update_files = {}` 的 patcher 注入与预演；没有持久源码更新的热更在服务重启后不会保留修复，不能当作正式发布方案。
-
 ```bash
-mkdir -p example/hotfix/20260831-patch1
-# 在该目录编写 hotfix.conf.lua（update_files = {}）和 codeN.lua
+mkdir -p example/hotfix/20260120-patch1
+# 在该目录编写 hotfix.conf.lua 和 codeN.lua
 # ...
 
-# CLI 参数相对于 example/；在项目根目录执行
-./bin/skyext hotfix refresh hotfix/20260831-patch1
+# 路径相对于工程根目录；在项目根目录执行
+./bin/skyext hotfix refresh example/hotfix/20260120-patch1
 ```
+
+只注入 `code_files`、不带 `update_files` 的热更包可以用于预演和临时止血，但服务重启后修复不保留，不能当作正式发布方案。
 
 ### 5.2 部署文件到目标节点
 
-将 `example/hotfix/20260831-patch1/` 发布到各节点对应路径。若正式方案还包含 `update_files`，需先解决上述路径不一致，再将更新文件一并发布。
+将 `example/hotfix/20260120-patch1/` 以及 `update_files` 列出的更新文件一并发布到各节点对应路径。更新文件在节点上的位置须与 `update_files` 写法一致——都相对于该节点的工程根目录。
 
 ### 5.3 dry-run 预演
 
@@ -159,7 +175,7 @@ curl -X POST http://localhost:9092/gm/execute \
   -H "Content-Type: application/json" \
   -d '{
     "cmd": "hotfix",
-    "hotfix_dir": "example/hotfix/20260831-patch1",
+    "hotfix_dir": "example/hotfix/20260120-patch1",
     "mode": "dry_run"
   }'
 ```
@@ -178,7 +194,7 @@ curl -X POST http://localhost:9092/gm/execute \
   -H "Content-Type: application/json" \
   -d '{
     "cmd": "hotfix",
-    "hotfix_dir": "example/hotfix/20260831-patch1",
+    "hotfix_dir": "example/hotfix/20260120-patch1",
     "confirm": "true"
   }'
 ```
@@ -203,7 +219,7 @@ curl -X POST http://localhost:9092/gm/execute \
 | 失败步骤 | 处置建议 |
 |----------|---------|
 | `load_config` | 检查 hotfix.conf.lua 必填字段(desc/checksum/gitsha_base/gitsha_update/time)，修正后重新执行 |
-| `verify_checksum` | 先核对发布文件与预期版本，排查第 4 节所述路径不一致；确认内容正确后再执行 `./bin/skyext hotfix refresh <dir>`，不要仅通过刷新 checksum 掩盖文件差异 |
+| `verify_checksum` | 先核对发布文件与预期版本，确认 `update_files` 在目标节点的落位与第 4 节的路径基准一致；确认内容正确后再执行 `./bin/skyext hotfix refresh <dir>`，不要仅通过刷新 checksum 掩盖文件差异 |
 | `clear_cache` | GM 通道异常，检查 `.gm` 服务是否正常运行；本包尚未注入任何代码，可安全重试 |
 | `reload_res` | res 未重载，配表与代码可能不一致；排查 sharetable 后重试或回退 update_files |
 | `reload_sproto` | sproto schema 重载失败，检查 sproto 文件格式；可安全重试 |
@@ -266,6 +282,13 @@ token 在 `example/etc/nodes/common.app.lua` 的 `gm_auth_token` 里配置。**�
 ---
 
 ## 9. 变更日志
+
+### v3 (2026-10-14)
+
+- **Breaking**: 统一热更路径基准到工程根目录（skynet 的 `root`）。`./bin/skyext hotfix refresh` 的参数由相对 `example/` 改为相对工程根目录，与 GM `hotfix_dir` 取值一致：原 `hotfix/20260120-patch1` 现写作 `example/hotfix/20260120-patch1`。现有热更包需改写该参数并重新 `refresh`
+- 修复 `update_files` 非空时服务端 checksum 必然校验失败的问题（CLI 与服务端此前按不同基准解析同一条目）
+- CLI 不再硬编码要求热更目录位于 `example/hotfix/` 下，改为校验相对路径合法性
+- 新增 `lualib/skyext/hotfix_checksum.test.lua`，回归锁定两侧路径基准一致
 
 ### v2 (2026-08-31)
 

@@ -1,8 +1,10 @@
 local checksum = require "skyext.hotfix_checksum"
 
 local function usage()
-    print([[用法: ./bin/skyext hotfix refresh hotfix/<patch-dir>
-热更路径相对于 example/，重新计算 checksum 并更新 hotfix.conf.lua 的 time。]])
+    print([[用法: ./bin/skyext hotfix refresh <patch-dir>
+热更目录与包内 update_files 的路径都相对于工程根目录（skynet 的 root），
+与 GM hotfix 接口的 hotfix_dir 取值完全一致，例如 example/hotfix/20260120-patch1。
+重新计算 checksum 并更新 hotfix.conf.lua 的 time。]])
 end
 
 return function(ctx, _, args)
@@ -10,23 +12,23 @@ return function(ctx, _, args)
         usage()
         return 0
     end
-    assert(args[1] == "refresh" and args[2] and not args[3], "用法: hotfix refresh hotfix/<patch-dir>")
-    local dir = args[2]:gsub("\\", "/")
+    assert(args[1] == "refresh" and args[2] and not args[3], "用法: hotfix refresh <patch-dir>")
+    local dir = args[2]:gsub("\\", "/"):gsub("/+$", "")
     assert(
-        dir:match("^hotfix/[^/]+") and not dir:match("^/") and not dir:match("^%a:"),
-        "热更目录必须位于 example/hotfix/ 下"
+        dir ~= "" and not dir:match("^/") and not dir:match("^%a:"),
+        "热更目录必须是相对于工程根目录的相对路径"
     )
     for segment in dir:gmatch("[^/]+") do
         assert(segment ~= "." and segment ~= "..", "热更目录不能包含 . 或 ..")
     end
 
     local fs = ctx.fs
-    local path = fs.join(ctx.game, dir, "hotfix.conf.lua")
+    local path = fs.join(ctx.root, dir, "hotfix.conf.lua")
     local original = fs.read(path)
     local chunk = assert(load(original, "@" .. path, "t"))
     local config = assert(chunk())
     assert(type(config) == "table", "hotfix.conf.lua 必须返回 table")
-    local value, err = checksum.compute(config, dir, ctx.game)
+    local value, err = checksum.compute(config, dir, ctx.root)
     assert(value, err)
     local now = os.date("%Y-%m-%d %H:%M:%S")
     local updated, times = original:gsub('(time%s*=%s*)"[^"]*"', function(prefix)

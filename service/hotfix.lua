@@ -716,7 +716,7 @@ end
 GM_CMD.hotfix = {
     desc = "执行热更新",
     params = {
-        hotfix_dir = "热更包目录路径（相对于工程根目录，如 hotfix/20260120-patch1）",
+        hotfix_dir = "热更包目录路径（相对于工程根目录，如 example/hotfix/20260120-patch1）",
         mode = "执行模式：run（默认执行）/ dry_run（仅预演，不实际执行）",
         confirm = "高危操作确认，执行模式下必须传 confirm=true",
     },
@@ -726,7 +726,7 @@ GM_CMD.hotfix = {
             return false, "Missing required parameter: hotfix_dir"
         end
 
-        if hotfix_dir:find("%.%.") or hotfix_dir:sub(1, 1) == "/" then
+        if hotfix_dir:find("%.%.") or hotfix_dir:sub(1, 1) == "/" or hotfix_dir:match("^%a:") then
             return false, "Invalid hotfix_dir: must be a relative path without '..'"
         end
 
