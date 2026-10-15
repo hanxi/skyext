@@ -339,6 +339,75 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ---
 
+## 死信队列命令
+
+可靠消息连续投递失败达到上限后会被移入死信队列（见[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)）。死信队列存在 MongoDB 里，是整个集群共享的一份数据，所以 `entity_dlq` 按节点单例注册这三条命令——每个实体类型注册一次会让一次查询变成 N 次重复查询。
+
+### dlq_list — 列出死信
+
+```bash
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "dlq_list", "target_type": "role", "limit": "20"}'
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| target_type | string | 否 | 按实体类型过滤 |
+| target_id | string | 否 | 按实体 ID 过滤；能转成整数就按整数匹配，否则按字符串 key |
+| limit | string | 否 | 最多返回条数，默认 50；必须是 ≥1 的整数 |
+
+返回 `{count, messages}`。每条只含 `msg_id`、`seq`、`target_type`、`target_id`、`cmd`、`attempts`、`create_time`、`dead_time`、`dead_reason`——**不含 `args`**：那是业务负载，可能带玩家数据，不该经 GM 接口整份吐出来。要看负载请直接查库。
+
+### dlq_replay — 重放一条死信
+
+```bash
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "dlq_replay", "msg_id": "10023"}'
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| msg_id | string | 是 | 消息 ID，必须能转成整数 |
+
+消息状态回到 `pending`，并尝试唤醒目标实体。返回里的 `poked` 表示唤醒是否成功；**`poked = false` 不代表重放失败**——消息已经回到队列，实体下次加载或重试定时器会接上。
+
+重放前要先确认死因已经消除。投递失败通常是 handler 抛错，如果代码没改、数据没修，重放只会把同一条消息再送进死信队列一轮。
+
+### dlq_discard — 丢弃一条死信
+
+```bash
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "dlq_discard", "msg_id": "10023", "operator": "alice"}'
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| msg_id | string | 是 | 消息 ID，必须能转成整数 |
+| operator | string | 否 | 操作人，记入文档便于追责 |
+
+文档不会被删除，只是不再出现在 `dlq_list` 里。这条消息承载的业务效果就此永久丢失，填上 `operator`。
+
+---
+
+## 指标命令
+
+### metrics — 导出 Prometheus 文本
+
+```bash
+curl -X GET "http://localhost:9092/gm/execute?cmd=metrics" \
+  -H "Authorization: Bearer <token>"
+```
+
+无参数。返回当前节点全部指标的 Prometheus 文本格式，内容与 `/metrics` 抓取端点一致。给没有部署 Prometheus、只想临时看一眼的场景用；常规采集请配抓取端点，详见[指标采集与导出](metrics.md)。
+
+---
+
 ## 注意事项
 
 1. **权限控制**：只有 token 这一道，拿到就是管理员，详见上文[鉴权](#鉴权)

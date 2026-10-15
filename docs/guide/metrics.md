@@ -62,7 +62,7 @@ metrics_scrape_timeout = 300 -- 单次抓取等回包的时限，单位 1/100 �
 curl http://127.0.0.1:9190/metrics
 ```
 
-GM 账号也可以走 `/gm/execute?cmd=metrics` 拿同一份文本，需要 `readonly` 及以上角色（见 [GM HTTP API](gm_api.md)）。
+也可以走 `/gm/execute?cmd=metrics` 拿同一份文本，需要 `gm_auth_token`（见 [GM HTTP API](gm_api.md#鉴权)）。
 
 ## 内置指标
 

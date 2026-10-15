@@ -78,7 +78,7 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 ./bin/skyext package framework linux   # 框架包：release-assets/skyext-linux.zip
 ```
 
-测试文件与被测模块放在一起，使用 `*.test.lua` 命名；真实 MongoDB/etcd 集成测试仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。集成测试验证两个独立锁实例的竞争、租约撤销、Mongo fencing、旧持有者写入拒绝，以及真实 MongoDB 上的可靠消息序号、分页和重复确认；完整的多进程节点交接仍需部署环境验证。`--cov` 会生成 `coverage/lua_coverage_clean.info`，若安装了 `genhtml`，还会生成 `coverage/html/index.html`。Linux/GCC 的 `--cov-c` 需要安装 `lcov` 并使用 `C_COVERAGE=1` 重新构建，单独生成 `coverage/c_coverage.info` 和 `coverage/html-c/index.html`（仅统计 `lualib-src/` 与 `service-src/`，不含子模块）。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、Lua 35% 与 C 60% 的独立行覆盖率门禁、格式检查和多平台打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`；运行时 ORM 位于主工程 `lualib/orm/`。生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。覆盖率在线报告（[Lua](https://hanxi.github.io/skyext/coverage/) · [C](https://hanxi.github.io/skyext/coverage-c/)）只有在仓库启用 GitHub Pages 且部署成功后才可访问；CI 构建产物也提供两种报告的下载。
+测试文件与被测模块放在一起，使用 `*.test.lua` 命名；真实 MongoDB/etcd 集成测试仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。集成测试验证两个独立锁实例的竞争、租约撤销、Mongo fencing、旧持有者写入拒绝，以及真实 MongoDB 上的可靠消息序号、分页和重复确认；完整的多进程节点交接仍需部署环境验证。`--cov` 会生成 `coverage/lua_coverage_clean.info`，若安装了 `genhtml`，还会生成 `coverage/html/index.html`。Linux/GCC 的 `--cov-c` 需要安装 `lcov` 并使用 `C_COVERAGE=1` 重新构建，单独生成 `coverage/c_coverage.info` 和 `coverage/html-c/index.html`（仅统计 `lualib-src/` 与 `service-src/`，不含子模块）。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、Lua 85% 与 C 60% 的独立行覆盖率门禁、格式检查和多平台打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`；运行时 ORM 位于主工程 `lualib/orm/`。生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。覆盖率在线报告（[Lua](https://hanxi.github.io/skyext/coverage/) · [C](https://hanxi.github.io/skyext/coverage-c/)）只有在仓库启用 GitHub Pages 且部署成功后才可访问；CI 构建产物也提供两种报告的下载。
 
 ## 文档导航
 
@@ -88,6 +88,7 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 - [快速上手](docs/getting-started.md)：依赖、构建、运行、测试及常见问题。
 - [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md)。
 - [热更新操作](docs/guide/hotfix.md) · [GM HTTP API](docs/guide/gm_api.md)。
+- [HTTP 服务端](docs/guide/http_server.md)：命名实例、连接与超时上限、路由注册。
 - [指标采集与导出](docs/guide/metrics.md)：指标原语、Prometheus 端点与内置指标。
 - [改 ORM schema](docs/guide/orm_schema_change.md)：加删字段为什么不用写迁移，改名、改类型和重用旧字段名怎么拦。
 - [不做的事](docs/non-goals.md)：做过又删掉的设计，以及删它们的理由。

@@ -122,7 +122,7 @@ jobs:
 
     - name: Enforce minimum line coverage
       run: |
-        ./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35
+        ./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 85
         ./bin/skyext cov check coverage/c_coverage.info --threshold 60
 
     - name: Summarize coverage

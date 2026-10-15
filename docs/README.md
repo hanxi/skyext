@@ -14,6 +14,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 | [登录流程](guide/login.md) · [流程图](guide/login_diagram.md) | 客户端、Account 与 Role 的认证和交互 |
 | [热更新操作](guide/hotfix.md) | 热更包、预演、执行与失败处理 |
 | [GM HTTP API](guide/gm_api.md) | token 鉴权、命令查询与执行 |
+| [HTTP 服务端](guide/http_server.md) | 命名实例、连接与超时上限、路由注册 |
 | [指标采集与导出](guide/metrics.md) | counter/gauge/histogram 原语、Prometheus 抓取端点与内置指标 |
 | [改 ORM schema](guide/orm_schema_change.md) | 运行期如何容忍字段增删、基线墓碑与不兼容改动的拦截 |
 
