@@ -77,13 +77,36 @@ local function build_report_stats()
     local cfg = config.get()
     local stats = apply_filters(central_stats)
 
-    -- If source_dirs configured, merge with baseline for stable denominator
-    if #cfg.source_dirs > 0 then
-        local baseline = source_lines.scan(cfg.source_dirs, cfg.exclude)
-        stats = source_lines.merge_with_stats(baseline, stats)
+    -- 没有 source_dirs 就没有独立分母，覆盖率必然是 100%，这种报告没有意义
+    if #cfg.source_dirs == 0 then
+        skynet.error(
+            "[skytest.cov] WARNING: skytest_cov_source_dirs 未配置，分母只含执行过的行，覆盖率不可信"
+        )
+        return stats
     end
 
-    return stats
+    local baseline, failures = source_lines.scan(cfg.source_dirs, cfg.exclude)
+    for _, f in ipairs(failures) do
+        skynet.error(
+            string.format(
+                "[skytest.cov] WARNING: 基线扫描失败，该文件未计入分母: %s (%s)",
+                f.path,
+                f.err
+            )
+        )
+    end
+
+    local merged, diag = source_lines.merge_with_stats(baseline, stats)
+    for _, source in ipairs(diag.unknown_sources) do
+        skynet.error("[skytest.cov] WARNING: 有命中但不在基线中，已忽略: " .. source)
+    end
+    if diag.orphan_lines > 0 then
+        skynet.error(
+            string.format("[skytest.cov] WARNING: %d 个命中行不在基线中，已忽略", diag.orphan_lines)
+        )
+    end
+
+    return merged
 end
 
 local function save_stats()

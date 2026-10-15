@@ -339,7 +339,8 @@ return function(ctx, _, args)
                 env.SKYTEST_COV = "1"
                 env.SKYTEST_COV_OUTPUT_DIR = run_dir
                 env.SKYTEST_COV_SOURCE_DIRS = os.getenv("SKYTEST_COV_SOURCE_DIRS") or "lualib/,service/,example/lualib/"
-                env.SKYTEST_COV_EXCLUDE = os.getenv("SKYTEST_COV_EXCLUDE") or "skynet/,.test.lua,example/build/"
+                -- `.test/` 是夹具目录约定（如 process.test/），里面是被测数据不是产品代码
+                env.SKYTEST_COV_EXCLUDE = os.getenv("SKYTEST_COV_EXCLUDE") or "skynet/,.test.lua,.test/,example/build/"
             end
             if options.cov_c then
                 -- 每个测试进程写入独立的 gcov 数据树，避免 .gcda 并发合并损坏

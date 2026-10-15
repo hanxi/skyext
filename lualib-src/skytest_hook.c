@@ -8,6 +8,7 @@
  *   hook.install_on(co, stats)            -- Install hook on a specific coroutine
  *   hook.wrap_create(orig_create, stats)  -- Return wrapped coroutine.create
  *   hook.set_filter(include, exclude)     -- Set path filters (tables of strings)
+ *   hook.proto_lines(f)                   -- All executable lines of f, nested functions included
  */
 
 #include <lua.h>
@@ -15,6 +16,9 @@
 #include <lualib.h>
 #include <string.h>
 #include <stdlib.h>
+
+/* Proto 树遍历需要内核布局；LUA_INC 已指向 skynet/3rd/lua */
+#include <lobject.h>
 
 #define STATS_KEY "skytest_stats"
 #define MAX_FILTERS 32
@@ -226,7 +230,72 @@ lset_filter(lua_State *L) {
     return 0;
 }
 
+/*
+ * ---------- 可执行行扫描 ----------
+ *
+ * debug.getinfo(f, "L").activelines 只返回 f 自己这一个 Proto 的行，
+ * 嵌套函数体各是独立 Proto，一行都不在里面。拿它当覆盖率分母，
+ * 等于把几乎所有函数体排除在统计之外。这里按 Proto 树递归补全。
+ *
+ * 取行逻辑与内核 collectvalidlines（ldebug.c）一致，但不调用
+ * luaG_getfuncline —— 它是 LUAI_FUNC，带 internal 可见性，.so 里链不到。
+ * lineinfo[pc] 为 ABSLINEINFO 时内核最终取的就是 abslineinfo 中 pc 相等
+ * 那条的 line，而我们按 pc 递增遍历，用一个游标扫过去即可，结果等价。
+ */
+
+/* 同 ldebug.h：lineinfo 中标记“此处行号改从 abslineinfo 取” */
+#define SKYTEST_ABSLINEINFO (-0x80)
+
+static int
+next_line(const Proto *p, int currentline, int pc, int *abs_cursor) {
+    if (p->lineinfo[pc] != SKYTEST_ABSLINEINFO)
+        return currentline + p->lineinfo[pc];
+    while (*abs_cursor < p->sizeabslineinfo && p->abslineinfo[*abs_cursor].pc < pc)
+        (*abs_cursor)++;
+    if (*abs_cursor < p->sizeabslineinfo && p->abslineinfo[*abs_cursor].pc == pc)
+        return p->abslineinfo[*abs_cursor].line;
+    return currentline;
+}
+
+static void
+collect_proto_lines(lua_State *L, const Proto *p, int tidx) {
+    if (p->lineinfo != NULL) {
+        int currentline = p->linedefined;
+        int abs_cursor = 0;
+        int i = 0;
+        if (isvararg(p)) {
+            /* 首条指令是 OP_VARARGPREP，不对应源码行 */
+            currentline = next_line(p, currentline, 0, &abs_cursor);
+            i = 1;
+        }
+        for (; i < p->sizelineinfo; i++) {
+            currentline = next_line(p, currentline, i, &abs_cursor);
+            lua_pushboolean(L, 1);
+            lua_rawseti(L, tidx, currentline);
+        }
+    }
+    for (int j = 0; j < p->sizep; j++) {
+        collect_proto_lines(L, p->p[j], tidx);
+    }
+}
+
+static int
+lproto_lines(lua_State *L) {
+    const LClosure *cl;
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    if (lua_iscfunction(L, 1))
+        return luaL_argerror(L, 1, "Lua function expected, got C function");
+    cl = (const LClosure *)lua_topointer(L, 1);
+    if (cl == NULL || cl->p == NULL)
+        return luaL_argerror(L, 1, "cannot inspect function");
+    luaL_checkstack(L, 4, "proto_lines");
+    lua_newtable(L);
+    collect_proto_lines(L, cl->p, lua_gettop(L));
+    return 1;
+}
+
 static const luaL_Reg hook_funcs[] = {
+    {"proto_lines", lproto_lines},
     {"start", lstart},
     {"stop", lstop},
     {"install_on", linstall_on},
