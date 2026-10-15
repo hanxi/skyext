@@ -407,11 +407,15 @@ local function watch_node()
                 log.info("watch node deleted", "node", node)
             elseif ev.type == "PUT" then
                 local old_node_info = g_map_node[node]
-                if (not old_node_info) or (old_node_info.mod_revision < ev.kv.mod_revision) then
+                -- etcd 的 revision 走 JSON int64，收到的是字符串；首查那边 tonumber 过，
+                -- 这里不转就是 number < string，Lua 直接抛错把 watch 流打断，
+                -- 已知节点的地址变更于是永远只能靠 500ms 后的整表重查兜底
+                local new_mod_revision = tonumber(ev.kv.mod_revision)
+                if (not old_node_info) or (old_node_info.mod_revision < new_mod_revision) then
                     local node_info = ev.kv.value
                     node_info = util_table.deepcopy(node_info)
                     node_info.name = node
-                    node_info.mod_revision = tonumber(ev.kv.mod_revision)
+                    node_info.mod_revision = new_mod_revision
                     g_map_node[node] = node_info
                     cluster_reload_nodes()
                     log.info("watch node updated", "node", node)
