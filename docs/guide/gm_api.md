@@ -409,7 +409,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=sh
 |------|------|------|------|
 | timeout | string | 否 | 等实体卸载的秒数，默认 60 |
 
-立即返回 `shutdown started`，停服在后台进行：`stop_accepting` 钩子（示例 role 节点关 gate）→ 卸载本节点全部实体（落库、释放锁、踢下在线玩家）→ `release` 钩子（snowflake 归还机器号）→ 撤销服务发现租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。重复发送时返回 `already shutting down`。进度看节点日志。
+立即返回 `shutdown started`，停服在后台进行：`stop_accepting` 钩子（role/gateway 节点的 `session_gate` 在这里关 gate，不再接新连接）→ 卸载本节点全部实体（落库、释放锁、踢下在线玩家）→ `release` 钩子（snowflake 归还机器号）→ 撤销服务发现租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。重复发送时返回 `already shutting down`。进度看节点日志。
 
 游戏层挂钩子：
 
@@ -419,9 +419,26 @@ local node_shutdown_api = require "skyext.node_shutdown_api"
 node_shutdown_api.add_hook("stop_accepting", "stop_accepting")
 ```
 
+## 区服目录命令
+
+由引擎服务 `service/realm.lua` 注册。区服目录存在 etcd，所有节点 watch，改动即时生效。
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `realm_list` | — | 查看当前目录（servers / games / zones） |
+| `realm_open` | `server`、`game`、`name`、`tag`、`zone` | 开服。`game` 不存在时一并创建，此时必须给一个已存在的 `zone`；`tag` 默认是大写的 `server` |
+| `realm_set_zone` | `game`、`zone` | 调战区，`zone` 不存在时自动创建 |
+
+```bash
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:9092/gm/execute?cmd=realm_open&server=s4&game=game3&zone=zone1&name=四区"
+```
+
+开服后，配了 `scope = "game"` 的作用域实体（如示例排行榜）会在几秒内为新 game 自动加载一份。
+
 ## 示例 Role 节点命令
 
-由 `example/nodes/role/watchdog.lua` 注册，属于示例游戏层，不是引擎内置命令。
+由 `example/service/admin/main.lua`（admin 服务，role 节点启动时 `newservice("admin")`）注册，属于示例游戏层，不是引擎内置命令。它演示非实体服务如何经可靠消息改实体数据。
 
 ### send_mail — 发系统邮件
 

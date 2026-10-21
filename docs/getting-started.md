@@ -70,7 +70,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 ./bin/skyext serve role1     # Role：客户端网关端口 7012，GM 端口 9092，指标端口 9192
 ```
 
-也可以启动 `account2`、`role2`（端口由各自的 `example/etc/nodes/*.app.lua` 配置决定）。`./bin/skyext serve robot` 启动示例机器人；其 `gate_nodes` 默认列出两个 Role 节点，若只运行 `role1`，请按需要启动 `role2` 或调整机器人配置。
+也可以启动 `account2`、`role2`，以及独立网关节点 `gate1`（端口由各自的 `example/etc/nodes/*.app.lua` 配置决定）。`gate1` 只负责连接与登录，实体仍转发给 Role 逻辑节点处理；role1/role2 已同进程带 gate，gate1 属可选。`./bin/skyext serve robot` 启动示例机器人；其 `gate_addrs` 列出三个可连 gate：7012/7022（rolenode1/rolenode2 同进程 gate）与 7052（独立 gate1），机器人按编号轮流连其中一个——连哪个 gate 都能进游戏，gate 会把包转到角色实体所在节点。默认单个机器人（id 1）连 7022，故需运行 `role2`；若只起 `role1`，请相应调整 `gate_addrs` 或机器人编号。
 
 CLI 的 `serve` 会自动切换到仓库根目录。直接使用 skynet 时**不能**在 `example/` 下启动，否则 `example/etc/core.conf.lua` 中的 `root = "./"` 会指向错误位置：
 
@@ -145,7 +145,7 @@ make -C example lint                       # 示例游戏 luacheck
 | `module ... not found` 或路径错误 | 确认子模块已拉取，生成步骤完成；直接运行 skynet 时工作目录必须是仓库根目录。 |
 | 生成 schema 失败 | 检查 `3rd/sprotodump` 是否已初始化，`stylua` 是否已安装且在 `PATH` 中。 |
 | MongoDB/etcd 连接失败 | 检查 Compose 服务、端口与 `common.app.lua` 中的连接地址；容器环境需替换 `127.0.0.1`。 |
-| 客户端/机器人无法连接 | 核对 Account HTTP、Role 网关监听端口，以及 `robot.app.lua` 的 `gate_nodes`。 |
+| 客户端/机器人无法连接 | 核对 Account HTTP、gate 监听端口（Role 同进程 gate 或独立 gate1），以及 `robot.app.lua` 的 `gate_addrs`。 |
 | GM 接口不可用 | 核对对应节点 GM 端口与 `gm_auth_token`，详见 [GM HTTP API](guide/gm_api.md)。 |
 | `/metrics` 少了某个服务 | 该服务要用 `skyext.cmd_api` 接管消息分发才挂得上 `collect_metrics`；另见日志里的 `metrics service not found`。 |
 

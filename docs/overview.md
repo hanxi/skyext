@@ -18,13 +18,14 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 
 | 节点 | 入口 | 主要职责 |
 | --- | --- | --- |
-| Account | `example/nodes/account/main.lua` | 启动 HTTP 服务并注册账号路由，处理账号与登录请求 |
-| Role | `example/nodes/role/main.lua` | 启动 watchdog/gate，承载角色连接与游戏逻辑 |
+| Account | `example/nodes/account/main.lua` | 启动 HTTP 服务并注册账号路由，处理服务器列表 / 角色列表 / 建角 |
+| Role | `example/nodes/role/main.lua` | 逻辑节点：启动 gate（同进程部署）+ 登录 + 实体，承载角色连接与游戏逻辑 |
+| Gateway | `example/nodes/gateway/main.lua` | 独立网关节点（`start = "gateway"`，实例 `gate1`）：只接客户端连接 + 登录，不承载实体，上行转发到实体所在节点 |
 | Robot | `example/nodes/robot/main.lua` | 示例客户端，用于本地登录/游戏流程验证 |
 
-各节点分别运行在 skynet 进程中。示例的 Account、Role 节点都调用游戏层 `example/lualib/launcher.lua` 启动 GM、hotfix 服务，并在启动阶段创建 MongoDB 索引；Role 通过网关接入客户端。服务发现组件把服务注册到 etcd，并为服务端调用方维护节点缓存；示例 Robot 则根据 Account 返回的 `rolenode` 和本地 `gate_nodes` 配置连接网关，而非从 etcd 缓存选择客户端地址。角色与账号数据通过 MongoDB 连接池、ORM 和业务 handler 读取/保存。详细的客户端交互见[登录流程](guide/login.md)及[流程图](guide/login_diagram.md)。
+各节点分别运行在 skynet 进程中。示例的 Account、Role、Gateway 节点都调用游戏层 `example/lualib/launcher.lua` 启动 GM、hotfix 服务，并在启动阶段创建 MongoDB 索引。客户端连任意一个 gate（Role 节点同进程部署的 gate，或独立的 Gateway 节点）都能进游戏：gate 只管会话与拆包，上行按会话转发到实体真正所在的节点（同节点 `skynet.send`，跨节点 `cluster.send`）。服务发现组件把服务注册到 etcd，并为服务端调用方维护节点缓存；示例 Robot 则根据本地 `gate_addrs` 配置直连某个 gate，而非从 etcd 缓存选择客户端地址（`/roles` 也不再返回 `rolenode`）。角色与账号数据通过 MongoDB 连接池、ORM 和业务 handler 读取/保存。详细的客户端交互见[登录流程](guide/login.md)及[流程图](guide/login_diagram.md)。
 
-示例业务配置位于 `example/etc/nodes/`：Account HTTP、Role 网关、GM HTTP 端口，以及 `mongo_config`、`etcd_config`、JWT 密钥等都在这里配置。跨机器部署时，需同时调整监听/对外地址、服务发现地址和外部服务连接地址；示例中的 `127.0.0.1` 只适用于本机环境。
+示例业务配置位于 `example/etc/nodes/`：Account HTTP、Role/Gateway 网关、GM HTTP 端口，以及 `mongo_config`、`etcd_config`、JWT 密钥等都在这里配置。跨机器部署时，需同时调整监听/对外地址、服务发现地址和外部服务连接地址；示例中的 `127.0.0.1` 只适用于本机环境。
 
 ## 启动与模块加载
 
@@ -48,16 +49,19 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 指标 | `lualib/skyext/metrics*.lua`、`service/metrics.lua` | counter/gauge/histogram 原语、跨服务合并与 Prometheus 文本导出；见 [指标采集与导出](guide/metrics.md) |
 | 停服 | `service/node_shutdown.lua`、`lualib/skyext/node_shutdown_api.lua` | GM `shutdown` 编排：停止接入 → 卸载实体 → 释放资源 → 撤销服务发现租约 → 退出；游戏层挂钩子 |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
-| 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、粘性转发、实体生命周期、常驻实体与预加载、实体定时器、停服卸载、业务模块扩展 |
+| 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、粘性转发、实体生命周期、常驻实体与预加载、作用域实体（`scope`）、实体定时器、停服卸载、业务模块扩展 |
+| 网关会话 | `service/session_gate.lua`、`lualib/skyext/entity/session.lua`、`example/service/login/` | gate 监听 TCP、拆包、会话表与亲和转发；实体侧会话绑定/上行入队/下行推送；登录服务经 `router.bind_session` 把会话绑到实体 |
 | 测试 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程 |
 
-**区服**：逻辑节点**不按区服划分**，任何 role 节点都能承载任何区服的角色。`server`（客户端看到的区服）经 `server2game` 映射到 `game`（玩法范围），合服只改映射和角色文档的 `game` 字段，不搬进程；实体 ID 是全局唯一的 snowflake，合服不会撞 ID。玩法范围体现在按 `game` 各起一份的全局实体上，比如示例的排行榜（`rank` 类型的常驻实体，ID 由 `types.key_id("rank:" .. game)` 算出）。需要物理隔离的区服在部署层面单独起一套集群，框架内不支持按区服分节点池。
+**区服**：逻辑节点**不按区服划分**，任何 role 节点都能承载任何区服的角色。作用域分四层：server（出生服）→ game（逻辑服，一起玩的那批人）→ zone（战区，跨服玩法的范围）→ global。映射存在 etcd 的**区服目录**里（`service/realm.lua`，查询用 `skyext.realm`），由 GM 命令 `realm_open`（开服）、`realm_set_zone`（调战区）维护，所有节点 watch，改了即生效，不用改配置、不用重启。**角色只记出生服**，game / zone 每次用 `realm.game_of(server)` 现查，所以合服只改目录里的一条映射，不改任何玩家文档；实体 ID 是全局唯一的 snowflake，合服也不会撞 ID。
+
+一个作用域一份的全局功能做成**作用域实体**：实体类型配 `scope = "game"`（或 `zone`、`global`），按区服目录自动预加载，开服后新 game 的那一份几秒内出现在某个节点上，用 `router.scoped_call(type, value, ...)` 访问。示例的排行榜就是这样。每个功能自己决定作用域并自己检查边界，引擎不拦——跨服玩法需要越界。惯例是**社交可以跨服，经济默认不跨服**（交易、带物品的转赠要求同 game）。需要物理隔离的区服在部署层面单独起一套集群。
 
 **扩缩容不踢人**：节点进出后实体的目标节点会变，但已经加载的实体不会被搬走。发给它的请求由新目标节点转给持锁节点执行（粘性路由），实体在旧节点自然卸载后，下一次加载才落到新节点；只有玩家重新登录时才把实体要过来。细节见[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)。
 
-**停服**：任何节点都用 GM 命令 `shutdown` 停服，流程由引擎的 `service/node_shutdown.lua` 编排：先回调游戏层的 `stop_accepting` 钩子停止接入（示例 role 节点在这里关 gate），从服务发现摘掉实体类型，再把全部实体卸载（落库、释放锁、踢下在线玩家）；卸干净后回调 `release` 钩子（snowflake 在这里归还机器号），撤销服务发现租约，最后退出进程。有实体卸不掉就不退出。etcd 里属于本节点的键在退出前都已删除，别的节点不用等租约过期。游戏层用 `skyext.node_shutdown_api.add_hook(phase, cmd)` 挂钩子。**直接杀进程不是停服**：内存里离上次回存（`db_save_interval`，默认 3 分钟）之后的改动会丢，锁也要等租约过期。
+**停服**：任何节点都用 GM 命令 `shutdown` 停服，流程由引擎的 `service/node_shutdown.lua` 编排：先回调游戏层的 `stop_accepting` 钩子停止接入（示例 role/gateway 节点在这里关 gate），从服务发现摘掉实体类型，再把全部实体卸载（落库、释放锁、踢下在线玩家）；卸干净后回调 `release` 钩子（snowflake 在这里归还机器号），撤销服务发现租约，最后退出进程。有实体卸不掉就不退出。etcd 里属于本节点的键在退出前都已删除，别的节点不用等租约过期。游戏层用 `skyext.node_shutdown_api.add_hook(phase, cmd)` 挂钩子。**直接杀进程不是停服**：内存里离上次回存（`db_save_interval`，默认 3 分钟）之后的改动会丢，锁也要等租约过期。
 
-**节点崩溃后的接管窗口**：实体锁挂在节点级的 etcd 租约上，TTL 30 秒、每 10 秒续一次。走 `shutdown` 停服时锁是主动释放的，没有空窗；节点**硬崩**（进程被杀、机器掉电、网络分区）时没人能主动释放锁，必须等 etcd 把租约过期掉。这段时间里，落到该实体上的请求会一直失败（`router.call` 返回 `false, reason`，`bind_client` 返回 `LOCK_FAILED`，能查到持锁节点、交接又失败时返回 `IN_OTHER_NODE`）：接管节点向已死的持有者转发或请求交接都会失败，而锁键还在，抢不过来。
+**节点崩溃后的接管窗口**：实体锁挂在节点级的 etcd 租约上，TTL 30 秒、每 10 秒续一次。走 `shutdown` 停服时锁是主动释放的，没有空窗；节点**硬崩**（进程被杀、机器掉电、网络分区）时没人能主动释放锁，必须等 etcd 把租约过期掉。这段时间里，落到该实体上的请求会一直失败（`router.call` 返回 `false, reason`，`bind_session` 返回 `LOCK_FAILED`，能查到持锁节点、交接又失败时返回 `IN_OTHER_NODE`）：接管节点向已死的持有者转发或请求交接都会失败，而锁键还在，抢不过来。
 
 所以**单个实体的最坏不可用时长约 30 秒**，不是秒级。客户端重连逻辑要能容忍这个量级，不要在收到 `LOCK_FAILED` 后立刻放弃或提示玩家"账号异常"。想缩短窗口就得调小 `distributed_lock.lua` 里的 `LEASE_TTL`，代价是心跳更密、对 etcd 抖动更敏感——续租晚一拍就会误判失租，把一个健康节点上的实体全部隔离。
 
@@ -67,6 +71,6 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 
 ## 当前状态与延伸阅读
 
-代码中已有 Account/Role 示例、实体框架、GM/热更、skytest 测试框架；[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)和[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)描述的是后续方向，不应将规划中的功能视为已交付。仓库中已有 `public/gm.html` 和部分 profiler 相关组件，但不等于完整的运营后台或火焰图服务。
+代码中已有 Account/Role/Gateway 示例、实体框架（含作用域实体）、网关会话层、GM/热更、skytest 测试框架；[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)和[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)描述的是后续方向，不应将规划中的功能视为已交付。仓库中已有 `public/gm.html` 和部分 profiler 相关组件，但不等于完整的运营后台或火焰图服务。
 
 深入设计见仓库中的[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)和[skytest 设计](https://github.com/hanxi/skyext/blob/main/docs/design/skytest.md)。这些内部文档**不随在线文档站发布**；本文的链接指向 GitHub 源文件。配置、测试和操作命令请以[快速上手](getting-started.md)为准。

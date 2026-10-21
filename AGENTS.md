@@ -15,7 +15,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 | `scripts/tools/sproto_orm/`、`example/build/lualib/game/orm/` | 主工程内生成工具、Git 忽略的游戏层 schema 生成物 |
 | `service/`、`public/` | 引擎服务与静态资源 |
 | `lualib-src/`、`service-src/`、`build.mk` | 引擎 C 扩展/服务及构建规则 |
-| `example/nodes/`、`example/lualib/` | 节点入口与游戏业务代码 |
+| `example/nodes/`、`example/service/`、`example/lualib/` | 节点入口（account/gateway/robot/role）、跨节点共享服务（login/admin）与游戏业务代码 |
 | `example/etc/`、`example/proto/`、`example/schema/`、`example/hotfix/` | 游戏配置、协议、数据模式与热更包 |
 | `scripts/`、`bin/skyext`、`bin/skyext.bat` | 统一 CLI 的 Lua 实现与平台入口 |
 | `skynet/`、`3rd/` | Git submodule 依赖，不将引擎修改混入其中 |

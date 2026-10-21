@@ -36,11 +36,9 @@ flowchart TD
     M -->|失败| O[登录失败]
 
     N --> K
-    K --> P[获取角色的rolenode信息]
-    P --> Q[根据rolenode获取对应的网关地址]
-    Q --> R[经WebSocket网关连接到rolenode]
+    K --> P[经WebSocket网关连接到任意一个gate<br/>客户端不需要知道角色实体在哪个节点]
 
-    R --> S{连接成功?}
+    P --> S{连接成功?}
     S -->|失败| T[连接失败]
     S -->|成功| U[发送sproto login.login消息<br/>包含token, rid, proto_checksum, server]
 
@@ -78,9 +76,8 @@ flowchart TD
     G1 -->|失败| I1[登录失败]
 
     H1 --> E1
-    E1 --> J1[获取角色的rolenode信息]
-    J1 --> K1[根据rolenode从gate_nodes获取ip/port]
-    K1 --> L1[TCP直连到rolenode网关]
+    E1 --> J1[从gate_addrs里轮流连一个gate<br/>gate不必和角色实体在同一节点]
+    J1 --> L1[TCP直连到gate]
 
     L1 --> M1{连接成功?}
     M1 -->|失败| N1[连接失败]
@@ -127,36 +124,44 @@ graph LR
 
 ```mermaid
 graph TB
+    Client[客户端 / 机器人]
+
     subgraph "Account服务集群"
         Account1[Account服务1<br/>:8080]
         Account2[Account服务2<br/>:8081]
     end
 
-    subgraph "RoleNode集群"
-        RoleNode1[RoleNode1 gate<br/>:7012]
-        RoleNode2[RoleNode2 gate<br/>:7022]
+    subgraph "Gate层（只管连接+登录，不承载实体）"
+        GateR1[rolenode1 同进程 gate<br/>:7012]
+        GateR2[rolenode2 同进程 gate<br/>:7022]
+        Gate1[独立网关节点 gate1<br/>:7052]
     end
 
-    subgraph "游戏服务器"
-        S1[测试服务器1 - s1]
-        S2[测试服务器2 - s2]
+    subgraph "逻辑节点池（不按区服划分，承载 role/rank 等实体）"
+        RoleNode1[rolenode1]
+        RoleNode2[rolenode2]
     end
 
-    Account1 -.->|角色数据| S1
-    Account1 -.->|角色数据| S2
-    Account2 -.->|角色数据| S1
-    Account2 -.->|角色数据| S2
+    Client -->|HTTP 服务器列表/建角| Account1
+    Client -->|连任意一个 gate| GateR1
+    Client --> GateR2
+    Client --> Gate1
 
-    RoleNode1 -.->|游戏服务| S1
-    RoleNode1 -.->|游戏服务| S2
-    RoleNode2 -.->|游戏服务| S1
-    RoleNode2 -.->|游戏服务| S2
+    GateR1 -->|会话亲和转发| RoleNode1
+    GateR1 --> RoleNode2
+    GateR2 --> RoleNode1
+    GateR2 --> RoleNode2
+    Gate1 -->|跨节点转发| RoleNode1
+    Gate1 -->|跨节点转发| RoleNode2
 
     style Account1 fill:#e8f5e8
     style Account2 fill:#e8f5e8
+    style Gate1 fill:#e3f2fd
     style RoleNode1 fill:#fff3e0
     style RoleNode2 fill:#fff3e0
 ```
+
+> 区服（server）→ 逻辑服（game）→ 战区（zone）是**逻辑概念**，存在 etcd 区服目录里，不对应物理节点；逻辑节点池承载所有区服的实体，开服/合服只改目录映射。见[架构概览](../overview.md)。
 
 ## 协议交互时序图
 
@@ -167,7 +172,7 @@ sequenceDiagram
     participant C as 客户端
     participant GP as GamePass OAuth
     participant A as Account服务
-    participant R as RoleNode
+    participant R as Gate/逻辑节点
 
     Note over C: 1. 启动OAuth认证
     C->>GP: 跳转到OAuth认证页面
@@ -182,12 +187,13 @@ sequenceDiagram
         A-->>C: 返回新创建的角色
     end
 
-    Note over C: 3. 选择角色，连接游戏节点
-    C->>R: 经WebSocket网关连接到rolenode
+    Note over C: 3. 选择角色，连接网关
+    C->>R: 经WebSocket网关连接到任意一个gate
     R-->>C: 连接建立成功
 
     C->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
-    R-->>C: 登录响应<br/>{code, rid, rolenode}
+    Note over R: 校验token，确认rid属于token里的账号和区服，<br/>再经bind_session把会话绑定到实体所在节点
+    R-->>C: 登录响应<br/>{code, rid}
 
     C->>R: sproto role.login_info
     R-->>C: 角色信息响应
@@ -201,7 +207,7 @@ sequenceDiagram
 sequenceDiagram
     participant RC as 机器人客户端
     participant A as Account服务
-    participant R as RoleNode
+    participant R as Gate/逻辑节点
 
     Note over RC: 1. 从开发登录接口拿Token（代替OAuth）
     RC->>A: HTTP POST /dev_login<br/>{account: "robot1"}
@@ -217,12 +223,12 @@ sequenceDiagram
     end
 
     Note over RC: 3. 选择角色，TCP直连网关
-    RC->>R: TCP socket.open 连接到rolenode网关
+    RC->>R: TCP socket.open 连接到任意一个gate
     R-->>RC: 连接建立成功
 
     RC->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
-    Note over R: 校验token，并确认rid属于token里的账号和区服
-    R-->>RC: 登录响应<br/>{code, rid, rolenode}
+    Note over R: 校验token，并确认rid属于token里的账号和区服，<br/>再经bind_session把会话绑定到实体所在节点
+    R-->>RC: 登录响应<br/>{code, rid}
 
     RC->>R: sproto role.login_info
     R-->>RC: 角色信息响应
@@ -267,10 +273,18 @@ sequenceDiagram
 ```
 GET /roles?token=jwt_token_string[&server=s1]
 
-Response: { "code": 0, "roles": [{ "rid": 1, "server": "s1", "name": "...", "rolenode": "rolenode1" }] }
+Response: { "code": 0, "roles": [{ "rid": 1, "server": "s1", "name": "..." }] }
 ```
 
-> `server` 参数可选，传入时仅返回该区服的角色。服务端通过 `server2game` 校验区服是否存在。
+> `server` 参数可选，传入时仅返回该区服的角色。服务端通过区服目录校验区服是否存在。
+
+**服务器列表：**
+
+```
+GET /servers
+
+Response: { "code": 0, "servers": [{ "server": "s1", "name": "一区", "tag": "S1", "status": "open", "open_time": 1700000000, "recommended": true }] }
+```
 
 **创建角色：**
 
@@ -278,7 +292,7 @@ Response: { "code": 0, "roles": [{ "rid": 1, "server": "s1", "name": "...", "rol
 POST /create_role
 Body: { "token": "...", "server": "s1", "name": "角色名称" }
 
-Response: { "code": 0, "role": { "rid": 1, "server": "s1", "name": "...", "rolenode": "rolenode1" } }
+Response: { "code": 0, "role": { "rid": 1, "server": "s1", "name": "..." } }
 ```
 
-> 示例配置 `max_role_count = 5`；当前 `account_router.lua` 用 `#rids > max_role_count` 判断，边界上可能允许创建第 6 个角色。不要把该示例检查当作生产级配额控制。
+> 只能在 `status = "open"` 的服建角；名字在出生服内唯一，重名返回 `NAME_TAKEN`。`max_role_count`（示例为 5）是单个区服的角色上限。

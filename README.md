@@ -10,7 +10,7 @@
 
 ## 能做什么
 
-- **分层与分布式部署**：引擎模块采用 `skyext.*` 命名空间；Account、Role 和 Robot 节点分别运行，基于 etcd 提供服务发现与分布式锁。
+- **分层与分布式部署**：引擎模块采用 `skyext.*` 命名空间；Account、Role、Gateway、Robot 节点可分别部署（Role 自带 gate，Gateway 为可选的独立网关节点），基于 etcd 提供服务发现与分布式锁。
 - **游戏数据与协议**：MongoDB 持久化、ORM/schema、sproto 协议，以及可扩展的通用实体系统。
 - **接入与运维**：HTTP 接口、JWT 登录、skynet TLS 模块、日志、GM 命令与代码/配置热更新。
 - **开发工具**：跨平台统一 CLI、伴随源码的 `.test.lua` 测试及 CI 检查。
@@ -51,7 +51,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 | `lualib/skyext/`、`lualib/orm/`、`lualib/skytest/` | 引擎库、ORM、测试框架 |
 | `service/`、`public/` | 通用 skynet 服务和静态资源 |
 | `lualib-src/`、`service-src/`、`build.mk` | C 扩展、服务与构建规则 |
-| `example/nodes/`、`example/lualib/` | 示例游戏的节点入口与业务代码 |
+| `example/nodes/`、`example/service/`、`example/lualib/` | 示例游戏的节点入口、共享服务（login/admin）与业务代码 |
 | `example/etc/`、`example/proto/`、`example/schema/` | 示例配置、协议与数据模式 |
 | `scripts/tools/sproto_orm/`、`scripts/`、`bin/skyext`、`bin/skyext.bat` | 内化的 ORM 生成工具、跨平台 CLI 及其 Lua 实现 |
 | `skynet/`、`3rd/` | Git submodule 依赖 |

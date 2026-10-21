@@ -4,22 +4,20 @@
 
 ## 前置条件
 
-- Account 服务已启动（提供 `/roles`、`/create_role` 以及开发用的 `/dev_login` HTTP 接口）
-- RoleNode（含网关 gate）已启动并监听
+- Account 服务已启动（提供 `/servers`、`/roles`、`/create_role` 以及开发用的 `/dev_login` HTTP 接口）
+- gate 已启动并监听（Role 节点同进程部署的 gate，或独立的 Gateway 节点；客户端连任意一个 gate 都能进游戏）
 - etcd 和 MongoDB 服务可用
 - 客户端持有有效的 JWT Token（正式客户端从 SDK/平台登录服务获取；示例机器人从 Account 的 `/dev_login` 获取）
 
 ## 登录步骤
 
 1. 客户端获取 JWT Token（正式客户端从 SDK/平台登录服务获得；示例机器人 POST `/dev_login` 获得）
-2. 发送 HTTP GET `/roles?token=xxx` 到 Account 服务获取角色列表
-3. 如果没有角色，发送 HTTP POST `/create_role` 到 Account 服务创建角色
-4. 创建角色返回角色信息，其中包含 `rolenode` 字段
-5. 根据 `rolenode` 查找对应网关地址
-6. 连接网关（正式客户端经 WebSocket 网关转接，机器人使用 TCP `socket.open` 直连）
-7. 发送 sproto `login.login` 消息（携带 token、rid、server、proto_checksum）。服务端校验 token 后，还会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**，否则返回 `ROLE_NOT_EXIST`——token 只证明账号，rid 和 server 是客户端自己报的
-8. rid 不该落在本节点时返回 `NOT_THIS_NODE` 和正确的 `rolenode`，客户端改连那个节点重新登录
-9. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
+2. 发送 HTTP GET `/servers` 获取服务器列表（不需要登录，最新开放的服带 `recommended = true`），选一个服建角
+3. 发送 HTTP GET `/roles?token=xxx` 到 Account 服务获取角色列表；没有角色时 POST `/create_role` 创建（只能选 `status = "open"` 的服）
+4. 连接任意一个 gate（正式客户端经 gate 前的负载均衡/goscon 转接，机器人从 `gate_addrs` 列表里轮流连一个，用 TCP `socket.open` 直连）。**客户端不需要知道角色实体在哪个节点**——gate 只管会话，上行包由它转发到实体真正所在的节点
+5. 发送 sproto `login.login` 消息（携带 token、rid、server、proto_checksum）。服务端校验 token 后，还会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**，否则返回 `ROLE_NOT_EXIST`——token 只证明账号，rid 和 server 是客户端自己报的
+6. 登录服务经 Entity 路由调用 `router.bind_session("role", rid, gate_node, fd)`：按 HRW 找到实体所在节点，把这条 gate 会话绑到角色实体上（实体可能在别的节点，gate 会记下 `owner_node`，后续上行包跨节点转发）。**不再有 `NOT_THIS_NODE` 让客户端改连节点**
+7. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
 
 ### 开发用登录接口
 
@@ -41,20 +39,33 @@ local function fetch_token(account_host, account)
 end
 
 function CMD.start(conf)
+    -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
+    -- 所以 account_host 和 gate_addrs 都要在这里取
     local account_host = config.get("account_host")
-    local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
+    local gate_addrs = assert(config.get_table("gate_addrs"), "gate_addrs is not configured")
     local account = "robot" .. conf.id
     local token = fetch_token(account_host, account)
     if not token then
         return
     end
 
+    -- 服务器列表不需要登录；没有角色时在推荐服建角
+    local server = "s1"
+    local list_status, list = httpc.get(account_host, "/servers")
+    local servers = list_status == 200 and cjson.decode(list)
+    for _, entry in ipairs(servers and servers.servers or {}) do
+        if entry.recommended then
+            server = entry.server
+        end
+    end
+
     local status, body = httpc.get(account_host, "/roles?token=" .. token)
-    -- ……没有角色时 POST /create_role 创建，取第一个角色……
+    -- ……没有角色时 POST /create_role（带 server）创建，取第一个角色……
 
     local role = roles[1]
-    local rolenode = role.rolenode
-    local fd, err = socket.open(gate_nodes[rolenode].ip, gate_nodes[rolenode].port)
+    -- 机器人轮流连不同的 gate；gate 不必和角色实体在同一个节点
+    local gate = gate_addrs[conf.gate or (conf.id % #gate_addrs + 1)]
+    local fd, err = socket.open(gate.ip, gate.port)
     if not fd then
         log.error("failed to connect to gate", "err", err)
         return
@@ -64,13 +75,13 @@ function CMD.start(conf)
     local ret = call("login.login", {
         token = token,
         rid = role.rid,
-        server = "s1",
+        server = server,
         proto_checksum = sproto_api.get_sproto_info().checksum,
     })
     if not ret or ret.code ~= errcode.OK then
         return
     end
-    -- 登录后看背包、给自己发一封邮件、再看邮箱
+    -- 登录后看背包、给自己发一封邮件、看邮箱，再报一次排行榜
     play(role.rid)
 end
 ```
@@ -95,7 +106,6 @@ login 101 {
     response {
         code 0 : integer
         rid 1 : integer
-        rolenode 2 : string # 需要连的游戏节点
     }
 }
 
@@ -138,40 +148,42 @@ HTTP 服务，端口由各节点的 `account_http_port` 指定：
 account_host = "http://127.0.0.1:8080"
 ```
 
-### 网关节点（gate_nodes）
+### 网关地址（gate_addrs）
 
-机器人通过 `gate_nodes` 配置查找各 RoleNode 的网关地址。配置示例（`example/etc/nodes/robot.app.lua`）：
+机器人通过 `gate_addrs` 列表轮流连一个 gate，不关心角色实体在哪个节点。配置示例（`example/etc/nodes/robot.app.lua`）：
 
 ```lua
-gate_nodes = {
-    rolenode1 = {
-        ip = "127.0.0.1",
-        port = 7012,
-    },
-    rolenode2 = {
-        ip = "127.0.0.1",
-        port = 7022,
-    },
+gate_addrs = {
+    { ip = "127.0.0.1", port = 7012 }, -- rolenode1 同进程部署的 gate
+    { ip = "127.0.0.1", port = 7022 }, -- rolenode2 同进程部署的 gate
+    { ip = "127.0.0.1", port = 7052 }, -- 独立的 gate1 节点
 }
 ```
 
-各 RoleNode 的网关端口由 `gate_port` 配置：
+正式环境客户端连的是 gate 前面的负载均衡（或 goscon），不需要列出具体节点。各节点的 gate 端口由 `gate_port` 配置：
 
 | 节点 | 配置文件 | gate_port | GM 端口 |
 |------|---------|-----------|---------|
 | rolenode1 | `example/etc/nodes/role1.app.lua` | 7012 | 9092 |
 | rolenode2 | `example/etc/nodes/role2.app.lua` | 7022 | 9093 |
+| gate1（独立网关） | `example/etc/nodes/gate1.app.lua` | 7052 | 9094 |
 
-### 区服与游戏服映射
+### 区服目录
 
-`server2game` 配置在 `example/etc/nodes/common.app.lua`，将客户端区服 ID 映射到内部游戏服：
+区服（server）→ 逻辑服（game）→ 战区（zone）的映射存在 etcd 的区服目录里，由 GM 命令 `realm_open`、`realm_set_zone` 维护，见[架构概览](../overview.md)。`example/etc/nodes/common.app.lua` 里的 `realm_seed` 只在目录完全为空时写入一次，供本地开发和新环境首次启动：
 
 ```lua
-server2game = {
-    ["s1"] = "game1",
-    ["s2"] = "game2",
-    ["s3"] = "game2", -- game3 合服到 game2
+realm_seed = {
+    zones = { zone1 = {} },
+    games = { game1 = { zone = "zone1" }, game2 = { zone = "zone1" } },
+    servers = {
+        s1 = { game = "game1", name = "一区", tag = "S1" },
+        s2 = { game = "game2", name = "二区", tag = "S2" },
+        s3 = { game = "game2", name = "三区", tag = "S3" }, -- 三区合入 game2
+    },
 }
 ```
 
-角色的 `rolenode` 由 Entity 系统按服务发现报告的存活节点（rendezvous hashing）计算；`entity_types.role.nodes`（`common.app.lua`）只在服务发现不可用时兜底。
+客户端用 `GET /servers` 取服务器列表（不需要登录，最新开放的服带 `recommended = true`）。建角只能选 `status = "open"` 的服；角色只记出生服，登录时报的 `server` 必须是角色的出生服。角色名在出生服内唯一，跨服场景里显示为 `[S3]张三`。
+
+角色实体落在哪个节点由 Entity 系统按服务发现报告的存活节点（rendezvous hashing）计算，对客户端透明——客户端只连任意一个 gate，由 gate/登录服务把会话绑到实体真正所在的节点。`entity_types.role.nodes`（`common.app.lua`）只在服务发现不可用时兜底。
