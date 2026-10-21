@@ -13,3 +13,12 @@
 [submodule "3rd/sprotodump"]
 	path = 3rd/sprotodump
 	url = https://github.com/lvzixun/sprotodump.git
+[submodule "example/tools/gamepass"]
+	path = example/tools/gamepass
+	url = https://github.com/hanxi/gamepass.git
+[submodule "example/tools/phaser-game"]
+	path = example/tools/phaser-game
+	url = https://github.com/hanxi/phaser-game.git
+[submodule "example/tools/goscon"]
+	path = example/tools/goscon
+	url = https://github.com/hanxi/goscon.git
