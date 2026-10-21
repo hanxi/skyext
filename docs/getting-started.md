@@ -78,6 +78,8 @@ CLI 的 `serve` 会自动切换到仓库根目录。直接使用 skynet 时**不
 ./bin/skynet example/etc/account1.conf.lua
 ```
 
+机器人走的是开发链路（`/dev_login` 签 token、TCP 直连 gate）。正式浏览器客户端的完整链路（gamepass OAuth 签 JWT + goscon WebSocket 网关 + phaser-game 客户端）见[完整客户端联调](guide/fullstack_client.md)。
+
 ## 5. 理解并修改配置
 
 配置分两层，分别由 skynet 和引擎加载：
