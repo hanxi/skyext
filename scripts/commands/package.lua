@@ -150,6 +150,11 @@ local function package_game(ctx, args)
                 if first == "dist" or first == "3rd" or relative == "skyext.zip" then
                     return false
                 end
+                -- 本地联调用的配套仓库（OAuth 服务 / WS 网关 / 浏览器客户端），不进游戏部署包
+                local tool = relative:match("^tools/([^/]+)")
+                if tool == "gamepass" or tool == "goscon" or tool == "phaser-game" then
+                    return false
+                end
                 for _, volume in ipairs({
                     "tools/mongodb/db",
                     "tools/etcd/etcd1_data",

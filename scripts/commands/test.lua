@@ -52,7 +52,17 @@ local function discover(ctx, options)
         if mode == "file" then
             found[path] = true
         elseif mode == "directory" then
-            for _, item in ipairs(fs.walk(path)) do
+            for _, item in
+                ipairs(fs.walk(path, function(relative)
+                    -- example/tools/ 下有配套子模块（gamepass/goscon/phaser-game），里面的
+                    -- node_modules、.git 等目录不属于 Lua 测试发现范围，且含跨目录符号链接
+                    local name = relative:match("[^/]+$")
+                    if name == "node_modules" or name:match("^%.") then
+                        return false
+                    end
+                    return true
+                end))
+            do
                 if item.mode == "file" and item.relative:match("%.test%.lua$") then
                     found[item.path] = true
                 end
