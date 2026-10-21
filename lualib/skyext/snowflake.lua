@@ -20,10 +20,14 @@ local function snowflake_service()
     local BEGIN_TIMESTAMP = parse_date(start_date)
 
     -- 每一部分占用的位数 (总共 1 + 63 = 64 位，符号位为0)
-    local TIME_BIT = 32 -- 136年
-    local MACHINE_BIT = 14 -- 16384个进程
-    local SEQUENCE_BIT = 17 -- 13万/秒
-    -- 位数检查
+    local TIME_BIT = 32 -- 秒级时间戳，136年
+    local MACHINE_BIT = 8 -- 256个进程
+    local SEQUENCE_BIT = 13 -- 8192/秒；id_generator 按千批量预取，要给多服务冷启动同时 refill 留余量
+    -- 位数检查。MACHINE_BIT + SEQUENCE_BIT <= 21 是硬约束：ID 最大值 = (2^32-1)<<21 +
+    -- (2^21-1) = 2^53-1，恰好不超过 JS 的 Number.MAX_SAFE_INTEGER。浏览器客户端
+    -- （phaser-game 这类）从 JSON.parse 到 sproto 编码全程用 double 传递 rid，一旦
+    -- 超过 2^53 就会精度丢失，登录时上报的 rid 与库里对不上（ROLE_NOT_EXIST）。
+    assert(MACHINE_BIT + SEQUENCE_BIT <= 21, "id exceeds JS Number.MAX_SAFE_INTEGER")
     assert(TIME_BIT + MACHINE_BIT + SEQUENCE_BIT < 64, "total bits exceeds 64")
 
     -- 每一部分的最大值

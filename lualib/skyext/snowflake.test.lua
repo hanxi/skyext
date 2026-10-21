@@ -4,8 +4,8 @@ local lfs = require "lfs"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "lualib/skyext/snowflake.lua")
 
-local SEQUENCE_BIT = 17
-local MACHINE_BIT = 14
+local SEQUENCE_BIT = 13
+local MACHINE_BIT = 8
 local MAX_SEQUENCE = (1 << SEQUENCE_BIT) - 1
 local MAX_MACHINE_ID = (1 << MACHINE_BIT) - 1
 local TIMESTAMP_LEFT = SEQUENCE_BIT + MACHINE_BIT
