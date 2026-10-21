@@ -1137,6 +1137,32 @@ t.describe("entitymgr addressing", function()
         t.expect(h.mgr:get(7)).to.be_nil()
     end)
 
+    t.it("moves every pending message of a missing entity to the dead letter queue", function()
+        local h = harness()
+        h.missing = true
+        for i = 1, 3 do
+            h.pending[i] = { msg_id = i, cmd = "mail", args = {} }
+        end
+        t.expect(table.pack(h.mgr:deliver_pending(7))).to.equal({ false, "not found", n = 2 })
+        for i = 1, 3 do
+            t.expect(h.pending[i].dead).to.equal(true)
+            t.expect(h.pending[i].dead_reason).to.equal("entity not found")
+        end
+        -- 没有加载出实体，也就不该挂投递重试
+        t.expect(h.timers["reliable_retry:7"]).to.be_nil()
+    end)
+
+    t.it("keeps going when another worker already moved a message", function()
+        local h = harness()
+        h.missing = true
+        h.pending[1] = { msg_id = 1, cmd = "mail", args = {} }
+        h.pending[2] = { msg_id = 2, cmd = "mail", args = {} }
+        h.mark_dead_error = "not_pending"
+        h.mgr:deliver_pending(7)
+        t.expect(count_of(h.events, "dead:1")).to.equal(1)
+        t.expect(count_of(h.events, "dead:2")).to.equal(1)
+    end)
+
     t.it("tells reliable delivery which node holds the lock", function()
         local h = harness()
         h.owner = "node-b"
@@ -1201,5 +1227,102 @@ t.describe("entitymgr shutdown", function()
     t.it("returns immediately when nothing is loaded", function()
         local h = harness()
         t.expect(h.mgr:unload_all()).to.equal(0)
+    end)
+end)
+
+t.describe("entitymgr resident entities and timers", function()
+    local LABEL = "entity_timer:role:7:tick"
+
+    t.it("never schedules an idle unload for a resident type", function()
+        local h = harness({ type_config = { db_name = "demo", db_coll = "rank", id_field = "id", resident = true } })
+        h.mgr:ensure_loaded(7)
+        t.expect(h.timers["entity_unload:7"]).to.be_nil()
+        h.mgr:touch(7)
+        t.expect(h.timers["entity_unload:7"]).to.be_nil()
+    end)
+
+    t.it("runs a repeating timer inside the entity and re-arms it", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        local runs = {}
+        entity:every("tick", 5, function(e)
+            runs[#runs + 1] = e
+        end)
+        local first = h.timers[LABEL]
+        first.fire()
+        t.expect(runs).to.equal({ entity })
+        t.expect(h.timers[LABEL] ~= first).to.equal(true)
+        h.timers[LABEL].fire()
+        t.expect(#runs).to.equal(2)
+    end)
+
+    t.it("keeps a repeating timer going after its callback fails", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        local runs = 0
+        entity:every("tick", 5, function()
+            runs = runs + 1
+            error("boom")
+        end)
+        h.timers[LABEL].fire()
+        h.timers[LABEL].fire()
+        t.expect(runs).to.equal(2)
+    end)
+
+    t.it("fires a one-shot timer once", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        local runs = 0
+        entity:after("tick", 5, function()
+            runs = runs + 1
+        end)
+        local timer = h.timers[LABEL]
+        timer.fire()
+        t.expect(runs).to.equal(1)
+        t.expect(h.timers[LABEL]).to.equal(timer)
+        t.expect(entity.timers.tick).to.be_nil()
+    end)
+
+    t.it("stops when the callback cancels its own timer", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        entity:every("tick", 5, function(e)
+            e:cancel_timer("tick")
+        end)
+        local timer = h.timers[LABEL]
+        timer.fire()
+        t.expect(h.timers[LABEL]).to.equal(timer)
+    end)
+
+    t.it("cancels every timer when the entity unloads or loses its lease", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        local runs = 0
+        entity:every("tick", 5, function()
+            runs = runs + 1
+        end)
+        local timer = h.timers[LABEL]
+        h.mgr:unload(7)
+        t.expect(timer.cancelled).to.equal(true)
+        -- 已经排进定时器队列的那次也不能再跑
+        timer.fire()
+        t.expect(runs).to.equal(0)
+
+        local _, again = h.mgr:ensure_loaded(7)
+        again:every("tick", 5, function()
+            runs = runs + 1
+        end)
+        local second = h.timers[LABEL]
+        h:expire()
+        t.expect(second.cancelled).to.equal(true)
+    end)
+
+    t.it("does not extend the life of the entity", function()
+        local h = harness()
+        local _, entity = h.mgr:ensure_loaded(7)
+        local unload_timer = h.timers["entity_unload:7"]
+        entity:every("tick", 5, function() end)
+        h.timers[LABEL].fire()
+        t.expect(h.timers["entity_unload:7"]).to.equal(unload_timer)
     end)
 end)

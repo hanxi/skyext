@@ -3,6 +3,7 @@ local cluster = require "skynet.cluster"
 local cmd_api = require "skyext.cmd_api"
 local types = require "skyext.entity.types"
 local entitymgr_mod = require "skyext.entity.entitymgr"
+local distributed_lock = require "skyext.distributed_lock"
 local log = require "skyext.log"
 local errcode = require "skyext.errcode"
 local config = require "skyext.config"
@@ -179,13 +180,24 @@ function CMD.deliver_reliable_loaded(entity_id)
     return entitymgr:deliver_pending(entity_id, { loaded_only = true })
 end
 
+-- 主动加载一个实体（常驻实体的预加载用）。返回 true，或 false, reason
+function CMD.activate(entity_id)
+    local ok, reason = entitymgr:ensure_loaded(entity_id)
+    return ok == true, ok ~= true and reason or nil
+end
+
 function CMD.unload_entity(entity_id)
     return entitymgr:unload(entity_id)
 end
 
--- 停服：不再加载新实体，卸载全部已加载的实体。返回还没卸掉的数量，调用方可以再调一次
+-- 停服：不再加载新实体，卸载全部已加载的实体。返回还没卸掉的数量，调用方可以再调一次。
+-- 卸干净之后撤销本服务的锁租约，etcd 里不留等待过期的租约
 function CMD.shutdown()
-    return entitymgr:unload_all()
+    local remaining = entitymgr:unload_all()
+    if remaining == 0 then
+        distributed_lock.shutdown()
+    end
+    return remaining
 end
 
 function CMD.bind_client(entity_id, fd)

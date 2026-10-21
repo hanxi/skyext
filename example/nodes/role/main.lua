@@ -15,9 +15,16 @@ local function launcher_rolenode()
     log.info("watchdog listen", "gate_port", gate_port)
 end
 
+-- 排行榜这类全局单例跑在 role 节点上：没有客户端直连，不需要 watchdog
+local function launcher_rank()
+    local rank_mgr = skynet.newservice("entity_agentmgr", "rank")
+    skynet.call(rank_mgr, "lua", "start", {})
+end
+
 skynet.start(function()
     log.info("role start begin")
     launcher.launcher_node()
+    launcher_rank()
     launcher_rolenode()
     log.info("role start finished")
     skynet.exit()

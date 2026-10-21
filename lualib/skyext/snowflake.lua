@@ -4,6 +4,7 @@ local function snowflake_service()
     local cmd_api = require "skyext.cmd_api"
     local config = require "skyext.config"
     local machine_id = require "skyext.machine_id"
+    local node_shutdown_api = require "skyext.node_shutdown_api"
 
     local function parse_date(str_date)
         local pattern = "(%d+)-(%d+)-(%d+)"
@@ -101,6 +102,16 @@ local function snowflake_service()
     end
 
     local CMD = {}
+
+    -- 停服的 release 阶段调用：实体都已落库、不会再要号了，归还机器号，
+    -- 同一个节点马上重启能拿回原来的号
+    function CMD.shutdown()
+        if machine_slot then
+            return machine_slot:release()
+        end
+        return true
+    end
+
     function CMD.newid()
         wait_machine_id()
         return generate_one()
@@ -154,6 +165,10 @@ local function snowflake_service()
         if machine_slot then
             skynet.fork(function()
                 machine_slot:acquire()
+            end)
+            -- 写死的号不需要归还
+            skynet.fork(function()
+                node_shutdown_api.add_hook("release", "shutdown")
             end)
         end
     end)

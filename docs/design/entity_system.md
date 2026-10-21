@@ -109,6 +109,22 @@ entity_types = {
 - `types.calc_agent_index(type_name, entity_id)` — `placement.hash(entity_id) % agent_count + 1`。
   先打散再取模：snowflake ID 的低位是每秒归零的序号，直接取模会让低频发出的 ID 全挤进第一个 agent
 
+**常驻实体与预加载**（全局单例用）：排行榜、公会管理器这类"每个 game 只有一份、挂了要能接管"的东西直接做成实体，
+不另造选主机制——单活、持久化、故障接管、停服卸载都是现成的。类型配置上多两项：
+
+- `resident = true`：不进闲置卸载计时，只在停服、失租时离开内存。
+- `preload = { "rank:game1", 42, ... }`：要主动加载的实体，字符串经 `types.key_id` 换算成 ID，整数原样使用。
+  `entity_agentmgr` 就绪后加载 HRW 落在本节点的那几个，之后每 3 秒再对一遍：持有者停服或崩溃、锁释放后，
+  新的目标节点在下一轮把它接过来。锁还在别人手里时加载失败是正常的（粘性），不打 warn。
+
+单例实体一般同时开 `auto_create`（第一次激活时文档还不存在），集合要给 ID 字段建唯一索引。数据量大的单例
+（完整排行、全部公会）不要整份放进一个文档，handler 自己管理独立集合，实体系统只保证同一时刻只有它在写。
+
+**实体定时器**：`entity:every(name, sec, fn)`、`entity:after(name, sec, fn)`、`entity:cancel_timer(name)`。
+回调经 `with_loaded_entity` 在实体的串行队列里执行，实体卸载、失租后自动停止，同名定时器会替换旧的；
+回调出错只记日志，重复定时器照常继续。定时器**不会延长实体寿命**（不重置闲置卸载计时），常驻实体以外的
+实体闲置到期照样卸载。
+
 **`auto_create`**：实体按 ID 寻址，传错一个 ID 不该凭空造出一份文档。默认关闭，此时文档不存在
 `ensure_loaded` 返回 `false, "not found"`，`bind_client` 返回 `ENTITY_NOT_FOUND`。角色文档由 Account
 建角时创建，所以示例的 `role` 不开；由业务直接拿新 ID 调用实体来创建的类型才打开。
@@ -171,6 +187,10 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 2. 尝试 `send` 立即投递（`__deliver_reliable` 命令）
 3. 即时 `send` 抛错时记录警告；已保存但未标记投递的消息会在实体加载时被拉取并重试（`save` 自身失败仍会抛错）
 
+**目标实体不存在**：类型没开 `auto_create`、库里也没有这份文档时，投递拿到 `"not found"`，这些消息永远投不出去，
+又不会被 TTL 清掉（TTL 只清已投递的）。`deliver_pending` 会把该实体的 pending 消息整批移进死信队列
+（`dead_reason = "entity not found"`），文档后来补上了可以用 `dlq_replay` 重放。
+
 这不是 exactly-once 保证：ack 失败、进程中断等会导致消息重投。实体入口按 ID 串行化，即时通知只触发对已持久化 pending 消息的拉取；handler 成功后先保存实体，再确认消息。已加载实体投递失败时每 5 秒重试；缺少 handler 时保留 pending 并阻止本页后续消息，需根据日志中的消息标识补齐 handler，或核对业务状态后人工处理。**不能直接删除或确认未处理的消息来解除阻塞。**业务逻辑必须以 `msg_id` 幂等。
 
 ### 3. entitymgr.lua — 实体生命周期
@@ -211,8 +231,10 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 
 `entity_agentmgr` 的 `shutdown` 先从服务发现注销 `entity:<type>`，路由随之移到其他节点；再让每个 agent
 执行 `unload_all`：置 `closing` 拒绝加载新实体，以有限并发卸载全部已加载实体（落库、释放锁、断开客户端），
-返回剩余数量。有实体卸不掉时每秒再来一轮，直到卸干净或超时，返回剩余实体数。示例由 role 节点的 GM 命令
-`shutdown` 驱动：先关 gate 停止接入，卸干净才退出进程；卸不掉就不退出，那些实体还有没落库的改动。
+返回剩余数量；卸干净的 agent 随即撤销自己的锁租约。有实体卸不掉时每秒再来一轮，直到卸干净或超时，返回剩余实体数。
+整个节点的停服由引擎服务 `service/node_shutdown.lua`（GM 命令 `shutdown`）驱动：它按 `.entity_agentmgr:<type>`
+本地名找到本节点起了的实体类型，前后分别回调游戏层挂的 `stop_accepting` / `release` 钩子；卸不掉就不退出，
+那些实体还有没落库的改动。
 
 **失租恢复流程（`_recover_dirty` → `dbmgr.recover`）：**
 
@@ -330,7 +352,7 @@ GM 指令会在所有注册该指令的服务上执行，每类型注册一次�
 - `CMD.__deliver_reliable(entity_id)` — 即时唤醒 pending 队列，从 Mongo 按 seq 拉取，持久化实体状态后再 ack；锁在别的节点时转发
 - `CMD.deliver_reliable_loaded(entity_id)` — 转发入口，只投递给已加载的实体
 - `CMD.unload_entity(entity_id)` — 强制卸载（供登录交接跨节点调用）
-- `CMD.shutdown()` — 停服：拒绝新加载、卸载全部实体，返回剩余数量
+- `CMD.shutdown()` — 停服：拒绝新加载、卸载全部实体，返回剩余数量；卸干净后撤销本服务的锁租约
 - `CMD.bind_client(entity_id, fd)` — 客户端绑定（含重连逻辑，见上节）
 - `CMD.disconnect(fd)` — 客户端断开，触发 unbind + handler 回调
 - `CMD.start(conf)` — 初始化：加载数据模块和 sproto 协议、`require` handler、创建 entitymgr
@@ -347,6 +369,7 @@ Handler 通过 `require("entity_handler." .. type_name)` 加载。handler 是游
 3. 顺序创建并启动 N 个 entity_agent，全部就绪后注册 cluster_discovery（`"entity:" .. type_name`）
 4. watchdog 等 agent 管理器 ready 后才打开 gate 端口
 
+启动时用本地名 `.entity_agentmgr:<type>` 登记自己，停服编排靠它找到本节点的实体类型。
 `CMD.shutdown(timeout_sec)` 是停服入口：注销服务发现，再并行让各 agent 卸载，每秒重试直到卸干净或超时，返回剩余实体数（见「停服」）。
 
 **模块扫描路径解析**：基于 `game_root` + 节点 `start` 名拼接文件系统路径：

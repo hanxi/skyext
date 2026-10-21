@@ -41,6 +41,10 @@ local function harness(opts)
             h.acquired = true
             h.order[#h.order + 1] = "acquire"
         end,
+        release = function()
+            h.released = true
+            return true
+        end,
     }
 
     local imports = {
@@ -86,6 +90,11 @@ local function harness(opts)
             get_number = function(key)
                 t.expect(key).to.equal("snowflake_machine_id")
                 return opts.machine_id
+            end,
+        },
+        ["skyext.node_shutdown_api"] = {
+            add_hook = function(phase, cmd)
+                h.hook = { phase, cmd }
             end,
         },
         ["skyext.machine_id"] = {
@@ -255,5 +264,21 @@ t.describe("snowflake id generation", function()
             h.CMD.newids(10001)
         end).to
             .throw("count is too large")
+    end)
+end)
+
+t.describe("snowflake 停服", function()
+    t.it("抢号的节点挂 release 钩子，停服时归还机器号", function()
+        local h = harness()
+        t.expect(h.hook).to.equal({ "release", "shutdown" })
+        t.expect(h.CMD.shutdown()).to.equal(true)
+        t.expect(h.released).to.equal(true)
+    end)
+
+    t.it("写死机器号的节点没有号可还，也不挂钩子", function()
+        local h = harness({ machine_id = 4 })
+        t.expect(h.hook).to.be_nil()
+        t.expect(h.CMD.shutdown()).to.equal(true)
+        t.expect(h.released).to.be_nil()
     end)
 end)

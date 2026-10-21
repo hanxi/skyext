@@ -3,6 +3,8 @@ local lfs = require "lfs"
 local cmd_api = require "skyext.cmd_api"
 local types = require "skyext.entity.types"
 local cluster_discovery = require "skyext.cluster_discovery"
+local config = require "skyext.config"
+local timer = require "skyext.timer"
 local log = require "skyext.log"
 
 local type_name = ...
@@ -119,6 +121,39 @@ local function create_agents(agent_count, watchdog)
     return agents
 end
 
+-- 预加载：配置了 preload 的类型（全局单例这类常驻实体），由 HRW 指向本节点的那几个 ID
+-- 在这里主动加载。启动后跑一次，之后定期再对一遍：持有它的节点停服或崩溃后，
+-- 新的目标节点要能把它接过来。锁还在别人手里时加载失败是正常的（粘性），下一轮再看
+local PRELOAD_INTERVAL = 3
+local g_preload_timer
+
+local function reconcile_preload()
+    if not g_ready then
+        return
+    end
+    local self_node = config.get("cluster_node_name")
+    for _, id in ipairs(types.preload_ids(type_name)) do
+        local ok, node = pcall(types.calc_node, type_name, id)
+        if ok and node == self_node then
+            local agent = g_agents[types.calc_agent_index(type_name, id)]
+            local called, loaded, reason = pcall(skynet.call, agent, "lua", "activate", id)
+            if not called then
+                log.error("entity preload failed", "type", type_name, "id", id, "err", loaded)
+            elseif not loaded and reason ~= "lock held" then
+                log.warn("entity preload deferred", "type", type_name, "id", id, "reason", reason)
+            end
+        end
+    end
+end
+
+local function start_preload()
+    if not type_config.preload or #type_config.preload == 0 then
+        return
+    end
+    skynet.fork(reconcile_preload)
+    g_preload_timer = timer.repeat_delayed("entity_preload:" .. type_name, PRELOAD_INTERVAL, reconcile_preload)
+end
+
 -- 启动全部 entity_agent；返回成功即表示本节点该类型已就绪，可以对外放行
 function CMD.start(conf)
     conf = conf or {}
@@ -173,6 +208,7 @@ function CMD.start(conf)
     g_ready = true
     g_starting = false
     wakeup_waiters()
+    start_preload()
 
     log.info("entity_agentmgr ready", "type", type_name, "agent_count", #agents, "watchdog", watchdog)
     return true
@@ -213,6 +249,10 @@ function CMD.shutdown(timeout_sec)
         cluster_discovery.unregister({ "entity:" .. type_name })
         g_ready = false
     end
+    if g_preload_timer then
+        g_preload_timer:cancel()
+        g_preload_timer = nil
+    end
     log.info("entity_agentmgr shutting down", "type", type_name)
     while true do
         local remaining = shutdown_agents()
@@ -238,6 +278,8 @@ function CMD.agents()
 end
 
 skynet.start(function()
+    -- 停服编排（service/node_shutdown.lua）靠这个名字找到本节点的各实体类型
+    skynet.register(".entity_agentmgr:" .. type_name)
     g_modules_path = type_config.modules_path
     if g_modules_path then
         g_modules = discover_modules(g_modules_path, skynet.getenv("start"))

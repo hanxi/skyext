@@ -1,7 +1,7 @@
 local skynet = require "skynet"
 local cmd_api = require "skyext.cmd_api"
 local gm_api = require "skyext.gm_api"
-local cluster_discovery = require "skyext.cluster_discovery"
+local node_shutdown_api = require "skyext.node_shutdown_api"
 local router = require "skyext.entity.router"
 local time = require "skyext.time"
 local log = require "skyext.log"
@@ -14,10 +14,6 @@ local g_entity_agentmgr_service
 local g_clients = {}
 local g_started = false
 local g_starting = false
-local g_shutting_down = false
-
--- 等实体卸载的默认时长（秒）
-local SHUTDOWN_TIMEOUT = 60
 
 function SOCKET.open(fd, addr)
     assert(not g_clients[fd], fd .. " exists")
@@ -114,47 +110,16 @@ function CMD.start(conf)
     return true
 end
 
--- 停服顺序：先停止接受新连接，再卸载全部实体（落库、释放锁、踢掉在线玩家），
--- 全部卸干净才退出进程。有实体卸不掉就不退：那些实体还有没落库的改动，
--- 退出就丢了。排查后可以再发一次 shutdown。
-local function shutdown(timeout_sec)
-    log.info("node shutdown begin", "timeout", timeout_sec)
-    local closed, close_err = pcall(skynet.call, g_gate_service, "lua", "close")
-    if not closed then
-        log.warn("gate close failed", "err", close_err)
+-- 停服的第一步：关掉 gate 的监听端口，不再接新连接。已经连上的玩家由实体卸载时踢下线
+function CMD.stop_accepting()
+    local ok, err = pcall(skynet.call, g_gate_service, "lua", "close")
+    if not ok then
+        -- 重发 shutdown 时 gate 已经关过了
+        log.warn("gate close failed", "err", err)
     end
-    local ok, remaining = pcall(skynet.call, g_entity_agentmgr_service, "lua", "shutdown", timeout_sec)
-    if not ok or remaining ~= 0 then
-        log.error("node shutdown incomplete, process kept alive", "remaining", remaining)
-        g_shutting_down = false
-        return
-    end
-    -- 撤销服务发现租约，别的节点立刻看到本节点下线，不用等 30 秒过期
-    local revoked, revoke_err = pcall(cluster_discovery.shutdown)
-    if not revoked then
-        log.warn("cluster discovery shutdown failed", "err", revoke_err)
-    end
-    log.info("node shutdown complete, exiting")
-    -- 退出前让 logger 把缓冲写完
-    pcall(skynet.call, ".logger", "lua", "close")
-    skynet.abort()
 end
 
 local GM_CMD = {}
-
-GM_CMD.shutdown = {
-    desc = "停服：停止接入、卸载全部实体落库后退出进程",
-    params = { timeout = "等实体卸载的秒数，默认 60" },
-    handler = function(params)
-        if g_shutting_down then
-            return false, "already shutting down"
-        end
-        g_shutting_down = true
-        -- 卸载可能要几十秒，不能让 GM 请求一直挂着，进度看日志
-        skynet.fork(shutdown, tonumber(params.timeout) or SHUTDOWN_TIMEOUT)
-        return true, "shutdown started"
-    end,
-}
 
 -- 非实体服务给实体发可靠消息的示范：消息落库后由收件人自己的 handler 收下
 GM_CMD.send_mail = {
@@ -214,4 +179,5 @@ skynet.start(function()
     g_login_service = skynet.newservice("login")
     g_entity_agentmgr_service = skynet.newservice("entity_agentmgr", "role")
     gm_api.register(GM_CMD)
+    node_shutdown_api.add_hook("stop_accepting", "stop_accepting")
 end)

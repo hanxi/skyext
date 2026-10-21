@@ -42,7 +42,7 @@ local function probe_start(self)
 end
 
 function slot_mt:_on_lost(id)
-    if self.id ~= id then
+    if self.released or self.id ~= id then
         -- 过期的是上一轮的句柄，当前这个号不受影响
         return
     end
@@ -79,12 +79,12 @@ end
 --- 抢一个号，抢不到就一直重试；期间 valid() 为 false，调用方必须停下
 -- @param exclude 这一轮要跳过的号（刚丢掉的那个）
 function slot_mt:acquire(exclude)
-    if self.acquiring then
+    if self.acquiring or self.released then
         return
     end
     self.acquiring = true
     local delay = RETRY_DELAY_MIN
-    while not self.id do
+    while not self.id and not self.released do
         local ok, err = self:_try_claim(exclude)
         if ok then
             break
@@ -95,6 +95,24 @@ function slot_mt:acquire(exclude)
     end
     self.acquiring = false
     log.info("machine id acquired", "name", self.name, "id", self.id)
+end
+
+--- 停服时主动归还号码：同一个节点马上重启能拿回原来的号，不用等租约过期。
+-- 归还后 valid() 恒为 false，也不会再去抢号
+function slot_mt:release()
+    self.released = true
+    local key, handle = self.key, self.handle
+    self.id, self.key, self.handle = nil, nil, nil
+    if not handle or not distributed_lock.is_valid(handle) then
+        return true
+    end
+    local ok, err = distributed_lock.unlock(key, handle)
+    if not ok then
+        log.warn("machine id release failed", "name", self.name, "key", key, "err", err)
+        return false
+    end
+    log.info("machine id released", "name", self.name, "key", key)
+    return true
 end
 
 --- 这个号此刻是否还归我们

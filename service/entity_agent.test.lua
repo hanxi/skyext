@@ -44,6 +44,13 @@ local function harness(opts)
         end
         return self:with_entity(id, f)
     end
+    function fake_mgr:ensure_loaded(id)
+        t.expect(id).to.equal(7)
+        if h.ensure_error then
+            return false, h.ensure_error
+        end
+        return true, entity
+    end
     function fake_mgr:unload_all()
         h.events[#h.events + 1] = "unload_all"
         return h.unload_remaining or 0
@@ -175,6 +182,12 @@ local function harness(opts)
                 if key == "cluster_node_name" then
                     return "node-a"
                 end
+            end,
+        },
+        ["skyext.distributed_lock"] = {
+            shutdown = function()
+                h.lock_closed = (h.lock_closed or 0) + 1
+                return true
             end,
         },
         ["skyext.entity.client_ext"] = fake_client,
@@ -401,11 +414,22 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.deliver_opts).to.equal({ loaded_only = true })
     end)
 
+    t.it("activate loads an entity and reports why it could not", function()
+        local h = harness()
+        t.expect(table.pack(h.CMD.activate(7))).to.equal({ true, nil, n = 2 })
+        h.ensure_error = "lock held"
+        t.expect(table.pack(h.CMD.activate(7))).to.equal({ false, "lock held", n = 2 })
+    end)
+
     t.it("shutdown unloads every entity and reports what is left", function()
         local h = harness()
-        t.expect(h.CMD.shutdown()).to.equal(0)
         h.unload_remaining = 2
         t.expect(h.CMD.shutdown()).to.equal(2)
+        -- 还有实体没卸掉时锁租约必须留着，它们落库、解锁都要用
+        t.expect(h.lock_closed).to.be_nil()
+        h.unload_remaining = 0
+        t.expect(h.CMD.shutdown()).to.equal(0)
+        t.expect(h.lock_closed).to.equal(1)
         t.expect(h.events).to.equal({ "unload_all", "unload_all" })
     end)
 

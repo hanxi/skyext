@@ -42,6 +42,10 @@ local function play(rid)
     log.info("send mail", "ret", call("mail.send", { to_rid = rid, title = "hello", content = "mail to myself" }))
     skynet.sleep(100)
     log.info("mail list", "ret", call("mail.list"))
+    -- 排行榜每 2 秒刷新一次排名，等一轮再看
+    log.info("rank submit", "ret", call("rank.submit", { score = rid % 1000 }))
+    skynet.sleep(300)
+    log.info("rank top", "ret", call("rank.top", { count = 5 }))
 end
 
 function CMD.start(conf)

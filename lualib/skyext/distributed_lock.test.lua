@@ -25,6 +25,13 @@ local function harness(opts)
         end
         return { status = 200, body = { result = { TTL = 30, ID = lease } } }
     end
+    function client:revoke(lease)
+        h.revoked = lease
+        if h.fail_revoke then
+            return nil, "no quorum"
+        end
+        return { status = 200, body = {} }
+    end
     function client:txn(compare, success, failure)
         h.transactions = (h.transactions or 0) + 1
         local rule = assert(compare[1])
@@ -82,6 +89,11 @@ local function harness(opts)
                 h.heartbeat_name = name
                 h.heartbeat_interval = sec
                 h.heartbeat = fn
+                return {
+                    cancel = function()
+                        h.heartbeat_cancelled = true
+                    end,
+                }
             end,
         },
         ["skyext.config"] = {
@@ -225,5 +237,32 @@ t.describe("distributed lock lease and fencing", function()
         t.expect(ok).to.equal(false)
         t.expect(reason).to.equal("lock held")
         t.expect(owner).to.be_nil()
+    end)
+end)
+
+t.describe("distributed lock shutdown", function()
+    t.it("revokes the lease, drops every lock without expiry callbacks and refuses new ones", function()
+        local h = harness()
+        local expired = 0
+        local _, handle = h.lock.try_lock("machine_id/snowflake/3", "node", function()
+            expired = expired + 1
+        end)
+        local lease = handle.lease
+        t.expect(h.lock.shutdown()).to.equal(true)
+        t.expect(h.revoked).to.equal(lease)
+        t.expect(h.heartbeat_cancelled).to.equal(true)
+        t.expect(h.lock.is_valid(handle)).to.equal(false)
+        -- 主动放手不是失租：machine_id 收到过期回调会去重新抢号
+        t.expect(expired).to.equal(0)
+        t.expect(table.pack(h.lock.try_lock("role:1", "node"))).to.equal({ false, "lock service closed", n = 2 })
+        -- 再调一次没有租约可撤
+        t.expect(h.lock.shutdown()).to.equal(true)
+    end)
+
+    t.it("reports a failed revoke and leaves the keys to expire with the lease", function()
+        local h = harness()
+        h.lock.try_lock("role:1", "node")
+        h.fail_revoke = true
+        t.expect(h.lock.shutdown()).to.equal(false)
     end)
 end)

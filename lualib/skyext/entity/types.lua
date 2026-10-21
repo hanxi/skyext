@@ -42,6 +42,33 @@ function M.calc_agent_index(type_name, entity_id)
     return placement.hash(entity_id) % agent_count + 1
 end
 
+local FNV_OFFSET = 0xcbf29ce484222325
+local FNV_PRIME = 0x100000001b3
+
+-- 由字符串键确定性地算出实体 ID，给按名字寻址的实体用（比如每个 game 一份的排行榜）：
+-- 任何节点拿同一个键都算出同一个 ID，不用查表。结果是正整数
+function M.key_id(key)
+    assert(type(key) == "string" and key ~= "", "entity key must be a non-empty string")
+    local h = FNV_OFFSET
+    for i = 1, #key do
+        h = (h ~ string.byte(key, i)) * FNV_PRIME
+    end
+    h = h & 0x7fffffffffffffff
+    if h == 0 then
+        h = 1
+    end
+    return h
+end
+
+-- 类型配置里 preload 列出的实体 ID：整数原样使用，字符串经 key_id 换算
+function M.preload_ids(type_name)
+    local ids = {}
+    for _, key in ipairs(M.get(type_name).preload or {}) do
+        ids[#ids + 1] = math.type(key) == "integer" and key or M.key_id(key)
+    end
+    return ids
+end
+
 function M.format_agent_service_name(type_name, index)
     return string.format(".entity_agent:%s:%d", type_name, index)
 end

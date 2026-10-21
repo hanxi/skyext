@@ -395,11 +395,11 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ---
 
-## 示例 Role 节点命令
-
-这两条由 `example/nodes/role/watchdog.lua` 注册，属于示例游戏层，不是引擎内置命令。
+## 停服命令
 
 ### shutdown — 停服
+
+由引擎服务 `service/node_shutdown.lua` 注册，每个调用了 `node_shutdown_api.start()` 的节点都有（示例的 `launcher.lua` 已调用）。
 
 ```bash
 curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=shutdown&timeout=60"
@@ -409,7 +409,19 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=sh
 |------|------|------|------|
 | timeout | string | 否 | 等实体卸载的秒数，默认 60 |
 
-立即返回 `shutdown started`，停服在后台进行：关 gate 停止接入 → 卸载全部实体（落库、释放锁、踢下在线玩家）→ 撤销服务发现租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。进度看节点日志。
+立即返回 `shutdown started`，停服在后台进行：`stop_accepting` 钩子（示例 role 节点关 gate）→ 卸载本节点全部实体（落库、释放锁、踢下在线玩家）→ `release` 钩子（snowflake 归还机器号）→ 撤销服务发现租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。重复发送时返回 `already shutting down`。进度看节点日志。
+
+游戏层挂钩子：
+
+```lua
+local node_shutdown_api = require "skyext.node_shutdown_api"
+-- 停服时回调本服务的 CMD.stop_accepting
+node_shutdown_api.add_hook("stop_accepting", "stop_accepting")
+```
+
+## 示例 Role 节点命令
+
+由 `example/nodes/role/watchdog.lua` 注册，属于示例游戏层，不是引擎内置命令。
 
 ### send_mail — 发系统邮件
 

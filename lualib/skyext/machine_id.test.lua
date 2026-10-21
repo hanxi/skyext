@@ -30,6 +30,9 @@ local function harness(node_name)
             info = function(msg, ...)
                 h.logs[#h.logs + 1] = { "info", msg, ... }
             end,
+            warn = function(msg, ...)
+                h.logs[#h.logs + 1] = { "warn", msg, ... }
+            end,
             error = function(msg, ...)
                 h.logs[#h.logs + 1] = { "error", msg, ... }
             end,
@@ -49,6 +52,15 @@ local function harness(node_name)
             end,
             is_valid = function(handle)
                 return handle ~= nil and handle.valid
+            end,
+            unlock = function(key, handle)
+                h.unlocked = key
+                if h.unlock_error then
+                    return false, h.unlock_error
+                end
+                handle.valid = false
+                h.locks[key] = nil
+                return true
             end,
         },
     }
@@ -265,5 +277,41 @@ t.describe("machine_id lease loss", function()
         slot:acquire()
         t.expect(#h.attempts).to.equal(2)
         t.expect(slot:valid()).to.equal(true)
+    end)
+end)
+
+t.describe("machine_id release", function()
+    t.it("gives the slot back so a quick restart gets the same number", function()
+        local h = harness()
+        local slot = h.machine_id.new("snowflake", 1024)
+        slot:acquire()
+        local key = h.attempts[1]
+        t.expect(slot:release()).to.equal(true)
+        t.expect(h.unlocked).to.equal(key)
+        t.expect(slot:valid()).to.equal(false)
+        t.expect(slot.id).to.be_nil()
+    end)
+
+    t.it("never re-acquires after release", function()
+        local h = harness()
+        local slot = h.machine_id.new("snowflake", 1024)
+        slot:acquire()
+        local handle = h.locks[h.attempts[1]]
+        slot:release()
+        -- 释放之后迟到的过期回调不能把号又抢回来
+        handle.expired_cb()
+        h.run_forks()
+        t.expect(#h.attempts).to.equal(1)
+        slot:acquire()
+        t.expect(#h.attempts).to.equal(1)
+    end)
+
+    t.it("reports a failed unlock", function()
+        local h = harness()
+        local slot = h.machine_id.new("snowflake", 1024)
+        slot:acquire()
+        h.unlock_error = "etcd unavailable"
+        t.expect(slot:release()).to.equal(false)
+        t.expect(slot:valid()).to.equal(false)
     end)
 end)

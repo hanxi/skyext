@@ -59,6 +59,33 @@ return {
                 type = "integer",
             },
         },
+        rank = {
+            _version = {
+                type = "integer",
+            },
+            entries = {
+                key = "integer",
+                type = "map",
+                value = "rank_entry",
+            },
+            rank_id = {
+                type = "integer",
+            },
+        },
+        rank_entry = {
+            name = {
+                type = "string",
+            },
+            rid = {
+                type = "integer",
+            },
+            score = {
+                type = "integer",
+            },
+            time = {
+                type = "integer",
+            },
+        },
         resource = {
             res_id = {
                 type = "integer",

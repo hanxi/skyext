@@ -1,0 +1,13 @@
+# 排行榜：每个 game 一份的常驻实体。只保留前 N 名，整份放在一个文档里不会无限增长
+.rank {
+    _version 0 : integer
+    rank_id 1 : integer # types.key_id("rank:" .. game)
+    entries 2 : *rank_entry(rid) # 上榜玩家，按 rid 索引
+}
+
+.rank_entry {
+    rid 0 : integer
+    name 1 : string
+    score 2 : integer
+    time 3 : integer # 取得这个分数的时间，毫秒；同分时先到先得
+}

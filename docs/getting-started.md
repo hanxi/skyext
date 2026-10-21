@@ -115,13 +115,13 @@ local secret = config.get("login_jwt_secret")
 
 GM 口是管理员接口，只认一个 token，分人分权交给对接它的后台去做。示例默认不配（即 GM 接口关闭），配法见 [GM HTTP API](guide/gm_api.md#鉴权)。
 
-**停止 Role 节点要走 GM 命令 `shutdown`**，不要直接 Ctrl+C 或 kill：
+**停止节点要走 GM 命令 `shutdown`**，不要直接 Ctrl+C 或 kill（端口换成对应节点的 `gm_http_port`）：
 
 ```bash
 curl -H "Authorization: Bearer <gm_auth_token>" "http://127.0.0.1:9092/gm/execute?cmd=shutdown&timeout=60"
 ```
 
-它会先停止接受新连接，再把全部实体落库、释放锁、踢下在线玩家，卸干净后进程自己退出；有实体卸不掉时进程保持运行并打 ERROR 日志，排查后可以再发一次。直接杀进程会丢掉上次回存（默认 3 分钟一次）之后的改动，实体锁也要等 30 秒租约过期才能被别的节点接手。Account 节点没有状态，可以直接停。
+它会先停止接受新连接，再把全部实体落库、释放锁、踢下在线玩家，然后归还 snowflake 机器号、撤销服务发现租约，进程自己退出；有实体卸不掉时进程保持运行并打 ERROR 日志，排查后可以再发一次。直接杀进程会丢掉上次回存（默认 3 分钟一次）之后的改动，实体锁和节点注册也要等 30 秒租约过期才会被清掉。没有实体的节点（如 Account）走同一个命令，只是少了卸载那一步。
 
 ## 6. 测试、检查与打包
 

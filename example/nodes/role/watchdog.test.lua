@@ -37,19 +37,7 @@ local function harness()
             if fail then
                 error(fail)
             end
-            if cmd == "shutdown" then
-                return h.remaining or 0
-            end
             return true
-        end,
-        fork = function(f, ...)
-            if h.defer_fork then
-                return
-            end
-            f(...)
-        end,
-        abort = function()
-            h.aborted = true
         end,
         send = function(addr, _, cmd, ...)
             if h.fail_send then
@@ -64,10 +52,9 @@ local function harness()
 
     local modules = {
         skynet = fake_skynet,
-        ["skyext.cluster_discovery"] = {
-            shutdown = function()
-                h.calls[#h.calls + 1] = { addr = ".cluster_discovery", cmd = "shutdown", args = {} }
-                return true
+        ["skyext.node_shutdown_api"] = {
+            add_hook = function(phase, cmd)
+                h.hook = { phase, cmd }
             end,
         },
         ["skyext.gm_api"] = {
@@ -237,47 +224,25 @@ t.describe("watchdog close_client", function()
     end)
 end)
 
-t.describe("watchdog GM shutdown", function()
-    local function commands(h)
-        local list = {}
-        for _, call in ipairs(h.calls) do
-            list[#list + 1] = call.addr .. " " .. call.cmd
-        end
-        return list
-    end
-
-    t.it("stops accepting, unloads every entity, flushes the log and exits", function()
+t.describe("watchdog shutdown hook", function()
+    t.it("registers a stop_accepting hook with the node shutdown service", function()
         local h = harness()
-        t.expect(table.pack(h.GM.shutdown.handler({ timeout = "30" }))).to.equal({ true, "shutdown started", n = 2 })
-        t.expect(commands(h)).to.equal({
-            ":gate close",
-            ":entity_agentmgr shutdown",
-            ".cluster_discovery shutdown",
-            ".logger close",
-        })
-        t.expect(h.calls[2].args[1]).to.equal(30)
-        t.expect(h.aborted).to.equal(true)
+        t.expect(h.hook).to.equal({ "stop_accepting", "stop_accepting" })
     end)
 
-    t.it("keeps the process alive when some entities could not be unloaded", function()
+    t.it("closes the gate listener when the node stops accepting", function()
         local h = harness()
-        h.remaining = 2
-        h.GM.shutdown.handler({})
-        t.expect(h.calls[2].args[1]).to.equal(60)
-        t.expect(h.aborted).to.be_nil()
-        t.expect(logged(h, "node shutdown incomplete, process kept alive")).to.equal(true)
-        -- 排查后可以再来一次
-        h.remaining = 0
-        t.expect(h.GM.shutdown.handler({})).to.equal(true)
-        t.expect(h.aborted).to.equal(true)
+        h.CMD.stop_accepting()
+        t.expect(#h.calls).to.equal(1)
+        t.expect(h.calls[1].addr).to.equal(GATE)
+        t.expect(h.calls[1].cmd).to.equal("close")
     end)
 
-    t.it("rejects a second shutdown while one is running", function()
+    t.it("does not raise when the gate was already closed by an earlier attempt", function()
         local h = harness()
-        h.defer_fork = true
-        t.expect(h.GM.shutdown.handler({})).to.equal(true)
-        t.expect(table.pack(h.GM.shutdown.handler({}))).to.equal({ false, "already shutting down", n = 2 })
-        t.expect(#h.calls).to.equal(0)
+        h.fail_cmd.close = "gate not listening"
+        h.CMD.stop_accepting()
+        t.expect(logged(h, "gate close failed")).to.equal(true)
     end)
 end)
 

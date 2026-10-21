@@ -6,5 +6,6 @@ errcode.TOKEN_ERROR = 102
 errcode.PROTO_CHECKSUM = 103
 errcode.SERVER_NOT_EXIST = 104
 errcode.MAIL_NOT_FOUND = 110
+errcode.RANK_UNAVAILABLE = 120
 
 return errcode

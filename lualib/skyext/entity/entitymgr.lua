@@ -267,7 +267,81 @@ function M:_deliver_pending_msgs(entity)
     return true
 end
 
+-- 实体对象上的方法，handler 和数据模块里用 entity:every(...) 这样调用
+local entity_methods = {}
+local entity_mt = { __index = entity_methods }
+
+-- 重复定时器：每隔 sec 秒在实体的串行队列里执行一次 fn(entity)。
+-- 同名定时器会替换旧的；实体卸载、失租后自动停止；不会延长实体寿命（不重置闲置卸载计时）
+function entity_methods:every(name, sec, fn)
+    self.entity_mgr:_arm_timer(self, name, sec, fn, true)
+end
+
+-- 一次性定时器，语义同 every
+function entity_methods:after(name, sec, fn)
+    self.entity_mgr:_arm_timer(self, name, sec, fn, false)
+end
+
+function entity_methods:cancel_timer(name)
+    self.entity_mgr:_cancel_timer(self, name)
+end
+
+function M:_cancel_timer(entity, name)
+    local slot = entity.timers[name]
+    if not slot then
+        return
+    end
+    entity.timers[name] = nil
+    if slot.obj then
+        slot.obj:cancel()
+    end
+end
+
+function M:_cancel_all_timers(entity)
+    for name in pairs(entity.timers) do
+        self:_cancel_timer(entity, name)
+    end
+end
+
+function M:_arm_timer(entity, name, sec, fn, repeating)
+    assert(type(name) == "string", "entity timer needs a name")
+    assert(type(sec) == "number" and sec > 0, "entity timer interval must be positive")
+    self:_cancel_timer(entity, name)
+    local slot = {}
+    entity.timers[name] = slot
+    local label = string.format("entity_timer:%s:%s:%s", self.type_name, tostring(entity.id), name)
+    local function fire()
+        slot.obj = nil
+        if entity.timers[name] ~= slot then
+            return
+        end
+        -- 走 with_loaded_entity：和请求、消息投递一样串行，并且实体没了或失租就不执行
+        local ok, ran = pcall(self.with_loaded_entity, self, entity.id, function(active)
+            if active == entity then
+                fn(active)
+            end
+        end)
+        if not ok then
+            log.error("entity timer failed", "type", self.type_name, "id", entity.id, "timer", name, "err", ran)
+        end
+        if entity.timers[name] ~= slot then
+            -- 回调里取消或换掉了这个定时器
+            return
+        end
+        if (ok and not ran) or not repeating then
+            entity.timers[name] = nil
+            return
+        end
+        slot.obj = timer.timeout(label, sec, fire)
+    end
+    slot.obj = timer.timeout(label, sec, fire)
+end
+
 function M:_start_unload_timer(entity)
+    if self.type_config.resident then
+        -- 常驻实体（全局单例之类）不因闲置卸载，只在停服、失租时离开内存
+        return
+    end
     local delay = self.type_config.unload_delay or 600
     if entity.unload_timer then
         entity.unload_timer:cancel()
@@ -337,6 +411,7 @@ function M:_kick_client(entity, reason)
 end
 
 function M:_forget_entity(entity)
+    self:_cancel_all_timers(entity)
     self:_cancel_unload_timer(entity)
     self:_cancel_delivery_retry(entity)
     self:_cancel_unload_retry(entity)
@@ -389,6 +464,7 @@ function M:_on_lock_expired(entity_id, handle)
         return
     end
     entity.invalid = true
+    self:_cancel_all_timers(entity)
     self:_cancel_unload_timer(entity)
     self:_cancel_delivery_retry(entity)
     self:_cancel_unload_retry(entity)
@@ -453,13 +529,14 @@ function M:_ensure_loaded(entity_id)
         return false, reason
     end
 
-    entity = {
+    entity = setmetatable({
         type_name = self.type_name,
         id = entity_id,
         data = data,
         entity_mgr = self,
         handle = handle,
-    }
+        timers = {},
+    }, entity_mt)
     self.entities[entity_id] = entity
 
     local initialized, init_err = xpcall(function()
@@ -543,6 +620,40 @@ function M:with_loaded_entity(entity_id, f)
     end)
 end
 
+-- 实体不存在（类型没开 auto_create、库里也没有这份文档）时，发给它的 pending 消息
+-- 永远投不出去，又不会过期（TTL 索引只清已投递的）。整批移进死信队列，
+-- 文档后来补上了还能用 dlq_replay 重放。调用方必须已经持有该实体的 gate
+function M:_dead_letter_missing(entity_id)
+    local rmsg = reliable_msg()
+    local moved = 0
+    while true do
+        local msgs = rmsg.load_pending(self.type_name, entity_id, { max_count = rmsg.DEFAULT_PAGE_SIZE })
+        for _, msg in ipairs(msgs) do
+            local ok, err = rmsg.mark_dead(msg.msg_id, "entity not found")
+            if not ok and err ~= "not_pending" then
+                log.error("dead-letter for missing entity failed", "type", self.type_name, "id", entity_id, "err", err)
+                return moved
+            end
+            moved = moved + 1
+        end
+        if #msgs < rmsg.DEFAULT_PAGE_SIZE then
+            break
+        end
+    end
+    if moved > 0 then
+        log.error(
+            "reliable messages for a missing entity moved to dead letter queue",
+            "type",
+            self.type_name,
+            "id",
+            entity_id,
+            "count",
+            moved
+        )
+    end
+    return moved
+end
+
 -- 投递实体的 pending 可靠消息。返回 true，或 false, reason, owner：
 -- 锁在别的节点手里时 reason 为 "lock held"，owner 是持锁节点，调用方可以把唤醒转给它。
 -- opts.loaded_only 为真时只投给本地已加载的实体，不会为了投递去加载
@@ -564,6 +675,18 @@ function M:deliver_pending(entity_id, opts)
             self:_cancel_delivery_retry(entity)
         end
         return true
+    end
+    if err == "not found" then
+        local ok, dead_err = pcall(self._with_gate, self, entity_id, function()
+            -- 排队期间文档可能已经补上、实体已经加载，这时消息照常投递，不能移走
+            if not self.entities[entity_id] then
+                self:_dead_letter_missing(entity_id)
+            end
+        end)
+        if not ok then
+            log.error("dead-letter for missing entity failed", "type", self.type_name, "id", entity_id, "err", dead_err)
+        end
+        return false, err
     end
     local entity = self.entities[entity_id]
     if entity then
@@ -692,6 +815,7 @@ end
 function M:_unload_entity(entity)
     local entity_id = entity.id
     local tc = self.type_config
+    self:_cancel_all_timers(entity)
     self:_cancel_unload_timer(entity)
     self:_cancel_delivery_retry(entity)
     self:_cancel_unload_retry(entity)

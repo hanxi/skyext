@@ -57,6 +57,7 @@ local function new_harness(opts)
         wakeups = {},
         shutdown_replies = {},
         now = 0,
+        activated = {},
     }
 
     local function record(event, detail)
@@ -71,6 +72,9 @@ local function new_harness(opts)
     local fake_skynet = {
         start = function(f)
             h.boot = f
+        end,
+        register = function(name)
+            h.local_name = name
         end,
         getenv = function(key)
             return (opts.env or { start = "role" })[key]
@@ -91,6 +95,10 @@ local function new_harness(opts)
             record("call", cmd)
             if opts.on_call then
                 opts.on_call(h, addr, cmd, arg)
+            end
+            if cmd == "activate" then
+                h.activated[#h.activated + 1] = arg
+                return table.unpack(h.activate_reply or { true })
             end
             if cmd == "shutdown" then
                 -- 每个 agent 依次报告还剩几个实体卸不掉
@@ -150,6 +158,30 @@ local function new_harness(opts)
         ["skyext.entity.types"] = {
             get = function()
                 return opts.type_config or { agent_count = 2, modules_path = "modules", client_enabled = true }
+            end,
+            preload_ids = function()
+                return opts.preload_ids or {}
+            end,
+            calc_node = function(_, id)
+                return (opts.placement or {})[id] or "node-a"
+            end,
+            calc_agent_index = function()
+                return 1
+            end,
+        },
+        ["skyext.config"] = {
+            get = function(key)
+                assert(key == "cluster_node_name")
+                return "node-a"
+            end,
+        },
+        ["skyext.timer"] = {
+            repeat_delayed = function(name, sec, fn)
+                h.preload_timer = { name = name, sec = sec, fire = fn }
+                function h.preload_timer.cancel()
+                    h.preload_timer.cancelled = true
+                end
+                return h.preload_timer
             end,
         },
         ["skyext.cluster_discovery"] = {
@@ -368,6 +400,11 @@ t.describe("entity_agentmgr 停服", function()
         return h
     end
 
+    t.it("用本地名字登记自己，停服编排靠它找到本节点的实体类型", function()
+        local h = new_harness()
+        t.expect(h.local_name).to.equal(".entity_agentmgr:role")
+    end)
+
     t.it("先从服务发现摘掉自己，再让每个 agent 卸载实体", function()
         local h = started()
         h.shutdown_replies = { 0, 0 }
@@ -389,5 +426,41 @@ t.describe("entity_agentmgr 停服", function()
         local h = started()
         h.shutdown_replies = { 2, "error", 2, "error" }
         t.expect(h.CMD.shutdown(1)).to.equal(3)
+    end)
+end)
+
+t.describe("entity_agentmgr 预加载", function()
+    local function preload_harness()
+        return new_harness({
+            type_config = { agent_count = 1, preload = { "game1", "game2" } },
+            preload_ids = { 11, 12 },
+            placement = { [11] = "node-a", [12] = "node-b" },
+        })
+    end
+
+    t.it("就绪后只加载 HRW 落在本节点的那几个 ID，并定期再对一遍", function()
+        local h = preload_harness()
+        h.CMD.start({})
+        t.expect(h.activated).to.equal({ 11 })
+        t.expect(h.preload_timer.name).to.equal("entity_preload:role")
+        h.preload_timer.fire()
+        t.expect(h.activated).to.equal({ 11, 11 })
+    end)
+
+    t.it("没配 preload 的类型不起定时器", function()
+        local h = new_harness()
+        h.CMD.start({ watchdog = 0x01000005 })
+        t.expect(h.preload_timer).to.be_nil()
+        t.expect(h.activated).to.equal({})
+    end)
+
+    t.it("停服后不再预加载", function()
+        local h = preload_harness()
+        h.CMD.start({})
+        h.shutdown_replies = { 0 }
+        h.CMD.shutdown(1)
+        t.expect(h.preload_timer.cancelled).to.equal(true)
+        h.preload_timer.fire()
+        t.expect(h.activated).to.equal({ 11 })
     end)
 end)

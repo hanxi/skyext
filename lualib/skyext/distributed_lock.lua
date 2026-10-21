@@ -15,6 +15,9 @@ local g_etcd_client
 local g_leaseid
 local g_deadline
 local g_locks = {}
+local g_heartbeat
+-- 停服后置位：不再续租、不再加锁
+local g_closed = false
 
 local function notify_lock_expired(key, handle)
     if handle.expired_cb then
@@ -74,6 +77,9 @@ end
 
 function M.try_lock(key, value, expired_cb)
     assert(type(key) == "string" and key ~= "", "lock key required")
+    if g_closed then
+        return false, "lock service closed"
+    end
     local existing = g_locks[key]
     if existing and M.is_valid(existing) then
         return true, existing
@@ -192,6 +198,34 @@ local function keepalive()
     return lease_valid()
 end
 
+-- 停服：撤销本服务的租约，挂在上面的锁随之全部释放，别的节点马上就能接手。
+-- 这是主动放手，不触发过期回调（回调的语义是失租，machine_id 会据此重新抢号）。
+-- 之后不再续租、不再加锁。返回是否撤销成功；失败时锁留给 etcd 按 TTL 过期
+function M.shutdown()
+    g_closed = true
+    if g_heartbeat then
+        g_heartbeat:cancel()
+        g_heartbeat = nil
+    end
+    for _, handle in pairs(g_locks) do
+        handle.valid = false
+    end
+    g_locks = {}
+    local leaseid = g_leaseid
+    g_leaseid = nil
+    g_deadline = nil
+    if not leaseid then
+        return true
+    end
+    local ret, err = g_etcd_client:revoke(leaseid)
+    if not ret or ret.status ~= 200 then
+        log.error("distributed lock revoke failed", "leaseid", leaseid, "err", err, "ret", ret)
+        return false
+    end
+    log.info("distributed lock lease revoked", "leaseid", leaseid)
+    return true
+end
+
 skynet.init(function()
     g_etcd_client = assert(etcd.new(config.get_table("etcd_config")))
     -- 同步拿到租约再往下走：require 一返回调用方就能加锁。
@@ -199,7 +233,7 @@ skynet.init(function()
     -- 所有 try_lock 都会拿到 etcd lease unavailable，snowflake 抢机器号就栽在这里。
     -- etcd 此刻不可用不挡启动，继续交给心跳重试。
     grant_lease()
-    timer.repeat_delayed("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
+    g_heartbeat = timer.repeat_delayed("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
         if g_leaseid and not keepalive() then
             invalidate_all("keepalive failed or lease expired")
         end

@@ -1,9 +1,9 @@
 return {
     desc = "本次热更新的描述",
-    checksum = "66deb8a2c36bf149be6f5ab110489459",
+    checksum = "33527a9a63579aa17d3bd02afdbbbcb8",
     gitsha_base = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     gitsha_update = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    time = "2026-10-21 10:08:06",
+    time = "2026-10-21 11:22:51",
     -- 路径相对于工程根目录（skynet 的 root），与 hotfix_dir 同一基准；
     -- 引擎文件和游戏文件都写在这一套路径下
     update_files = {

@@ -46,13 +46,16 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 协议与鉴权 | `lualib/skyext/sproto_api.lua`、`example/lualib/jwt.lua` | sproto 编解码、示例 JWT 登录 |
 | HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`service/gm.lua` | HTTP 路由、命令注册/执行、token 鉴权；见 [HTTP 服务端](guide/http_server.md)、[GM HTTP API](guide/gm_api.md) |
 | 指标 | `lualib/skyext/metrics*.lua`、`service/metrics.lua` | counter/gauge/histogram 原语、跨服务合并与 Prometheus 文本导出；见 [指标采集与导出](guide/metrics.md) |
+| 停服 | `service/node_shutdown.lua`、`lualib/skyext/node_shutdown_api.lua` | GM `shutdown` 编排：停止接入 → 卸载实体 → 释放资源 → 撤销服务发现租约 → 退出；游戏层挂钩子 |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
-| 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、粘性转发、实体生命周期、停服卸载、业务模块扩展 |
+| 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、粘性转发、实体生命周期、常驻实体与预加载、实体定时器、停服卸载、业务模块扩展 |
 | 测试 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程 |
+
+**区服**：逻辑节点**不按区服划分**，任何 role 节点都能承载任何区服的角色。`server`（客户端看到的区服）经 `server2game` 映射到 `game`（玩法范围），合服只改映射和角色文档的 `game` 字段，不搬进程；实体 ID 是全局唯一的 snowflake，合服不会撞 ID。玩法范围体现在按 `game` 各起一份的全局实体上，比如示例的排行榜（`rank` 类型的常驻实体，ID 由 `types.key_id("rank:" .. game)` 算出）。需要物理隔离的区服在部署层面单独起一套集群，框架内不支持按区服分节点池。
 
 **扩缩容不踢人**：节点进出后实体的目标节点会变，但已经加载的实体不会被搬走。发给它的请求由新目标节点转给持锁节点执行（粘性路由），实体在旧节点自然卸载后，下一次加载才落到新节点；只有玩家重新登录时才把实体要过来。细节见[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)。
 
-**停服**：示例 role 节点用 GM 命令 `shutdown` 停服：先停止接受新连接，从服务发现摘掉自己，再把全部实体卸载（落库、释放锁、踢下在线玩家），卸干净才退出进程，有实体卸不掉就不退出。**直接杀进程不是停服**：内存里离上次回存（`db_save_interval`，默认 3 分钟）之后的改动会丢，锁也要等租约过期。
+**停服**：任何节点都用 GM 命令 `shutdown` 停服，流程由引擎的 `service/node_shutdown.lua` 编排：先回调游戏层的 `stop_accepting` 钩子停止接入（示例 role 节点在这里关 gate），从服务发现摘掉实体类型，再把全部实体卸载（落库、释放锁、踢下在线玩家）；卸干净后回调 `release` 钩子（snowflake 在这里归还机器号），撤销服务发现租约，最后退出进程。有实体卸不掉就不退出。etcd 里属于本节点的键在退出前都已删除，别的节点不用等租约过期。游戏层用 `skyext.node_shutdown_api.add_hook(phase, cmd)` 挂钩子。**直接杀进程不是停服**：内存里离上次回存（`db_save_interval`，默认 3 分钟）之后的改动会丢，锁也要等租约过期。
 
 **节点崩溃后的接管窗口**：实体锁挂在节点级的 etcd 租约上，TTL 30 秒、每 10 秒续一次。走 `shutdown` 停服时锁是主动释放的，没有空窗；节点**硬崩**（进程被杀、机器掉电、网络分区）时没人能主动释放锁，必须等 etcd 把租约过期掉。这段时间里，落到该实体上的请求会一直失败（`router.call` 返回 `false, reason`，`bind_client` 返回 `LOCK_FAILED`，能查到持锁节点、交接又失败时返回 `IN_OTHER_NODE`）：接管节点向已死的持有者转发或请求交接都会失败，而锁键还在，抢不过来。
 

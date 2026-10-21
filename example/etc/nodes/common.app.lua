@@ -79,6 +79,12 @@ mongo_config = {
             authdb = nil,
         },
         collections = {
+            rank = {
+                indexes = {
+                    -- rank 类型开了 auto_create，首次加载时靠唯一索引防止并发建出两份
+                    { "rank_id", unique = true, background = true },
+                },
+            },
             entity_msg = {
                 indexes = {
                     -- pending 消息按 seq 升序分页读取，seq 必须在索引末尾
@@ -121,6 +127,22 @@ entity_types = {
         nodes = { "rolenode1", "rolenode2" },
         client_enabled = true,
         modules_path = "modules",
+    },
+    -- 排行榜：每个 game 一份的全局单例，做成常驻实体
+    rank = {
+        db_name = "entity",
+        db_coll = "rank",
+        id_field = "rank_id",
+        schema = "rank",
+        agent_count = 1,
+        -- 不因闲置卸载，只在停服、失租时离开内存
+        resident = true,
+        -- 第一次加载时文档还不存在，由实体系统按 ID 建出来
+        auto_create = true,
+        -- 每个节点启动后主动加载 HRW 落在自己身上的那几份；键要和 rank_api.key(game) 一致，
+        -- 覆盖 server2game 里出现的每个 game
+        preload = { "rank:game1", "rank:game2" },
+        nodes = { "rolenode1", "rolenode2" },
     },
 }
 

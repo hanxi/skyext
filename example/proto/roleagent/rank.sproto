@@ -1,0 +1,27 @@
+# 排行榜。每个 game 一份，由 rank 类型的常驻实体维护，排名每隔几秒刷新一次
+.rank_item {
+    rid 0 : integer
+    name 1 : string
+    score 2 : integer
+}
+
+# 提交分数，只记更高的分
+submit 230 {
+    request {
+        score 0 : integer
+    }
+    response {
+        code 0 : integer
+    }
+}
+
+# 查看前若干名
+top 231 {
+    request {
+        count 0 : integer # 默认 10，最多 100
+    }
+    response {
+        code 0 : integer
+        entries 1 : *rank_item
+    }
+}
