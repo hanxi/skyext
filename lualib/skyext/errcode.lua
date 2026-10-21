@@ -1,7 +1,6 @@
 local M = {}
 
 M.OK = 0
-M.NOT_THIS_NODE = 1
 M.IN_OTHER_NODE = 2
 M.LOCK_FAILED = 4
 M.DB_ERROR = 6

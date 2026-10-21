@@ -1,5 +1,3 @@
-local skynet = require "skynet"
-local global = require "global"
 local client = require "client"
 local router = require "skyext.entity.router"
 local errcode = require "errcode"
@@ -30,21 +28,10 @@ local function proto_checksum_enable()
     return g_proto_checksum_enable
 end
 
-function M:report_remote_addr(fd, client_obj)
+-- 网关/代理上报客户端的真实连接地址。直连时 gate 的 open 已带 peer addr，
+-- 这条主要给 goscon 之类代理场景补上真实 IP；当前仅用于登录期的可观测日志。
+function M:report_remote_addr(fd)
     log.info("report_remote_addr", "fd", fd, "remote_addr", self.remote_addr, "local_addr", self.local_addr)
-    if not client_obj then
-        log.error(
-            "report_remote_addr client not found",
-            "fd",
-            fd,
-            "remote_addr",
-            self.remote_addr,
-            "local_addr",
-            self.local_addr
-        )
-        return
-    end
-    client_obj.addr = self.remote_addr
 end
 
 -- 把会话绑到角色实体上。实体加载在哪个节点由实体系统决定，和本 gate 在不在一个节点无关
@@ -64,7 +51,7 @@ local function load_bind_role(fd, rid)
     }
 end
 
-function M:login(fd, client_obj)
+function M:login(fd)
     local data, err, kind = jwt.verify_login(self.token)
     if not data then
         if kind == "config" then
@@ -122,11 +109,6 @@ function M:login(fd, client_obj)
     end
 
     return load_bind_role(fd, rid)
-end
-
-function M:logout(fd, client_obj)
-    log.info("logout", "fd", fd)
-    skynet.send(global.gate_service, "lua", "kick", fd)
 end
 
 return M

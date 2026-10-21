@@ -19,6 +19,3 @@ login 101 {
         rid 1 : integer
     }
 }
-
-# 角色登出
-logout 102 {}
