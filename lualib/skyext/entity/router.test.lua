@@ -59,6 +59,10 @@ local function harness(opts)
         format_agent_service_name = function(type_name, idx)
             return string.format(".entity_agent:%s:%d", type_name, idx)
         end,
+        scoped_id = function(type_name, value)
+            h.scoped = { type_name, value }
+            return 42
+        end,
     }
     local fake_msg = {
         save = function(type_name, entity_id, cmd, args)
@@ -204,5 +208,18 @@ t.describe("entity.router", function()
             t.expect(h.warned).to.exist()
             t.expect(h.warned.msg).to.match("retry on load")
         end)
+    end)
+end)
+
+t.describe("router scoped entities", function()
+    t.it("addresses a scoped entity by its scope value", function()
+        local h = harness()
+        t.expect(h.router.scoped_call("rank", "game1", "top", 10)).to.equal("called")
+        t.expect(h.scoped).to.equal({ "rank", "game1" })
+        t.expect(h.calls[1].tag).to.equal("skynet.call")
+        t.expect(h.calls[1][4]).to.equal(42)
+        h.router.scoped_send("rank", "game2", "submit", 1)
+        t.expect(h.scoped).to.equal({ "rank", "game2" })
+        t.expect(h.calls[2].tag).to.equal("skynet.send")
     end)
 end)

@@ -17,7 +17,6 @@ login 101 {
     response {
         code 0 : integer
         rid 1 : integer
-        rolenode 2 : string # 需要连的游戏节点
     }
 }
 

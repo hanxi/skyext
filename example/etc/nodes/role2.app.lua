@@ -5,7 +5,7 @@ cluster_host = "127.0.0.1"
 gm_http_port = 9093 -- GM HTTP 服务端口
 metrics_http_port = 9193 -- 指标抓取端口
 
-gate_port = "7022"
+gate_port = "7022" -- 客户端连接端口（同进程部署的 gate）
 
 maxclient = 1024
 

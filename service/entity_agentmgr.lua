@@ -60,10 +60,9 @@ local CMD = {}
 local g_modules_path
 local g_modules = {}
 
--- 两段式启动：skynet.start 只做本地准备，agent 必须等 CMD.start 送来
--- 合法的 watchdog 之后才创建，全部创建并注册完成后才算 ready。
+-- 两段式启动：skynet.start 只做本地准备，CMD.start 才创建 agent，
+-- 全部创建并注册完成后才算 ready、才向集群发布自己。
 local g_agents = {}
-local g_watchdog
 local g_ready = false
 local g_starting = false
 local g_start_error
@@ -83,23 +82,7 @@ local function wait_starting()
     skynet.wait(co)
 end
 
--- client_enabled 的类型必须拿到 watchdog 地址，否则 bind_client 无法把 fd 转发回去
-local function check_watchdog(watchdog)
-    if watchdog == nil then
-        assert(
-            not type_config.client_enabled,
-            string.format("entity_agentmgr(%s) start requires conf.watchdog", type_name)
-        )
-        return nil
-    end
-    assert(
-        math.type(watchdog) == "integer" and watchdog ~= 0,
-        string.format("entity_agentmgr(%s) invalid conf.watchdog: %s", type_name, tostring(watchdog))
-    )
-    return watchdog
-end
-
-local function create_agents(agent_count, watchdog)
+local function create_agents(agent_count)
     local agents = {}
     local ok, err = xpcall(function()
         for i = 1, agent_count do
@@ -109,7 +92,6 @@ local function create_agents(agent_count, watchdog)
             skynet.call(agent, "lua", "start", {
                 modules = g_modules,
                 modules_path = g_modules_path or "",
-                watchdog = watchdog,
             })
             log.info("entity_agent started", "type", type_name, "index", i, "addr", agent)
         end
@@ -121,8 +103,8 @@ local function create_agents(agent_count, watchdog)
     return agents
 end
 
--- 预加载：配置了 preload 的类型（全局单例这类常驻实体），由 HRW 指向本节点的那几个 ID
--- 在这里主动加载。启动后跑一次，之后定期再对一遍：持有它的节点停服或崩溃后，
+-- 预加载：配置了 scope 或 preload 的类型（全局单例这类常驻实体），由 HRW 指向本节点的那几个 ID
+-- 在这里主动加载。scope 类型的 ID 跟着区服目录走，开服后新 game 的那一份在下一轮出现。启动后跑一次，之后定期再对一遍：持有它的节点停服或崩溃后，
 -- 新的目标节点要能把它接过来。锁还在别人手里时加载失败是正常的（粘性），下一轮再看
 local PRELOAD_INTERVAL = 3
 local g_preload_timer
@@ -147,7 +129,7 @@ local function reconcile_preload()
 end
 
 local function start_preload()
-    if not type_config.preload or #type_config.preload == 0 then
+    if not type_config.scope and (not type_config.preload or #type_config.preload == 0) then
         return
     end
     skynet.fork(reconcile_preload)
@@ -155,10 +137,7 @@ local function start_preload()
 end
 
 -- 启动全部 entity_agent；返回成功即表示本节点该类型已就绪，可以对外放行
-function CMD.start(conf)
-    conf = conf or {}
-    local watchdog = check_watchdog(conf.watchdog)
-
+function CMD.start()
     if g_start_error then
         error(g_start_error, 0)
     end
@@ -172,21 +151,12 @@ function CMD.start(conf)
     end
 
     if g_ready then
-        assert(
-            g_watchdog == watchdog,
-            string.format(
-                "entity_agentmgr(%s) already started with watchdog %s, got %s",
-                type_name,
-                tostring(g_watchdog),
-                tostring(watchdog)
-            )
-        )
         return true
     end
 
     g_starting = true
 
-    local agents, err, partial = create_agents(type_config.agent_count or 1, watchdog)
+    local agents, err, partial = create_agents(type_config.agent_count or 1)
     if not agents then
         g_agents = partial or {}
         g_starting = false
@@ -197,7 +167,6 @@ function CMD.start(conf)
     end
 
     g_agents = agents
-    g_watchdog = watchdog
     -- 死信队列的运维入口按节点单例，多个实体类型共用一个；起不来不该挡住实体服务
     local dlq_ok, dlq_err = pcall(skynet.uniqueservice, "entity_dlq")
     if not dlq_ok then
@@ -210,7 +179,7 @@ function CMD.start(conf)
     wakeup_waiters()
     start_preload()
 
-    log.info("entity_agentmgr ready", "type", type_name, "agent_count", #agents, "watchdog", watchdog)
+    log.info("entity_agentmgr ready", "type", type_name, "agent_count", #agents)
     return true
 end
 

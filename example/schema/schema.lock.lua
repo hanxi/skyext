@@ -5,7 +5,11 @@
 -- 所以这些名字不能再用，否则旧值会被当成新值读出来。
 return {
     retired = {
-        fields = {},
+        fields = {
+            role = {
+                game = "string",
+            },
+        },
         types = {},
     },
     types = {
@@ -103,9 +107,6 @@ return {
             },
             create_time = {
                 type = "integer",
-            },
-            game = {
-                type = "string",
             },
             last_login_time = {
                 type = "integer",

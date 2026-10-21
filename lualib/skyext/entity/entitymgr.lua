@@ -386,14 +386,13 @@ end
 
 -- 实体不再能服务请求时断开客户端，避免客户端继续向半卸载/失效的实体发请求
 function M:_kick_client(entity, reason)
-    local fd = entity.fd
-    if not fd then
+    local current = entity.session
+    if not current then
         return
     end
-    entity.fd = nil
     skynet.fork(function()
-        local client_ext = require "skyext.entity.client_ext"
-        local ok, err = pcall(client_ext.unbind_kick, fd, entity)
+        local session = require "skyext.entity.session"
+        local ok, err = pcall(session.unbind_kick, current.key, entity)
         if not ok then
             log.error(
                 "failed to disconnect entity",
@@ -928,7 +927,7 @@ function M:touch(entity_id)
         and not entity.invalid
         and not entity.unloading
         and distributed_lock.is_valid(entity.handle)
-        and not entity.fd
+        and not entity.session
     then
         self:_start_unload_timer(entity)
     end

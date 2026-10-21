@@ -1,4 +1,8 @@
 -- 服务搜索路径（节点 → 游戏服务 → 引擎服务 → skynet 服务）
+-- 注意：nodes/?/main.lua 是通配模式，会把「服务名 == 节点目录名」的任意服务解析到节点主程序。
+-- bootstrap 靠它加载本节点 main（? = start）。因此节点目录名绝不能与引擎/skynet 服务同名，
+-- 否则会劫持框架服务（典型：clusterd 监听时 newservice("gate") 会误起网关节点 main）。
+-- 独立网关节点因此叫 gateway 而非 gate。新增节点前请核对 service/、skynet/service/ 下无同名服务。
 luaservice = game_root .. "nodes/" .. start .. "/?.lua;"
 luaservice = luaservice .. game_root .. "nodes/?/main.lua;"
 luaservice = luaservice .. game_root .. "nodes/" .. start .. "/?/main.lua;"

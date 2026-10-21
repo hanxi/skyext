@@ -50,14 +50,25 @@ end
 
 function CMD.start(conf)
     -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
-    -- 所以 account_host 和 gate_nodes 都要在这里取
+    -- 所以 account_host 和 gate_addrs 都要在这里取
     local account_host = config.get("account_host")
-    local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
+    local gate_addrs = assert(config.get_table("gate_addrs"), "gate_addrs is not configured")
     local account = "robot" .. conf.id
     local token = fetch_token(account_host, account)
     if not token then
         return
     end
+
+    -- 服务器列表不需要登录；没有角色时在推荐服建角
+    local server = "s1"
+    local list_status, list = httpc.get(account_host, "/servers")
+    local servers = list_status == 200 and cjson.decode(list)
+    for _, entry in ipairs(servers and servers.servers or {}) do
+        if entry.recommended then
+            server = entry.server
+        end
+    end
+    log.info("server list", "servers", servers and servers.servers, "pick", server)
 
     local status, body = httpc.get(account_host, "/roles?token=" .. token)
     if status ~= 200 then
@@ -74,7 +85,7 @@ function CMD.start(conf)
     if #roles == 0 then
         local req = {
             token = token,
-            server = "s1",
+            server = server,
             name = account,
         }
         local status, res = httpc.post_json(account_host, "/create_role", req)
@@ -95,9 +106,9 @@ function CMD.start(conf)
     end
 
     local role = roles[1]
-    local rolenode = role.rolenode
-    local gate_ip = gate_nodes[rolenode].ip
-    local gate_port = gate_nodes[rolenode].port
+    -- 机器人轮流连不同的 gate；gate 不必和角色实体在同一个节点
+    local gate = gate_addrs[conf.gate or (conf.id % #gate_addrs + 1)]
+    local gate_ip, gate_port = gate.ip, gate.port
     local fd, err = socket.open(gate_ip, gate_port)
     if not fd then
         log.error("failed to connect to gate", "err", err)
@@ -109,7 +120,8 @@ function CMD.start(conf)
     local param = {
         token = token,
         rid = role.rid,
-        server = "s1",
+        -- 登录时报的是角色的出生服
+        server = role.server,
         proto_checksum = sproto_api.get_sproto_info().checksum,
     }
     local ret = call("login.login", param)

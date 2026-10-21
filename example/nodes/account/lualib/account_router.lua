@@ -6,18 +6,11 @@ local user_db_api = require "user_db_api"
 local id_generator = require "skyext.id_generator"
 local errcode = require "errcode"
 local time = require "skyext.time"
-local rolenode_api = require "rolenode_api"
+local role_name_api = require "role_name_api"
+local realm = require "skyext.realm"
 
 -- 配置是在 skyext 的 skynet.init 回调里注入的，本文件可能被服务 chunk 在加载期 require 到，
 -- 顶层读取只会拿到 nil 并永久缓存，因此统一改成惰性读取
-local g_server2game
-local function server2game()
-    if not g_server2game then
-        g_server2game = assert(config.get_table("server2game"), "server2game is not configured")
-    end
-    return g_server2game
-end
-
 local g_max_role_count
 local function max_role_count()
     if not g_max_role_count then
@@ -76,6 +69,31 @@ M.POST["/dev_login"] = function(req, res)
     return res.write_json({ code = errcode.OK, token = token })
 end
 
+-- 服务器列表，来自区服目录。不需要登录；不暴露 game / zone，那是服务端的事。
+-- 最新开放的服标为推荐
+M.GET["/servers"] = function(_, res)
+    local servers = {}
+    local recommended
+    for _, server in ipairs(realm.servers()) do
+        local info = realm.server(server)
+        local entry = {
+            server = server,
+            name = info.name,
+            tag = realm.tag_of(server),
+            status = info.status,
+            open_time = info.open_time,
+        }
+        servers[#servers + 1] = entry
+        if info.status == "open" and (not recommended or (info.open_time or 0) > (recommended.open_time or 0)) then
+            recommended = entry
+        end
+    end
+    if recommended then
+        recommended.recommended = true
+    end
+    return res.write_json({ code = errcode.OK, servers = servers })
+end
+
 local function get_roles(account, query)
     return role_db_api.get_roles(account, query, { _id = false, rid = 1, server = 1, name = 1 })
 end
@@ -92,7 +110,7 @@ M.GET["/roles"] = function(req, res)
     local server = q.server
     if server and server ~= "" then
         -- 检查服务器是否存在
-        if not server2game()[server] then
+        if not realm.server(server) then
             return res.write_json({
                 code = errcode.SERVER_NOT_EXIST,
             })
@@ -101,11 +119,6 @@ M.GET["/roles"] = function(req, res)
     end
     local roles = get_roles(account, query)
     log.debug("get_roles", "account", account, "roles", roles)
-    for _, role in pairs(roles) do
-        local rolenode = rolenode_api.calc_rolenode(role.rid)
-        role.rolenode = rolenode
-    end
-
     return res.write_json({
         code = errcode.OK,
         roles = roles,
@@ -131,8 +144,9 @@ M.POST["/create_role"] = function(req, res)
     end
 
     local server = b.server
-    local game = server2game()[server]
-    if not game then
+    local info = type(server) == "string" and realm.server(server)
+    -- 只能在开放的服建角；角色只记出生服，所属 game 以后用区服目录现查
+    if not info or info.status ~= "open" then
         return res.write_json({
             code = errcode.SERVER_NOT_EXIST,
         })
@@ -157,19 +171,24 @@ M.POST["/create_role"] = function(req, res)
         })
     end
 
-    -- TODO: 同名检测(全服同名还是单服同名?)
+    local rid = id_generator.newid() -- 分配唯一id
+    -- 名字在出生服内唯一，先占名字再建角
+    local reserved, reason = role_name_api.reserve(server, name, rid)
+    if not reserved then
+        return res.write_json({
+            code = reason == "taken" and errcode.NAME_TAKEN or errcode.DB_ERROR,
+        })
+    end
 
-    -- 创建新的角色
     local data = {
         server = server,
-        game = game,
         name = name,
         create_time = time.now_ms(),
     }
-    local rid = id_generator.newid() -- 分配唯一id
     local ret = role_db_api.create(rid, account, data)
     if not ret then
         log.error("create_role role_db_api.create failed", "account", account, "name", name)
+        role_name_api.release(server, name)
         return res.write_json({
             code = errcode.DB_ERROR,
         })
@@ -185,8 +204,6 @@ M.POST["/create_role"] = function(req, res)
         })
     end
     local role = roles[1]
-    local rolenode = rolenode_api.calc_rolenode(rid)
-    role.rolenode = rolenode
 
     return res.write_json({
         code = errcode.OK,

@@ -197,14 +197,21 @@ local function harness(opts)
         return true
     end
 
-    local fake_client = {}
-    function fake_client.unbind_kick(fd, expected_entity)
-        record("kick:" .. tostring(fd))
-        h.kicked[#h.kicked + 1] = fd
+    local fake_session = {}
+    function fake_session.unbind_kick(key, expected_entity)
+        -- 对齐真实 session.unbind_kick 的幂等：会话已解绑（entity.session 被清掉）后不再踢。
+        -- 停服/丢租约路径可能对同一实体调两次 _kick_client，第二次必须空手而归。
+        if not expected_entity or not expected_entity.session or expected_entity.session.key ~= key then
+            return false
+        end
+        record("kick:" .. tostring(key))
+        h.kicked[#h.kicked + 1] = key
         h.kicked_entity = expected_entity
+        expected_entity.session = nil
         if h.kick_error then
             error(h.kick_error)
         end
+        return true
     end
 
     local fake_timer = {}
@@ -238,7 +245,7 @@ local function harness(opts)
             end,
         },
         ["skyext.entity.reliable_msg"] = fake_msg,
-        ["skyext.entity.client_ext"] = fake_client,
+        ["skyext.entity.session"] = fake_session,
     }
     local env = setmetatable({
         require = function(name)
@@ -586,16 +593,16 @@ t.describe("entitymgr lease and delivery", function()
 end)
 
 t.describe("entitymgr unload failure recovery", function()
-    t.it("disconnects a bound client when an entity is successfully unloaded", function()
+    t.it("disconnects a bound session when an entity is successfully unloaded", function()
         local h = harness({ no_modules = true })
         local _, entity = h.mgr:ensure_loaded(7)
-        entity.fd = 42
+        entity.session = { key = "node-a/42", gate_node = "node-a", fd = 42 }
 
         t.expect(h.mgr:unload(7)).to.equal(true)
-        t.expect(entity.fd).to.be_nil()
         t.expect(h.mgr.entities[7]).to.be_nil()
         h:run_jobs()
-        t.expect(h.kicked).to.equal({ 42 })
+        t.expect(entity.session).to.be_nil()
+        t.expect(h.kicked).to.equal({ "node-a/42" })
         t.expect(h.kicked_entity).to.equal(entity)
         t.expect(index_of(h.events, "persist")).to.be_lt(index_of(h.events, "unlock"))
     end)
@@ -629,16 +636,16 @@ t.describe("entitymgr unload failure recovery", function()
         t.expect(h.mgr:ensure_loaded(7)).to.equal(true)
     end)
 
-    t.it("disconnects a bound client and still retries when the unload write fails", function()
+    t.it("disconnects a bound session and still retries when the unload write fails", function()
         local h = harness({ no_modules = true })
         local _, entity = h.mgr:ensure_loaded(7)
-        entity.fd = 42
+        entity.session = { key = "node-a/42", gate_node = "node-a", fd = 42 }
         h.unload_ok = false
 
         t.expect(h.mgr:unload(7)).to.equal(false)
-        t.expect(entity.fd).to.be_nil()
         h:run_jobs()
-        t.expect(h.kicked).to.equal({ 42 })
+        t.expect(entity.session).to.be_nil()
+        t.expect(h.kicked).to.equal({ "node-a/42" })
         t.expect(index_of(h.events, "unlock")).to.be_nil()
         t.expect(h.mgr:get(7)).to.be_nil()
 
@@ -656,13 +663,13 @@ t.describe("entitymgr unload failure recovery", function()
     t.it("keeps the handle and releases the lock on retry when unlock is not confirmed", function()
         local h = harness({ no_modules = true })
         local _, entity = h.mgr:ensure_loaded(7)
-        entity.fd = 42
+        entity.session = { key = "node-a/42", gate_node = "node-a", fd = 42 }
         h.unlock_fail = "retryable"
 
         t.expect(h.mgr:unload(7)).to.equal(false)
-        t.expect(entity.fd).to.be_nil()
         h:run_jobs()
-        t.expect(h.kicked).to.equal({ 42 })
+        t.expect(entity.session).to.be_nil()
+        t.expect(h.kicked).to.equal({ "node-a/42" })
         t.expect(h.kicked_entity).to.equal(entity)
         t.expect(h.mgr.entities[7]).to.equal(entity)
         t.expect(entity.handle.valid).to.equal(true)
@@ -682,7 +689,7 @@ t.describe("entitymgr unload failure recovery", function()
     t.it("drops a persisted entity when the lease dies while releasing the lock", function()
         local h = harness({ no_modules = true })
         local _, entity = h.mgr:ensure_loaded(7)
-        entity.fd = 42
+        entity.session = { key = "node-a/42", gate_node = "node-a", fd = 42 }
         h.unlock_fail = "lease_lost"
 
         t.expect(h.mgr:unload(7)).to.equal(false)
@@ -690,7 +697,7 @@ t.describe("entitymgr unload failure recovery", function()
         t.expect(h.mgr.entities[7]).to.equal(entity)
         h:run_jobs()
         t.expect(h.mgr.entities[7]).to.be_nil()
-        t.expect(h.kicked).to.equal({ 42 })
+        t.expect(h.kicked).to.equal({ "node-a/42" })
         t.expect(count_of(h.events, "persist")).to.equal(1)
         t.expect(count_of(h.events, "unlock")).to.equal(1)
         -- 缓存已经随落库清掉，重试路径不能再依赖 discard_clean

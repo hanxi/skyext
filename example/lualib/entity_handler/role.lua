@@ -5,16 +5,16 @@ local M = {}
 M.handlers = {}
 
 function M.handlers.get_online_info(entity)
-    if not entity.fd then
+    if not entity.session then
         return nil
     end
     return { rid = entity.id, name = entity.data.name }
 end
 
 function M.handlers.kick(entity)
-    if entity.fd then
-        local client_ext = require "skyext.entity.client_ext"
-        client_ext.unbind_kick(entity.fd, entity)
+    if entity.session then
+        local session = require "skyext.entity.session"
+        session.unbind_kick(entity.session.key, entity)
     end
     return true
 end
@@ -36,9 +36,9 @@ function M.on_unload(entity)
     log.info("role entity unloading", "rid", entity.id)
 end
 
--- entity.fd 由 client_ext 维护，这里只放业务上的上下线逻辑
-function M.on_bind_client(entity, fd)
-    log.info("role client bound", "rid", entity.id, "fd", fd)
+-- entity.session 由 skyext.entity.session 维护，这里只放业务上的上下线逻辑
+function M.on_bind_client(entity, session_key)
+    log.info("role client bound", "rid", entity.id, "session", session_key)
 end
 
 function M.on_unbind_client(entity)

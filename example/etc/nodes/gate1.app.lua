@@ -1,0 +1,26 @@
+cluster_node_name = "gate1"
+cluster_listen_port = "7051"
+cluster_host = "127.0.0.1"
+
+gm_http_port = 9094 -- GM HTTP 服务端口
+metrics_http_port = 9194 -- 指标抓取端口
+
+gate_port = "7052" -- 客户端连接端口
+
+maxclient = 1024
+
+login_timeout_sec = 60 -- 登录连接验证超时，单位秒
+
+log_config = {
+    {
+        name = "file",
+        filename = "logs/gate1.log",
+        split = "size", -- size/line/day/hour
+        maxsize = "100M", -- 每个文件最大尺寸 size split 有效
+    },
+    {
+        name = "console",
+    },
+}
+
+include "common.app.lua"

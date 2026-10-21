@@ -1,5 +1,5 @@
--- 排行榜：每个 game 一份的常驻实体（entity_types.rank.resident = true），
--- 节点启动时按 preload 主动加载，持有它的节点停服或崩溃后由新的目标节点接管。
+-- 排行榜：每个 game 一份的作用域实体（entity_types.rank.scope = "game"，常驻），
+-- 按区服目录自动预加载，开服后新 game 的那一份自动出现；持有它的节点停服或崩溃后由新的目标节点接管。
 local orm = require "orm"
 local time = require "skyext.time"
 

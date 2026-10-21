@@ -12,9 +12,14 @@ local ROLE_TYPE = {
 
 -- 每个用例加载一份全新的 types 模块：entity_types 缓存在模块局部变量里，
 -- 复用同一个实例会让上一个用例的配置串到下一个用例。
-local function harness(entity_types)
+local function harness(entity_types, realm_values)
     local h = { cfg = { entity_types = entity_types }, reads = 0 }
     local imports = {
+        ["skyext.realm"] = {
+            scope_values = function(scope)
+                return (realm_values or {})[scope] or {}
+            end,
+        },
         ["skyext.config"] = {
             get_table = function(key)
                 h.reads = h.reads + 1
@@ -158,5 +163,27 @@ t.describe("entity types", function()
         t.expect(h.mod.preload_ids("rank")).to.equal({ 42, h.mod.key_id("game1") })
         local none = harness({ role = ROLE_TYPE })
         t.expect(none.mod.preload_ids("role")).to.equal({})
+    end)
+
+    t.it("scoped_id is stable per type and scope value", function()
+        local h = harness({ rank = { scope = "game" }, guild = { scope = "game" }, role = ROLE_TYPE })
+        local id = h.mod.scoped_id("rank", "game1")
+        t.expect(id).to.equal(h.mod.key_id("rank:game:game1"))
+        t.expect(h.mod.scoped_id("rank", "game2") ~= id).to.equal(true)
+        -- 不同类型同一个 game 也是不同的实体
+        t.expect(h.mod.scoped_id("guild", "game1") ~= id).to.equal(true)
+        t.expect(function()
+            h.mod.scoped_id("role", "game1")
+        end).to
+            .throw("has no scope")
+    end)
+
+    t.it("preloads one entity per value of the scope, following the realm directory", function()
+        local h = harness({ rank = { scope = "game", preload = { 7 } } }, { game = { "game1", "game2" } })
+        t.expect(h.mod.preload_ids("rank")).to.equal({
+            h.mod.scoped_id("rank", "game1"),
+            h.mod.scoped_id("rank", "game2"),
+            7,
+        })
     end)
 end)

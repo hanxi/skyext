@@ -49,6 +49,12 @@ mongo_config = {
                     { "account", unique = true, background = true },
                 },
             },
+            -- 角色名在出生服内唯一：合服、跨服都不会撞名，跨服场景显示成 [S3]张三
+            role_name = {
+                indexes = {
+                    { "server", "name", unique = true, background = true },
+                },
+            },
         },
     },
     role = {
@@ -139,9 +145,9 @@ entity_types = {
         resident = true,
         -- 第一次加载时文档还不存在，由实体系统按 ID 建出来
         auto_create = true,
-        -- 每个节点启动后主动加载 HRW 落在自己身上的那几份；键要和 rank_api.key(game) 一致，
-        -- 覆盖 server2game 里出现的每个 game
-        preload = { "rank:game1", "rank:game2" },
+        -- 每个 game 一份：按区服目录里的 game 自动预加载，开服后新 game 的排行榜自动出现。
+        -- 用 router.scoped_call("rank", game, ...) 访问
+        scope = "game",
         nodes = { "rolenode1", "rolenode2" },
     },
 }
@@ -188,11 +194,22 @@ login_jwt_audience = "skyext-game"
 login_jwt_ttl = 300 -- 登录 token 有效期秒数，拿到就用，不需要长
 login_jwt_leeway = 30 -- 允许的节点间时钟差秒数，给大了等于延长 token 寿命
 
--- 客户端看到到服务器与游戏服的映射
-server2game = {
-    ["s1"] = "game1",
-    ["s2"] = "game2",
-    ["s3"] = "game2", -- game3 合并到 game2 之后
+-- 区服目录的种子。区服目录（server -> game -> zone）存在 etcd 里，由 GM 命令 realm_open /
+-- realm_set_zone 维护，开服、调战区都不用改配置、不用重启。只有目录完全为空时（本地开发、
+-- 新环境首次启动）才会把这里的内容写进去，之后改这份配置不再生效。
+realm_seed = {
+    zones = {
+        zone1 = {},
+    },
+    games = {
+        game1 = { zone = "zone1" },
+        game2 = { zone = "zone1" },
+    },
+    servers = {
+        s1 = { game = "game1", name = "一区", tag = "S1" },
+        s2 = { game = "game2", name = "二区", tag = "S2" },
+        s3 = { game = "game2", name = "三区", tag = "S3" }, -- 三区合入 game2：两个区的玩家在一起玩
+    },
 }
 
 -- HTTP 服务端资源上限（节点级默认值，单个 http_server 实例可在 start 的 conf 里覆盖）。

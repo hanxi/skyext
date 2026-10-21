@@ -1,26 +1,19 @@
 local skynet = require "skynet"
 local global = require "global"
 local client = require "client"
-local entity_types = require "skyext.entity.types"
+local router = require "skyext.entity.router"
 local errcode = require "errcode"
 local config = require "skyext.config"
 local log = require "skyext.log"
 local jwt = require "jwt"
 local sproto_api = require "skyext.sproto_api"
 local role_db_api = require "role_db_api"
+local realm = require "skyext.realm"
 
 local M = {}
 
 -- 配置是在 skyext 的 skynet.init 回调里注入的，本文件被服务 chunk 在加载期 require 到，
 -- 顶层读取只会拿到 nil 并把它永久缓存下来，因此统一改成惰性读取
-local g_server2game
-local function server2game()
-    if not g_server2game then
-        g_server2game = assert(config.get_table("server2game"), "server2game is not configured")
-    end
-    return g_server2game
-end
-
 local g_self_node
 local function self_node()
     if not g_self_node then
@@ -54,24 +47,15 @@ function M:report_remote_addr(fd, client_obj)
     client_obj.addr = self.remote_addr
 end
 
+-- 把会话绑到角色实体上。实体加载在哪个节点由实体系统决定，和本 gate 在不在一个节点无关
 local function load_bind_role(fd, rid)
-    local target_node = entity_types.calc_node("role", rid)
-    if target_node ~= self_node() then
-        return {
-            code = errcode.NOT_THIS_NODE,
-            rolenode = target_node,
-        }
-    end
-
-    local agent_index = entity_types.calc_agent_index("role", rid)
-    local agent_name = entity_types.format_agent_service_name("role", agent_index)
-
-    local code = skynet.call(agent_name, "lua", "bind_client", rid, fd)
+    local code = router.bind_session("role", rid, self_node(), fd)
     if code ~= errcode.OK then
-        log.warn("bind_client failed", "rid", rid, "fd", fd, "code", code)
+        log.warn("bind_session failed", "rid", rid, "fd", fd, "code", code)
         return { code = code }
     end
 
+    -- 会话已经交给实体，之后的包 gate 直接转过去，登录服务不再管它
     client.unbind(fd)
     log.info("load_bind_role success", "rid", rid, "fd", fd)
     return {
@@ -124,7 +108,7 @@ function M:login(fd, client_obj)
     end
 
     local server = self.server
-    if not server2game()[server] then
+    if not realm.server(server) then
         return {
             code = errcode.SERVER_NOT_EXIST,
         }
@@ -142,7 +126,7 @@ end
 
 function M:logout(fd, client_obj)
     log.info("logout", "fd", fd)
-    skynet.call(global.watchdog_service, "lua", "close_client", fd)
+    skynet.send(global.gate_service, "lua", "kick", fd)
 end
 
 return M

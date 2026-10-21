@@ -1,6 +1,6 @@
 -- entity_agentmgr 的两段式启动测试。
 -- 该服务依赖 mongo/etcd，无法直接拉起真实实例，这里用沙箱加载服务源码并注入桩模块，
--- 用来确定性地验证「先拿到 watchdog 再创建 agent / 全部就绪后才发布」的时序约定。
+-- 用来确定性地验证「CMD.start 才创建 agent / 全部就绪后才发布」的时序约定。
 local lfs = require "lfs"
 local t = require "skytest"
 local fs = require "skyext.util.fs"
@@ -226,16 +226,14 @@ t.describe("entity_agentmgr 两段式启动", function()
         t.expect(h.CMD.is_ready()).to.equal(false)
     end)
 
-    t.it("agent 在 CMD.start 收到合法 watchdog 之后才创建", function()
+    t.it("CMD.start 创建全部 agent 并把模块清单与路径交给它们", function()
         local h = new_harness()
-        local watchdog = 0x01000005
 
-        t.expect(h.CMD.start({ watchdog = watchdog })).to.equal(true)
+        t.expect(h.CMD.start()).to.equal(true)
 
         t.expect(#h.agents).to.equal(2)
         t.expect(#h.agent_starts).to.equal(2)
         for _, item in ipairs(h.agent_starts) do
-            t.expect(item.conf.watchdog).to.equal(watchdog)
             t.expect(item.conf.modules_path).to.equal("modules")
             -- 带上磁盘上有哪些文件，agent 才能对「文件在却 require 不到」直接报错
             t.expect(item.conf.modules).to.equal({
@@ -248,7 +246,7 @@ t.describe("entity_agentmgr 两段式启动", function()
 
     t.it("全部 agent 启动并注册之后才 ready 并发布到集群", function()
         local h = new_harness()
-        h.CMD.start({ watchdog = 0x01000005 })
+        h.CMD.start()
 
         t.expect(h.events).to.equal({
             "newservice:entity_agent",
@@ -265,48 +263,10 @@ t.describe("entity_agentmgr 两段式启动", function()
     -- 死信队列只是运维入口，起不来不该让整个实体类型对外不可用
     t.it("entity_dlq 启动失败不影响 ready 与集群发布", function()
         local h = new_harness({ uniqueservice_error = "no such service" })
-        h.CMD.start({ watchdog = 0x01000005 })
+        h.CMD.start()
 
         t.expect(h.CMD.is_ready()).to.equal(true)
         t.expect(#h.registered).to.equal(1)
-    end)
-
-    t.it("缺少 watchdog 时拒绝启动且不留下半启动状态", function()
-        local h = new_harness()
-
-        t.expect(function()
-            h.CMD.start({})
-        end).to
-            .throw("requires conf.watchdog")
-
-        t.expect(#h.agents).to.equal(0)
-        t.expect(h.CMD.is_ready()).to.equal(false)
-
-        -- 校验失败不应污染状态，补上 watchdog 后仍可正常启动
-        t.expect(h.CMD.start({ watchdog = 0x01000005 })).to.equal(true)
-        t.expect(h.CMD.is_ready()).to.equal(true)
-    end)
-
-    t.it("非法 watchdog 地址被拒绝", function()
-        local h = new_harness()
-        t.expect(function()
-            h.CMD.start({ watchdog = 0 })
-        end).to
-            .throw("invalid conf.watchdog")
-        t.expect(function()
-            h.CMD.start({ watchdog = ".watchdog" })
-        end).to
-            .throw("invalid conf.watchdog")
-        t.expect(#h.agents).to.equal(0)
-    end)
-
-    t.it("非 client_enabled 的类型允许没有 watchdog", function()
-        local h = new_harness({
-            type_config = { agent_count = 1, modules_path = "modules" },
-        })
-        t.expect(h.CMD.start({})).to.equal(true)
-        t.expect(#h.agents).to.equal(1)
-        t.expect(h.agent_starts[1].conf.watchdog).to.be_nil()
     end)
 
     t.it("agent 启动失败时错误向上传播且不进入 ready", function()
@@ -319,7 +279,7 @@ t.describe("entity_agentmgr 两段式启动", function()
         })
 
         t.expect(function()
-            h.CMD.start({ watchdog = 0x01000005 })
+            h.CMD.start()
         end).to
             .throw("agent boot failed")
 
@@ -329,23 +289,18 @@ t.describe("entity_agentmgr 两段式启动", function()
 
         -- 失败状态是粘性的：再次 start 仍然报同样的错，不会半启动
         t.expect(function()
-            h.CMD.start({ watchdog = 0x01000005 })
+            h.CMD.start()
         end).to
             .throw("agent boot failed")
         t.expect(#h.agents).to.equal(2)
     end)
 
-    t.it("重复 start 是安全的", function()
+    t.it("重复 start 是安全的：已就绪时直接返回，不再创建 agent", function()
         local h = new_harness()
-        h.CMD.start({ watchdog = 0x01000005 })
-        t.expect(h.CMD.start({ watchdog = 0x01000005 })).to.equal(true)
+        h.CMD.start()
+        t.expect(h.CMD.start()).to.equal(true)
         t.expect(#h.agents).to.equal(2)
         t.expect(#h.registered).to.equal(1)
-
-        t.expect(function()
-            h.CMD.start({ watchdog = 0x01000006 })
-        end).to
-            .throw("already started with watchdog")
     end)
 
     t.it("并发 start 等待首次启动完成而不是重复创建 agent", function()
@@ -357,10 +312,9 @@ t.describe("entity_agentmgr 两段式启动", function()
                 end
             end,
         })
-        local conf = { watchdog = 0x01000005 }
 
         local first = coroutine.create(function()
-            return h.CMD.start(conf)
+            return h.CMD.start()
         end)
         local ok, kind = coroutine.resume(first)
         t.expect(ok).to.equal(true)
@@ -368,7 +322,7 @@ t.describe("entity_agentmgr 两段式启动", function()
 
         -- 第二个调用者应挂起等待，而不是再创建一批 agent
         local second = coroutine.create(function()
-            return h.CMD.start(conf)
+            return h.CMD.start()
         end)
         local ok2, kind2 = coroutine.resume(second)
         t.expect(ok2).to.equal(true)
@@ -395,7 +349,7 @@ end)
 t.describe("entity_agentmgr 停服", function()
     local function started()
         local h = new_harness()
-        h.CMD.start({ watchdog = 0x01000005 })
+        h.CMD.start()
         h.events = {}
         return h
     end
@@ -440,7 +394,7 @@ t.describe("entity_agentmgr 预加载", function()
 
     t.it("就绪后只加载 HRW 落在本节点的那几个 ID，并定期再对一遍", function()
         local h = preload_harness()
-        h.CMD.start({})
+        h.CMD.start()
         t.expect(h.activated).to.equal({ 11 })
         t.expect(h.preload_timer.name).to.equal("entity_preload:role")
         h.preload_timer.fire()
@@ -449,14 +403,14 @@ t.describe("entity_agentmgr 预加载", function()
 
     t.it("没配 preload 的类型不起定时器", function()
         local h = new_harness()
-        h.CMD.start({ watchdog = 0x01000005 })
+        h.CMD.start()
         t.expect(h.preload_timer).to.be_nil()
         t.expect(h.activated).to.equal({})
     end)
 
     t.it("停服后不再预加载", function()
         local h = preload_harness()
-        h.CMD.start({})
+        h.CMD.start()
         h.shutdown_replies = { 0 }
         h.CMD.shutdown(1)
         t.expect(h.preload_timer.cancelled).to.equal(true)

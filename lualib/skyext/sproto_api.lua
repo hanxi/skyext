@@ -180,9 +180,22 @@ local function dispatch_request(fd, request_name, request, response_cb)
     return nil, tostring(result or "request rejected"), M.errcode_rejected
 end
 
-local function send_package(fd, pack)
+-- 回包、推送怎么送到客户端。默认直接写本进程的 socket：登录服务、robot 这类直接持有
+-- 连接的服务就是这样。实体 agent 里的连接在 gate 上，由 skyext.entity.session 换成
+-- "发给会话所在的 gate"，conn 也从 fd 变成会话键
+local function socket_sender(fd, pack)
     local data, sz = netpack.pack(pack)
     socket.write(fd, data, sz)
+end
+
+local g_sender = socket_sender
+
+function M.set_sender(sender)
+    g_sender = sender or socket_sender
+end
+
+local function send_package(conn, pack)
+    g_sender(conn, pack)
 end
 
 local function wakeup_call(pending, response)
@@ -228,22 +241,15 @@ function M.raw_dispatch(fd, type, request_name, request, response_cb)
     end
 end
 
-local function register_protocol()
-    skynet.register_protocol({
-        name = "client",
-        id = skynet.PTYPE_CLIENT,
-        unpack = function(msg, sz)
-            return g_host:dispatch(msg, sz)
-        end,
-        dispatch = function(fd, _, type, request_name, request, response_cb)
-            skynet.ignoreret() -- session is fd, don't call skynet.ret
-            return M.raw_dispatch(fd, type, request_name, request, response_cb)
-        end,
-    })
+-- 处理一个上行包（gate 转发过来的原始字节）。conn 是连接标识：fd 或会话键
+function M.dispatch_message(conn, data)
+    local type, request_name, request, response_cb = g_host:dispatch(data)
+    return M.raw_dispatch(conn, type, request_name, request, response_cb)
 end
 
-function M.notify(fd, name, param)
-    send_package(fd, g_send_request(name, param))
+-- 下行推送：服务端主动发给客户端的协议，没有回包
+function M.notify(conn, name, param)
+    send_package(conn, g_send_request(name, param))
 end
 
 function M.call(fd, name, param, session, timeout)
@@ -305,8 +311,6 @@ skynet.init(function()
     reload_sproto()
     local sproto_schema_path = config.get("sproto_schema_path")
     event_channel_api.subscribe(g_sproto_loader_service, sproto_schema_path, reload_sproto)
-
-    register_protocol()
 end)
 
 return M

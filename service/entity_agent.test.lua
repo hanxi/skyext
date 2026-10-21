@@ -75,29 +75,38 @@ local function harness(opts)
     end
     h.mgr = fake_mgr
 
-    local fake_client = {}
-    function fake_client.init(manager)
+    local fake_session = {}
+    function fake_session.init(manager)
         t.expect(manager).to.equal(fake_mgr)
     end
-    function fake_client.get_entity(fd)
-        return h.bound[fd]
+    function fake_session.key(gate_node, fd)
+        return gate_node .. "/" .. tostring(fd)
     end
-    function fake_client.bind(fd, e)
-        h.bound[fd] = e
-        e.fd = fd
+    function fake_session.get_entity(key)
+        return h.bound[key]
+    end
+    function fake_session.bind(gate_node, fd, e, owner_service)
+        if h.session_bind_result == false then
+            return false
+        end
+        local key = fake_session.key(gate_node, fd)
+        h.bound[key] = e
+        e.session = { gate_node = gate_node, fd = fd, key = key }
+        h.bind_owner = owner_service
         h.events[#h.events + 1] = "bind"
+        return true
     end
-    function fake_client.unbind(fd)
-        local e = h.bound[fd]
-        h.bound[fd] = nil
-        if e then
-            e.fd = nil
+    function fake_session.unbind(key)
+        local e = h.bound[key]
+        h.bound[key] = nil
+        if e and e.session and e.session.key == key then
+            e.session = nil
         end
         h.events[#h.events + 1] = "unbind"
     end
-    function fake_client.unbind_kick(fd, expected_entity)
-        t.expect(expected_entity).to.equal(h.bound[fd])
-        fake_client.unbind(fd)
+    function fake_session.unbind_kick(key, expected_entity)
+        t.expect(expected_entity).to.equal(h.bound[key])
+        fake_session.unbind(key)
         h.events[#h.events + 1] = "kick"
     end
 
@@ -132,8 +141,8 @@ local function harness(opts)
                 return value, nil, 3
             end,
         },
-        on_bind_client = function(_, fd)
-            h.events[#h.events + 1] = "on_bind:" .. fd
+        on_bind_client = function(_, key)
+            h.events[#h.events + 1] = "on_bind:" .. key
         end,
         on_unbind_client = function()
             h.events[#h.events + 1] = "on_unbind"
@@ -145,12 +154,6 @@ local function harness(opts)
         end,
         register = function(name)
             h.registered = name
-        end,
-        call = function(addr, _, command)
-            h.forward = { addr, command }
-        end,
-        self = function()
-            return 200
         end,
     }, { __index = skynet })
     local imports = {
@@ -190,14 +193,14 @@ local function harness(opts)
                 return true
             end,
         },
-        ["skyext.entity.client_ext"] = fake_client,
+        ["skyext.entity.session"] = fake_session,
         ["skyext.log"] = { info = noop, warn = noop, error = noop },
         ["skyext.errcode"] = errcode,
         ["skynet.cluster"] = fake_cluster,
         ["entity_handler.role"] = h.handler,
         ["skyext.sproto_api"] = {
             register_module = function(name, module, request)
-                t.expect(module).to.equal(fake_client)
+                t.expect(module).to.equal(fake_session)
                 h.registered_modules[#h.registered_modules + 1] = { name = name, request = request }
             end,
         },
@@ -212,7 +215,7 @@ local function harness(opts)
     }, { __index = _G })
     assert(loadfile(source, "t", env))("role", "1")
     h.boot()
-    h.start_conf = { modules_path = "modules", modules = opts.modules or {}, watchdog = 123 }
+    h.start_conf = { modules_path = "modules", modules = opts.modules or {} }
     if not opts.manual_start then
         h.CMD.start(h.start_conf)
     end
@@ -253,7 +256,7 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.entity.data.name).to.equal("second")
     end)
 
-    t.it("does not bind a client while a handler owns the entity gate", function()
+    t.it("does not bind a session while a handler owns the entity gate", function()
         local h = harness()
         h.pause_handler = true
         local done = 0
@@ -263,11 +266,11 @@ t.describe("entity_agent serialized ingress", function()
         end)
         skynet.sleep(1)
         skynet.fork(function()
-            t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.OK)
+            t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
             done = done + 1
         end)
         skynet.sleep(1)
-        t.expect(h.bound[9]).to.be_nil()
+        t.expect(h.bound["gate1/9"]).to.be_nil()
         for _ = 1, 30 do
             if done == 2 then
                 break
@@ -275,7 +278,7 @@ t.describe("entity_agent serialized ingress", function()
             skynet.sleep(1)
         end
         t.expect(done).to.equal(2)
-        t.expect(h.events).to.equal({ "handler-start", "handler-end", "bind", "on_bind:9" })
+        t.expect(h.events).to.equal({ "handler-start", "handler-end", "bind", "on_bind:gate1/9" })
     end)
 
     t.it("wakes ordered persistent delivery instead of executing or acknowledging inline", function()
@@ -292,36 +295,55 @@ t.describe("entity_agent serialized ingress", function()
     t.it("remote handoff uses a verified owner and requires confirmed unload", function()
         local h = harness()
         h.lock_error = "etcd unavailable"
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.LOCK_FAILED)
         t.expect(h.cluster_call).to.be_nil()
         h.lock_error = "lock held"
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.LOCK_FAILED)
         h.owner = "node-b"
         h.cluster_released = false
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.IN_OTHER_NODE)
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.IN_OTHER_NODE)
         t.expect(h.cluster_call).to.equal({ "node-b", ".entity_agent:role:1", "unload_entity", 7 })
-        t.expect(h.bound[9]).to.be_nil()
+        t.expect(h.bound["gate1/9"]).to.be_nil()
         h.cluster_error = "node down"
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.IN_OTHER_NODE)
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.IN_OTHER_NODE)
         h.cluster_error = nil
         h.cluster_released = true
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.OK)
-        t.expect(h.bound[9]).to.equal(h.entity)
-        t.expect(h.forward).to.equal({ 123, "forward" })
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
+        t.expect(h.bound["gate1/9"]).to.equal(h.entity)
+        -- 绑定成功后 gate 被指向本 agent，后续上行包直接转给它，不再经过 watchdog
+        t.expect(h.bind_owner).to.equal(".entity_agent:role:1")
+    end)
+
+    t.it("bind_session reports SESSION_CLOSED when the gate already dropped the connection", function()
+        local h = harness()
+        h.session_bind_result = false
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.SESSION_CLOSED)
+        t.expect(h.bound["gate1/9"]).to.be_nil()
+    end)
+
+    t.it("bind_session kicks the previous session when a role relogs on a new connection", function()
+        local h = harness()
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
+        t.expect(h.CMD.bind_session(7, "gate1", 10)).to.equal(errcode.OK)
+        -- 旧会话被解绑并踢掉，新会话生效
+        t.expect(h.bound["gate1/9"]).to.be_nil()
+        t.expect(h.bound["gate1/10"]).to.equal(h.entity)
+        t.expect(h.entity.session.key).to.equal("gate1/10")
+        t.expect(h.events).to.equal({ "bind", "on_bind:gate1/9", "unbind", "kick", "bind", "on_bind:gate1/10" })
     end)
 
     t.it("does not hand off to itself when its previous process still holds the lock", function()
         local h = harness()
         h.lock_error = "lock held"
         h.owner = "node-a"
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.LOCK_FAILED)
         t.expect(h.cluster_calls).to.equal(0)
     end)
 
     t.it("reports a missing entity instead of a lock failure", function()
         local h = harness()
         h.lock_error = "not found"
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.ENTITY_NOT_FOUND)
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.ENTITY_NOT_FOUND)
     end)
 
     t.it("forwards a call to the node holding the lock instead of taking the entity", function()
@@ -433,16 +455,16 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.events).to.equal({ "unload_all", "unload_all" })
     end)
 
-    t.it("disconnect respects the entity gate and unbinds an expired client", function()
+    t.it("session_closed respects the entity gate and unbinds an expired session", function()
         local h = harness()
-        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.OK)
-        h.CMD.disconnect(9)
-        t.expect(h.bound[9]).to.be_nil()
+        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
+        h.CMD.session_closed("gate1", 9)
+        t.expect(h.bound["gate1/9"]).to.be_nil()
         t.expect(h.events[#h.events]).to.equal("on_unbind")
-        h.CMD.bind_client(7, 10)
+        h.CMD.bind_session(7, "gate1", 10)
         h.lease_expired = true
-        h.CMD.disconnect(10)
-        t.expect(h.bound[10]).to.be_nil()
+        h.CMD.session_closed("gate1", 10)
+        t.expect(h.bound["gate1/10"]).to.be_nil()
         t.expect(h.events[#h.events]).to.equal("unbind")
     end)
 

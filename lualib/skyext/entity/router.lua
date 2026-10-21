@@ -52,6 +52,26 @@ function M.poke_reliable(type_name, entity_id)
     return (pcall(cluster.send, node, service_name, "__deliver_reliable", entity_id))
 end
 
+-- 把 gate 上的会话（gate_node, fd）绑到实体上，登录服务调用。实体加载在哪个节点由实体
+-- 系统决定，gate 和实体不必在同一个节点。返回错误码
+function M.bind_session(type_name, entity_id, gate_node, fd)
+    local node, service_name = get_target(type_name, entity_id)
+    if node == self_node() then
+        return skynet.call(service_name, "lua", "bind_session", entity_id, gate_node, fd)
+    end
+    return cluster.call(node, service_name, "bind_session", entity_id, gate_node, fd)
+end
+
+-- 作用域实体的便捷入口：value 是作用域取值（game 名、zone 名、"global"），
+-- 实体 ID 由 types.scoped_id 算出
+function M.scoped_call(type_name, value, cmd, ...)
+    return M.call(type_name, types.scoped_id(type_name, value), cmd, ...)
+end
+
+function M.scoped_send(type_name, value, cmd, ...)
+    return M.send(type_name, types.scoped_id(type_name, value), cmd, ...)
+end
+
 function M.reliable_send(type_name, entity_id, cmd, args)
     local reliable_msg = require "skyext.entity.reliable_msg"
     local msg_id = reliable_msg.save(type_name, entity_id, cmd, args)

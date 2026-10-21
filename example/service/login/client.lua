@@ -42,7 +42,7 @@ function M.new(conf)
         end
 
         log.error("client auth timeout", "fd", fd)
-        skynet.call(global.watchdog_service, "lua", "close_client", fd)
+        skynet.send(global.gate_service, "lua", "kick", fd)
     end)
     return g_clients[fd]
 end

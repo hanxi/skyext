@@ -14,9 +14,8 @@ agent_index = tonumber(agent_index)
 local type_config = types.get(type_name)
 local handler
 local entitymgr
-local client_ext
+local session
 local g_data_modules = {}
-local g_watchdog
 
 local CMD = {}
 
@@ -200,7 +199,10 @@ function CMD.shutdown()
     return remaining
 end
 
-function CMD.bind_client(entity_id, fd)
+-- 把 gate 上的一个会话绑到实体上（玩家登录）。由登录服务经 router.bind_session 调用。
+-- 实体还被别的节点持有着时向它要一次（重新登录的语义：对方卸载并踢掉旧连接）。
+-- 返回错误码
+function CMD.bind_session(entity_id, gate_node, fd)
     local ok, reason, holder_node = entitymgr:try_ensure_loaded(entity_id)
     if not ok then
         if reason == "not found" then
@@ -214,51 +216,62 @@ function CMD.bind_client(entity_id, fd)
         end
     end
 
+    local key = session.key(gate_node, fd)
     local bound, result = entitymgr:with_entity(entity_id, function(entity)
-        if entity.fd then
-            client_ext.unbind_kick(entity.fd, entity)
+        local old = entity.session
+        if old and old.key ~= key then
+            session.unbind_kick(old.key, entity)
         end
-        client_ext.bind(fd, entity)
-        if g_watchdog then
-            skynet.call(g_watchdog, "lua", "forward", fd, skynet.self())
+        if not session.bind(gate_node, fd, entity, types.format_agent_service_name(type_name, agent_index)) then
+            -- 排队期间客户端已经断开
+            return errcode.SESSION_CLOSED
         end
         if handler.on_bind_client then
-            handler.on_bind_client(entity, fd)
+            handler.on_bind_client(entity, key)
         end
         return errcode.OK
     end)
     if not bound then
-        log.error("bind_client failed", "type", type_name, "id", entity_id, "err", result)
+        log.error("bind_session failed", "type", type_name, "id", entity_id, "err", result)
         return errcode.LOCK_FAILED
     end
     return result
 end
 
-function CMD.disconnect(fd)
-    if not client_ext then
+-- gate 转发来的上行包
+function CMD.client_msg(gate_node, fd, data)
+    if not session then
         return
     end
-    local entity = client_ext.get_entity(fd)
+    require("skyext.sproto_api").dispatch_message(session.key(gate_node, fd), data)
+end
+
+-- gate 上的连接断开了
+function CMD.session_closed(gate_node, fd)
+    if not session then
+        return
+    end
+    local key = session.key(gate_node, fd)
+    local entity = session.get_entity(key)
     if not entity then
         return
     end
     local ok = entitymgr:with_loaded_entity(entity.id, function(active)
-        if active ~= entity or client_ext.get_entity(fd) ~= active then
+        if active ~= entity or session.get_entity(key) ~= active then
             return
         end
-        client_ext.unbind(fd)
+        session.unbind(key)
         if handler.on_unbind_client then
             handler.on_unbind_client(active)
         end
     end)
-    if not ok and client_ext.get_entity(fd) == entity then
-        client_ext.unbind(fd)
+    if not ok and session.get_entity(key) == entity then
+        session.unbind(key)
     end
 end
 
 function CMD.start(conf)
     local modules_path = conf.modules_path
-    g_watchdog = conf.watchdog
 
     -- conf.modules 是 entity_agentmgr 扫磁盘得到的，文件一定存在。
     -- 这里不能吞 require 失败：漏掉一个 request 模块，它的所有协议都不会注册，
@@ -277,15 +290,15 @@ function CMD.start(conf)
             local request = require(mod_path .. ".request")
             assert(type(request) == "table", mod_path .. ".request must return a table")
             local sproto_api = require "skyext.sproto_api"
-            sproto_api.register_module(mod.name, client_ext, request)
+            sproto_api.register_module(mod.name, session, request)
         end
     end
 
     handler = require("entity_handler." .. type_name)
     entitymgr = entitymgr_mod.new(type_name, type_config, handler, g_data_modules)
 
-    if client_ext then
-        client_ext.init(entitymgr)
+    if session then
+        session.init(entitymgr)
     end
 
     log.info("entity_agent started", "type", type_name, "index", agent_index, "modules", module_names(conf.modules))
@@ -295,7 +308,7 @@ skynet.start(function()
     skynet.register(types.format_agent_service_name(type_name, agent_index))
 
     if type_config.client_enabled then
-        client_ext = require "skyext.entity.client_ext"
+        session = require "skyext.entity.session"
     end
 
     cmd_api.dispatch(CMD)

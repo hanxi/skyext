@@ -3,8 +3,7 @@
     rid 1 : integer
     name 2 : string
     account 3 : string
-    server 4 : string # 客户端看到的服务器
-    game 5 : string # 框定玩法范围的游戏服务器:合服就是把game改成相同的
+    server 4 : string # 出生服，终身不变。所属 game / zone 用 skyext.realm 现查，合服不改这里
     create_time 6 : integer
     last_login_time 7 : integer
     modules 8 : role_modules # 模块列表

@@ -60,10 +60,29 @@ function M.key_id(key)
     return h
 end
 
--- 类型配置里 preload 列出的实体 ID：整数原样使用，字符串经 key_id 换算
+-- 作用域实体（类型配置了 scope）在作用域取值 value 上的那一份的 ID，
+-- 比如 scoped_id("rank", "game1") 是 game1 的排行榜。任何节点直接算，不用查表
+function M.scoped_id(type_name, value)
+    local scope = M.get(type_name).scope
+    assert(scope, "entity type has no scope: " .. tostring(type_name))
+    assert(type(value) == "string" and value ~= "", "scope value must be a non-empty string")
+    return M.key_id(type_name .. ":" .. scope .. ":" .. value)
+end
+
+-- 要主动加载的实体 ID：
+--   scope 类型按区服目录里这一层的全部取值生成，开服后新 game 自动加入；
+--   preload 列表里整数原样使用，字符串经 key_id 换算
 function M.preload_ids(type_name)
+    local t = M.get(type_name)
     local ids = {}
-    for _, key in ipairs(M.get(type_name).preload or {}) do
+    if t.scope then
+        -- 区服目录在 require 时会去连 realm 服务，只有作用域类型才拉进来
+        local realm = require "skyext.realm"
+        for _, value in ipairs(realm.scope_values(t.scope)) do
+            ids[#ids + 1] = M.scoped_id(type_name, value)
+        end
+    end
+    for _, key in ipairs(t.preload or {}) do
         ids[#ids + 1] = math.type(key) == "integer" and key or M.key_id(key)
     end
     return ids
