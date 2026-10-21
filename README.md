@@ -13,7 +13,7 @@
 - **分层与分布式部署**：引擎模块采用 `skyext.*` 命名空间；Account、Role 和 Robot 节点分别运行，基于 etcd 提供服务发现与分布式锁。
 - **游戏数据与协议**：MongoDB 持久化、ORM/schema、sproto 协议，以及可扩展的通用实体系统。
 - **接入与运维**：HTTP 接口、JWT 登录、skynet TLS 模块、日志、GM 命令与代码/配置热更新。
-- **开发工具**：跨平台统一 CLI、伴随源码的 `.test.lua` 测试、Lua/C 覆盖率及 CI 检查。
+- **开发工具**：跨平台统一 CLI、伴随源码的 `.test.lua` 测试及 CI 检查。
 
 运行时依赖 MongoDB、etcd；构建还需要 C 工具链、OpenSSL 和项目子模块。具体准备方式见[快速上手](docs/getting-started.md)。
 
@@ -66,10 +66,6 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 ```bash
 ./bin/skyext --help
 ./bin/skyext test                      # 运行所有 .test.lua 测试
-./bin/skyext test --cov                # Lua 覆盖率；有 genhtml 时还生成 HTML
-# Linux/GCC：普通构建切换至 C 插桩构建时须先清理
-make -C example clean && make build C_COVERAGE=1
-./bin/skyext test --cov --cov-c
 ./bin/skyext test lualib/skyext/       # 只运行指定目录
 SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 MongoDB/etcd 集成测试
 ./bin/skyext generate proto            # 编译 sproto
@@ -78,7 +74,7 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 ./bin/skyext package framework linux   # 框架包：release-assets/skyext-linux.zip
 ```
 
-测试文件与被测模块放在一起，使用 `*.test.lua` 命名；真实 MongoDB/etcd 集成测试仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。集成测试验证两个独立锁实例的竞争、租约撤销、Mongo fencing、旧持有者写入拒绝，以及真实 MongoDB 上的可靠消息序号、分页和重复确认；完整的多进程节点交接仍需部署环境验证。`--cov` 会生成 `coverage/lua_coverage_clean.info`，若安装了 `genhtml`，还会生成 `coverage/html/index.html`。Linux/GCC 的 `--cov-c` 需要安装 `lcov` 并使用 `C_COVERAGE=1` 重新构建，单独生成 `coverage/c_coverage.info` 和 `coverage/html-c/index.html`（仅统计 `lualib-src/` 与 `service-src/`，不含子模块）。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、Lua 85% 与 C 60% 的独立行覆盖率门禁、格式检查和多平台打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`；运行时 ORM 位于主工程 `lualib/orm/`。生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。覆盖率在线报告（[Lua](https://hanxi.github.io/skyext/coverage/) · [C](https://hanxi.github.io/skyext/coverage-c/)）只有在仓库启用 GitHub Pages 且部署成功后才可访问；CI 构建产物也提供两种报告的下载。
+测试文件与被测模块放在一起，使用 `*.test.lua` 命名；真实 MongoDB/etcd 集成测试仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。集成测试验证两个独立锁实例的竞争、租约撤销、Mongo fencing、旧持有者写入拒绝，以及真实 MongoDB 上的可靠消息序号、分页和重复确认；完整的多进程节点交接仍需部署环境验证。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、格式检查和多平台打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`；运行时 ORM 位于主工程 `lualib/orm/`。生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。
 
 ## 文档导航
 

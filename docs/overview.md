@@ -7,7 +7,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 层级 | 主要路径 | 职责 |
 | --- | --- | --- |
 | 引擎 Lua 模块 | `lualib/skyext/` | `skyext.*` 命名空间：配置、日志、HTTP、服务发现、协议、GM、实体路由等 |
-| 引擎基础设施 | `lualib/orm/`、`lualib/skytest/`、`service/` | ORM、测试与覆盖率、GM/热更/数据库等 skynet 服务 |
+| 引擎基础设施 | `lualib/orm/`、`lualib/skytest/`、`service/` | ORM、测试框架、GM/热更/数据库等 skynet 服务 |
 | 引擎原生扩展 | `lualib-src/`、`service-src/`、`build.mk` | C 模块、C 服务及构建规则 |
 | 游戏层（示例） | `example/nodes/`、`example/lualib/` | 节点入口、角色/账号逻辑、实体 handler 与业务模块 |
 | 游戏契约与配置 | `example/etc/`、`example/proto/`、`example/schema/`、`example/build/lualib/game/orm/` | 节点/应用配置、sproto/ORM 源模式及生成的游戏层 schema（构建产物） |
@@ -48,7 +48,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 指标 | `lualib/skyext/metrics*.lua`、`service/metrics.lua` | counter/gauge/histogram 原语、跨服务合并与 Prometheus 文本导出；见 [指标采集与导出](guide/metrics.md) |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
 | 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、实体生命周期、业务模块扩展 |
-| 测试与覆盖率 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程，生成 lcov 报告 |
+| 测试 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程 |
 
 **节点崩溃后的接管窗口**：实体锁挂在节点级的 etcd 租约上，TTL 30 秒、每 10 秒续一次。节点**优雅下线**时会主动交接，几乎没有空窗；节点**硬崩**（进程被杀、机器掉电、网络分区）时没人能主动释放锁，必须等 etcd 把租约过期掉。这段时间里，落到该实体上的请求会一直拿到 `LOCK_FAILED`（`bind_client` 在能查到持锁节点、交接又失败时返回 `IN_OTHER_NODE`）：接管节点尝试向已死的持有者请求交接会直接失败，而锁键还在，抢不过来。
 
@@ -58,6 +58,6 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 
 ## 当前状态与延伸阅读
 
-代码中已有 Account/Role 示例、实体框架、GM/热更、skytest 与覆盖率工具；[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)和[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)描述的是后续方向，不应将规划中的功能视为已交付。仓库中已有 `public/gm.html` 和部分 profiler 相关组件，但不等于完整的运营后台或火焰图服务。
+代码中已有 Account/Role 示例、实体框架、GM/热更、skytest 测试框架；[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)和[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)描述的是后续方向，不应将规划中的功能视为已交付。仓库中已有 `public/gm.html` 和部分 profiler 相关组件，但不等于完整的运营后台或火焰图服务。
 
 深入设计见仓库中的[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)和[skytest 设计](https://github.com/hanxi/skyext/blob/main/docs/design/skytest.md)。这些内部文档**不随在线文档站发布**；本文的链接指向 GitHub 源文件。配置、测试和操作命令请以[快速上手](getting-started.md)为准。

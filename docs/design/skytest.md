@@ -668,7 +668,7 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
 
 ### `.github/workflows/coverage.yml`
 
-核心流程为 `make build C_COVERAGE=1`（先安装固定版本 StyLua，生成游戏层 schema）、`./bin/skyext generate proto`、`./bin/skyext test --cov --cov-c`，并分别检查 Lua 35% 与 C 60% 行覆盖率。CI 等待 MongoDB 和 etcd 就绪后，显式启用真实连接集成测试；本地默认跳过，需自行启动服务并设置 `SKYTEST_INTEGRATION=1`。测试为当前运行创建随机名称的 Mongo 数据库和 etcd key 前缀，结束后删除测试数据库并释放锁。`MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 可覆盖默认本机地址：
+核心流程为 `make build C_COVERAGE=1`（先安装固定版本 StyLua，生成游戏层 schema）、`./bin/skyext generate proto`、`./bin/skyext test --cov --cov-c`。CI 等待 MongoDB 和 etcd 就绪后，显式启用真实连接集成测试；本地默认跳过，需自行启动服务并设置 `SKYTEST_INTEGRATION=1`。测试为当前运行创建随机名称的 Mongo 数据库和 etcd key 前缀，结束后删除测试数据库并释放锁。`MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 可覆盖默认本机地址：
 
 ```yaml
     - name: Run tests with coverage and MongoDB/etcd integration

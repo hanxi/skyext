@@ -11,7 +11,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 | 路径 | 归属与用途 |
 | --- | --- |
 | `lualib/skyext/` | 引擎 Lua 模块，统一使用 `skyext.*` 命名空间 |
-| `lualib/orm/`、`lualib/skytest/`、`lualib/loader.lua` | ORM 运行时、测试/覆盖率与服务加载器 |
+| `lualib/orm/`、`lualib/skytest/`、`lualib/loader.lua` | ORM 运行时、测试框架与服务加载器 |
 | `scripts/tools/sproto_orm/`、`example/build/lualib/game/orm/` | 主工程内生成工具、Git 忽略的游戏层 schema 生成物 |
 | `service/`、`public/` | 引擎服务与静态资源 |
 | `lualib-src/`、`service-src/`、`build.mk` | 引擎 C 扩展/服务及构建规则 |
@@ -55,14 +55,10 @@ make build                                  # 构建引擎与示例
 ./bin/skyext generate schema                # 生成 example/build/lualib/game/orm/，需要 stylua
 ./bin/skyext schema check                   # 改过 schema 后必跑：对比基线，拦下不兼容改动
 ./bin/skyext test                           # 运行 *.test.lua 测试
-./bin/skyext test --cov                     # Lua LCOV；有 genhtml 时生成 HTML
-make -C example clean && make build C_COVERAGE=1  # Linux/GCC：切换到 C 插桩构建
-./bin/skyext test --cov --cov-c             # 另生成 coverage/c_coverage.info（需要 lcov）
-./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 35
 make -C example lint                       # 示例游戏的 luacheck
 ```
 
-Unix/macOS 的 CLI 为 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`（先构建本平台二进制）。`make proto` / `make schema` 是 `example/Makefile` 的目标，不是顶层 Makefile 的目标；不要使用不存在的 `make autocode`。CI 在仓库根目录使用 `luacheck .`、`stylua --check .`，还会执行测试、Lua 35% 与 C 60% 的独立行覆盖率门禁和平台构建；C 覆盖率仅统计主工程 `lualib-src/`、`service-src/`，不计子模块。生成器使用独立的 `3rd/sprotodump` 子模块（许可证尚未核实，框架包中不包含），勿将游戏 schema 写入引擎的 `lualib/orm/`。
+Unix/macOS 的 CLI 为 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`（先构建本平台二进制）。`make proto` / `make schema` 是 `example/Makefile` 的目标，不是顶层 Makefile 的目标；不要使用不存在的 `make autocode`。CI 在仓库根目录使用 `luacheck .`、`stylua --check .`，还会执行测试和平台构建。生成器使用独立的 `3rd/sprotodump` 子模块（许可证尚未核实，框架包中不包含），勿将游戏 schema 写入引擎的 `lualib/orm/`。
 
 测试文件与源码相邻，命名 `*.test.lua`；需要 MongoDB 或 etcd 的测试先启动相应服务。若改变 API、配置或构建规则，更新对应使用指南及测试；可通过 `./bin/skyext --help` 核对命令选项。
 

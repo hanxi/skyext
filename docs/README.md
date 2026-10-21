@@ -20,4 +20,4 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 
 仓库另保存[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)、[skytest 设计](https://github.com/hanxi/skyext/blob/main/docs/design/skytest.md)、[性能采样设计](https://github.com/hanxi/skyext/blob/main/docs/design/profiler.md)和[管理后台规划](https://github.com/hanxi/skyext/blob/main/docs/plan/admin_panel.md)。`design/`、`plan/` **不会部署到在线文档站**；这些链接指向 GitHub 源文件，且规划文档不代表功能已实现。
 
-项目源码、Issue 与许可证见 [GitHub 仓库](https://github.com/hanxi/skyext)；测试覆盖率在线报告（[Lua](https://hanxi.github.io/skyext/coverage/) · [C](https://hanxi.github.io/skyext/coverage-c/)）仅在 GitHub Pages 启用并部署成功时可访问。
+项目源码、Issue 与许可证见 [GitHub 仓库](https://github.com/hanxi/skyext)。

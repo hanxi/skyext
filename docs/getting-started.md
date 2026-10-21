@@ -9,7 +9,7 @@
 | 源码与编译 | Git、Make、C 编译器、OpenSSL 开发库；构建 skynet 所需的 autotools 等工具 |
 | 示例运行 | MongoDB 6、etcd（示例提供 Docker Compose 配置） |
 | 生成 ORM schema | 已初始化的 `3rd/sprotodump` 子模块、`stylua` 命令（生成器最后会格式化产物） |
-| 测试及本地覆盖率 | 构建好的 skynet/Lua，部分测试需要 MongoDB 和 etcd；Lua HTML 报告需 `genhtml`，C 覆盖率需 Linux/GCC、`gcov` 与 `lcov`（含 `genhtml`） |
+| 测试 | 构建好的 skynet/Lua，部分测试需要 MongoDB 和 etcd |
 
 Linux、macOS 可使用 Unix 包装入口 `./bin/skyext`。CI 还构建 FreeBSD 和 Windows（MSYS2/MinGW64）；Windows CMD/PowerShell 的入口是 `bin\skyext.bat`，需先在对应环境构建 `bin\lua.exe` 和 `bin\skynet.exe`。具体平台依赖和编译参数可参照 [CI 构建配置](https://github.com/hanxi/skyext/blob/main/.github/workflows/build-release.yml)，尤其是 macOS 的 OpenSSL 路径和 Windows 的 skynet 兼容补丁。
 
@@ -119,17 +119,13 @@ GM 口是管理员接口，只认一个 token，分人分权交给对接它的�
 ./bin/skyext test                           # 扫描并运行所有 *.test.lua
 ./bin/skyext test lualib/skyext/errcode.test.lua
 ./bin/skyext test --match errcode           # 按测试文件路径过滤
-./bin/skyext test --cov                     # Lua 覆盖率；有 genhtml 时还生成 HTML
-# Linux/GCC：切换到 C 插桩构建（需要 lcov；清理旧的非插桩二进制）
-make -C example clean && make build C_COVERAGE=1
-./bin/skyext test --cov --cov-c             # 分别生成 Lua 和 C 覆盖率
 make -C example lint                       # 示例游戏 luacheck
 # CI 在仓库根目录运行 luacheck . 和 stylua --check .
 ./bin/skyext package game                  # example/skyext.zip（游戏部署包）
 ./bin/skyext package framework linux       # release-assets/skyext-linux.zip（平台框架包）
 ```
 
-测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。游戏部署包会排除 `*.test.lua` 与测试运行器生成的临时配置；框架源码包也会排除临时测试配置，避免将构建机的绝对路径带入发布物。`--cov` 总会写入 `coverage/lua_coverage_clean.info`，统计引擎库、引擎服务与示例游戏库（不计生成的 `example/build/`）；检测到 `genhtml` 时另生成 `coverage/html/index.html`。Linux/GCC 下额外使用 `--cov-c` 时，需先清理旧二进制并以 `C_COVERAGE=1` 重建；该选项使用 `lcov` 收集 `lualib-src/`、`service-src/` 的 C 行覆盖率，写入独立的 `coverage/c_coverage.info`（有 `genhtml` 时生成 `coverage/html-c/index.html`），不统计 `skynet/` 或 `3rd/`。测试文件逐一运行，C 计数在每个 skynet 进程正常退出时累加；超时或异常终止的进程可能不写入计数。CI 分别检查 Lua 与 C 的行覆盖率门禁，并分别上传两种报告；Pages 部署成功后可在线查看 [Lua 报告](https://hanxi.github.io/skyext/coverage/)（`/coverage/`）与 [C 报告](https://hanxi.github.io/skyext/coverage-c/)（`/coverage-c/`）。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
+测试文件与源码相邻，每个测试文件在独立的 skynet 进程中运行；需要数据库或 etcd 的测试应先启动相应服务。游戏部署包会排除 `*.test.lua` 与测试运行器生成的临时配置；框架源码包也会排除临时测试配置，避免将构建机的绝对路径带入发布物。平台包只适用于实际构建的平台；正式发布由 GitHub Actions 在 `v*` 标签构建，不要把本地 Linux 产物当作其他平台的二进制。
 
 ## 常见问题
 
