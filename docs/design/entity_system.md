@@ -31,7 +31,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `lualib/skyext/entity/types.lua` | 实体类型注册表，委托 placement 选节点，modulo 选 agent |
+| `lualib/skyext/entity/types.lua` | 实体类型注册表，委托 placement 选节点，打散 ID 后取模选 agent |
 | `lualib/skyext/entity/placement.lua` | 实体放置：读服务发现的存活节点，用 rendezvous hashing 选节点 |
 | `lualib/skyext/entity/router.lua` | 公共 API：call / send / reliable_send，自动路由到正确节点 |
 | `lualib/skyext/entity/entitymgr.lua` | 单 agent 内实体生命周期（加载/卸载/缓存），复用 dbmgr + distributed_lock |
@@ -73,7 +73,8 @@ entity_types = {
         schema = "role",            -- ORM schema 名
         agent_count = 2,            -- 每节点 agent 数
         unload_delay = 300,         -- 不活跃后卸载延迟(秒)
-        nodes = { "rolenode1", "rolenode2" },  -- 固定节点列表
+        auto_create = false,        -- 按 ID 加载时文档不存在是否新建，默认不建
+        nodes = { "rolenode1", "rolenode2" },  -- 兜底节点列表，服务发现不可用时才用
         client_enabled = true,      -- 启用客户端连接（fd 绑定、sproto 协议分发）
                                     -- 有 fd 时不启动卸载定时器
         modules_path = "modules",   -- 自动扫描该目录下所有模块
@@ -93,6 +94,7 @@ entity_types = {
         schema = "guild",
         agent_count = 4,
         unload_delay = 600,
+        auto_create = true,         -- 公会由业务直接按新 ID 创建时打开
         nodes = { "guildnode1", "guildnode2" },
         client_enabled = false,
         modules_path = "guild_modules",
@@ -104,7 +106,12 @@ entity_types = {
 - `types.get(type_name)` — 返回类型配置，未知类型抛错
 - `types.all()` — 返回全部类型配置
 - `types.calc_node(type_name, entity_id)` — 委托给 `placement.calc_node`，见下
-- `types.calc_agent_index(type_name, entity_id)` — `entity_id % agent_count + 1`
+- `types.calc_agent_index(type_name, entity_id)` — `placement.hash(entity_id) % agent_count + 1`。
+  先打散再取模：snowflake ID 的低位是每秒归零的序号，直接取模会让低频发出的 ID 全挤进第一个 agent
+
+**`auto_create`**：实体按 ID 寻址，传错一个 ID 不该凭空造出一份文档。默认关闭，此时文档不存在
+`ensure_loaded` 返回 `false, "not found"`，`bind_client` 返回 `ENTITY_NOT_FOUND`。角色文档由 Account
+建角时创建，所以示例的 `role` 不开；由业务直接拿新 ID 调用实体来创建的类型才打开。
 - `types.format_agent_service_name(type_name, index)` — 如 `".entity_agent:role:1"`
 
 ### 1.1 placement.lua — 实体落在哪个节点
@@ -120,18 +127,31 @@ entity_types = {
 - 结果与候选列表顺序无关。存活集合是从哈希表遍历出来的，顺序本来就不定，依赖下标的算法在
   这里会让各节点算出不同的答案。
 
-**跨节点交接**：路由搬家后实体可能还被上一个节点持有着 etcd 锁。`entity_agent` 在 `entity_call` /
-`entity_send` / `bind_client` 拿不到锁且确认了持有者时，向持有者发一次 `unload_entity` 再重试。
-**只重试一次**：两边成员视图短暂分歧时，无限重试会变成互相抢。安全性由分布式锁本身保证——
-路由短暂分歧最多让请求失败，不会出现两个节点同时持有同一实体。
+**粘性路由**：节点进出后实体的目标节点会变，但已经加载的实体还留在上一个节点上，锁也在它手里。
+这时 `entity_agent` 不把实体要过来，而是把请求**转给持锁节点执行**：
+
+- `entity_call` / `entity_send` 转发为持锁节点上的 `entity_call_loaded`，`__deliver_reliable` 转发为
+  `deliver_reliable_loaded`。持锁节点只处理已经加载的实体，绝不为转发请求加载。
+- 持锁节点回 `NOT_LOADED`（实体刚好卸掉了）时，什么都没执行，回到本地再试一次，此时锁多半已经空出来。
+  只试这一次，两个节点不会把一个请求来回踢。
+- 转发本身抛错时**不重试**：分不清是没送到，还是对方的 handler 执行到一半出错了，重试可能让副作用发生两次。
+  `entity_call` 把错误原样抛给调用方。
+- 持锁的是本节点名，说明是上一次进程留下的租约还没过期，不转发，等租约过期。
+
+为什么不直接让持锁节点卸载：卸载会把在线玩家踢下线，扩一次容就掉一批人；两边成员视图短暂不一致时，
+实体还会被来回搬。粘性路由下，实体在旧节点自然卸载（玩家下线、闲置超时、停服）之后，下一次加载才落到新节点。
+
+**登录交接**：只有客户端重新登录（`bind_client`）时才把实体要过来——向持锁节点发一次 `unload_entity`，
+对方卸载（顺带踢掉旧连接）后本地再加载。同样只请求一次。安全性始终由分布式锁保证：路由短暂分歧最多
+让请求失败，不会出现两个节点同时持有同一实体。
 
 ### 2. router.lua — 消息路由 API
 
 ```lua
 local entity_router = require "skyext.entity.router"
 
--- 同步调用（有返回值）
-local result = entity_router.call("role", rid, "get_online_info")
+-- 同步调用：返回 true, handler 的返回值...，或 false, reason（实体不可用，handler 没执行）
+local ok, info = entity_router.call("role", rid, "get_online_info")
 
 -- 异步发送（fire-and-forget）
 entity_router.send("role", rid, "on_event", event_data)
@@ -177,7 +197,7 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 **ensure_loaded(entity_id) 流程：**
 1. 同一实体 ID 的加载、handler、消息投递、客户端请求及卸载经 `skynet.queue` 串行化；命中有效缓存后重置卸载定时器
 2. 未命中 → `distributed_lock.try_lock(lock_key, node_name, expired_cb)`；例如锁键 `"entity/role/12345"`、持有者值 `"rolenode1"`，成功返回带 etcd create revision (`fence`) 的句柄
-3. `dbmgr.load(..., handle)` 通过一次 Mongo `findAndModify` 原子认领 fencing token 并读取最新文档，旧持有者后续写入必须同时匹配 `_fence` 与 `_version`；首次创建文档依赖实体 ID 字段的 **唯一索引** 防止并发创建重复行（示例 `role.rid` 已配置），业务集合也必须配置。初始化模块和 handler 后异步处理 pending 消息，启动卸载定时器
+3. `dbmgr.load(..., handle, { create = auto_create })` 通过一次 Mongo `findAndModify` 原子认领 fencing token 并读取最新文档，旧持有者后续写入必须同时匹配 `_fence` 与 `_version`；文档不存在且类型没开 `auto_create` 时释放锁并返回 `"not found"`。开了 `auto_create` 的类型首次创建文档依赖实体 ID 字段的 **唯一索引** 防止并发创建重复行，业务集合必须配置。停服期间（见下）不再加载新实体，返回 `"node shutting down"`。初始化模块和 handler 后异步处理 pending 消息，启动卸载定时器
 4. 租约失效回调立即隔离实体并断开客户端；旧实体不能重获原锁继续执行；锁竞争返回独立的 `"lock held"` 原因及持锁节点名
 
 **unload(entity_id) 流程：**
@@ -186,6 +206,13 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 3. `dbmgr.unload()` 确认最后一次持久化并清除缓存 **之后** 才按 create revision 比较并解锁；卸载完成或中途失败时均断开仍绑定的客户端。保存或解锁失败时保留实体与句柄，并通过独立定时器以 5 秒为初始间隔退避重试（实体配置 `unload_retry_delay` 可覆盖初始秒数，最长 300 秒）。数据已落库但解锁失败时只重试解锁，不重复落库或执行钩子
 4. 租约已失效时，干净缓存（库里已是最新）直接丢弃，实体出内存；已经落库的实体若租约失效可直接释放内存对象
 5. 租约已失效**且缓存是脏的**走失租恢复（见下）。不论恢复成功与否，实体最终都必须离开内存——留在 `entities` 里既不服务请求，又让后续 `ensure_loaded` 恒定失败
+
+**停服（`unload_all`）：**
+
+`entity_agentmgr` 的 `shutdown` 先从服务发现注销 `entity:<type>`，路由随之移到其他节点；再让每个 agent
+执行 `unload_all`：置 `closing` 拒绝加载新实体，以有限并发卸载全部已加载实体（落库、释放锁、断开客户端），
+返回剩余数量。有实体卸不掉时每秒再来一轮，直到卸干净或超时，返回剩余实体数。示例由 role 节点的 GM 命令
+`shutdown` 驱动：先关 gate 停止接入，卸干净才退出进程；卸不掉就不退出，那些实体还有没落库的改动。
 
 **失租恢复流程（`_recover_dirty` → `dbmgr.recover`）：**
 
@@ -297,10 +324,13 @@ GM 指令会在所有注册该指令的服务上执行，每类型注册一次�
 启动时注册服务名（如 `.entity_agent:role:1`），若 `client_enabled` 则加载 client_ext。
 
 **CMD 表：**
-- `CMD.entity_call(entity_id, cmd, ...)` — 在 `with_entity` 门内加载、检查租约并调用 handler
+- `CMD.entity_call(entity_id, cmd, ...)` — 在 `with_entity` 门内加载、检查租约并调用 handler，返回 `true, ...` 或 `false, reason`；锁在别的节点时转发（见 1.1 粘性路由）
 - `CMD.entity_send(entity_id, cmd, ...)` — 同上但无返回值
-- `CMD.__deliver_reliable(entity_id)` — 即时唤醒 pending 队列，从 Mongo 按 seq 拉取，持久化实体状态后再 ack
-- `CMD.unload_entity(entity_id)` — 强制卸载（供重连流程跨节点调用）
+- `CMD.entity_call_loaded(entity_id, cmd, ...)` — 转发入口，只用已加载的实体
+- `CMD.__deliver_reliable(entity_id)` — 即时唤醒 pending 队列，从 Mongo 按 seq 拉取，持久化实体状态后再 ack；锁在别的节点时转发
+- `CMD.deliver_reliable_loaded(entity_id)` — 转发入口，只投递给已加载的实体
+- `CMD.unload_entity(entity_id)` — 强制卸载（供登录交接跨节点调用）
+- `CMD.shutdown()` — 停服：拒绝新加载、卸载全部实体，返回剩余数量
 - `CMD.bind_client(entity_id, fd)` — 客户端绑定（含重连逻辑，见上节）
 - `CMD.disconnect(fd)` — 客户端断开，触发 unbind + handler 回调
 - `CMD.start(conf)` — 初始化：加载数据模块和 sproto 协议、`require` handler、创建 entitymgr
@@ -316,6 +346,8 @@ Handler 通过 `require("entity_handler." .. type_name)` 加载。handler 是游
 2. 读取 `agent_count`，调用 `discover_modules(modules_path, start_name)` 通过 luafilesystem 扫描模块目录
 3. 顺序创建并启动 N 个 entity_agent，全部就绪后注册 cluster_discovery（`"entity:" .. type_name`）
 4. watchdog 等 agent 管理器 ready 后才打开 gate 端口
+
+`CMD.shutdown(timeout_sec)` 是停服入口：注销服务发现，再并行让各 agent 卸载，每秒重试直到卸干净或超时，返回剩余实体数（见「停服」）。
 
 **模块扫描路径解析**：基于 `game_root` + 节点 `start` 名拼接文件系统路径：
 

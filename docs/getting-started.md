@@ -102,16 +102,26 @@ local secret = config.get("login_jwt_secret")
 
 密钥强度由 `skyext.secret` 统一校验（`openssl rand -hex 32` 生成即可）：未配置、命中已知占位符黑名单、或少于 16 字符的密钥一律视为不可用。不可用时的行为是"拒绝而不是放行"：
 
-- `login_jwt_secret` 不可用 → 登录请求返回 `TOKEN_ERROR`，机器人压测无法签发 token；
+- `login_jwt_secret` 不可用 → 登录请求返回 `TOKEN_ERROR`，`/dev_login` 也签发不出 token；
 - GM token（`gm_auth_token`）不可用 → `/gm/execute`、`/gm/list` 全部拒绝。
 
 示例配置里额外写了 `allow_insecure_secret = true`，这是**仅供本地开发**的逃生口：它只放宽 `login_jwt_secret`（放行时打一条 ERROR 日志），不影响 GM 鉴权。生产环境不要设置这一项。
+
+同样仅供本地开发的还有 `dev_login_enable = true`：它打开 Account 的 `POST /dev_login`，按账号名直接签发登录 token、**不校验任何身份**，机器人靠它登录。生产环境必须去掉，token 交给 SDK/平台登录服务签发。
 
 登录 token 除签名外还校验签发方和有效期：`login_jwt_issuer` / `login_jwt_audience` 两边必须一致，`login_jwt_ttl` 决定有效期（缺 `exp` 的 token 一律拒绝），`login_jwt_leeway` 容忍节点间时钟差。详见 [登录流程](guide/login_diagram.md#jwt-token)。
 
 指标端点（`metrics_http_host` / `metrics_http_port`，示例里 account1 用 9190、role1 用 9192）同样默认只听回环。它**不鉴权**，暴露出去等于把内部拓扑和业务量公开，配法与内置指标见[指标采集与导出](guide/metrics.md)。
 
 GM 口是管理员接口，只认一个 token，分人分权交给对接它的后台去做。示例默认不配（即 GM 接口关闭），配法见 [GM HTTP API](guide/gm_api.md#鉴权)。
+
+**停止 Role 节点要走 GM 命令 `shutdown`**，不要直接 Ctrl+C 或 kill：
+
+```bash
+curl -H "Authorization: Bearer <gm_auth_token>" "http://127.0.0.1:9092/gm/execute?cmd=shutdown&timeout=60"
+```
+
+它会先停止接受新连接，再把全部实体落库、释放锁、踢下在线玩家，卸干净后进程自己退出；有实体卸不掉时进程保持运行并打 ERROR 日志，排查后可以再发一次。直接杀进程会丢掉上次回存（默认 3 分钟一次）之后的改动，实体锁也要等 30 秒租约过期才能被别的节点接手。Account 节点没有状态，可以直接停。
 
 ## 6. 测试、检查与打包
 

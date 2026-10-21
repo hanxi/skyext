@@ -98,6 +98,11 @@ function CMD.raw_safe_update(coll, bson_str)
     return col_obj:raw_safe_update(bson_str)
 end
 
+function CMD.safe_delete(coll, query, single)
+    local col_obj = g_db[coll]
+    return col_obj:safe_delete(query, single)
+end
+
 skynet.start(function()
     init_db(g_name)
     cmd_api.dispatch(CMD)

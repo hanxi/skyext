@@ -4,7 +4,6 @@ local cmd_api = require "skyext.cmd_api"
 local socket = require "skynet.socket"
 local config = require "skyext.config"
 local log = require "skyext.log"
-local jwt = require "jwt"
 local httpc = require "skyext.httpc"
 local cjson = require "cjson.safe"
 local errcode = require "errcode"
@@ -24,19 +23,38 @@ local function call(name, param)
     return ret
 end
 
+-- 拿登录 token。示例走 Account 的开发登录接口；正式客户端从 SDK/平台登录服务拿
+local function fetch_token(account_host, account)
+    local status, res = httpc.post_json(account_host, "/dev_login", { account = account })
+    if status ~= 200 or type(res) ~= "table" or res.code ~= errcode.OK then
+        log.error("dev_login failed", "status", status, "res", res)
+        return nil
+    end
+    -- token 是登录凭据，只能记录长度这类非敏感信息
+    log.info("got login token", "len", #res.token)
+    return res.token
+end
+
+-- 登录后走一遍背包和邮件：给自己发一封信，等可靠消息投递完再看邮箱
+local function play(rid)
+    log.info("login_info response", "ret", call("role.login_info"))
+    log.info("bag", "ret", call("bag.get_bag"))
+    log.info("send mail", "ret", call("mail.send", { to_rid = rid, title = "hello", content = "mail to myself" }))
+    skynet.sleep(100)
+    log.info("mail list", "ret", call("mail.list"))
+end
+
 function CMD.start(conf)
     -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
-    -- 所以 token 和 gate_nodes 都要在这里取
-    local token, sign_err = jwt.sign_login({ account = "robot3" }, "HS512")
+    -- 所以 account_host 和 gate_nodes 都要在这里取
+    local account_host = config.get("account_host")
+    local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
+    local account = "robot" .. conf.id
+    local token = fetch_token(account_host, account)
     if not token then
-        log.error("cannot sign login token", "reason", sign_err)
         return
     end
-    local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
-    -- token 是登录凭据，只能记录长度这类非敏感信息
-    log.info("generate token", "len", #token)
 
-    local account_host = config.get("account_host")
     local status, body = httpc.get(account_host, "/roles?token=" .. token)
     if status ~= 200 then
         log.error("failed to get roles", "status", status, "body", body)
@@ -53,7 +71,7 @@ function CMD.start(conf)
         local req = {
             token = token,
             server = "s1",
-            name = "robot3",
+            name = account,
         }
         local status, res = httpc.post_json(account_host, "/create_role", req)
         if status ~= 200 then
@@ -92,8 +110,10 @@ function CMD.start(conf)
     }
     local ret = call("login.login", param)
     log.info("login response", "ret", ret)
-    local ret = call("role.login_info")
-    log.info("login_info response", "ret", ret)
+    if not ret or ret.code ~= errcode.OK then
+        return
+    end
+    play(role.rid)
 end
 
 local function unpack_package(text)

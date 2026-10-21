@@ -9,6 +9,10 @@ local queue = require "skynet.queue"
 local M = {}
 M.__index = M
 
+-- with_loaded_entity 在实体没加载（或已失效）时返回的原因，f 没有执行。
+-- 转发方据此判断可以安全地换个地方重试
+M.NOT_LOADED = "entity not loaded or lease expired"
+
 -- reliable_msg 会连上 mongo，加载期 require 会把尚未配置好的连接固化下来，
 -- 因此推迟到首次投递时再取
 local g_reliable_msg
@@ -27,6 +31,8 @@ local UNLOAD_RETRY_MAX_DELAY = 300
 -- 说明实体已经被别的节点接管，对方正基于库里的数据在工作，这份内存改动
 -- 再接回去就是拿旧状态覆盖新状态，只能丢。
 local DIRTY_RECOVERY_MAX_ATTEMPTS = 8
+-- 停服时同时在卸载的实体数。每个卸载都要写一次库、删一次锁，串行做几千个实体会很久
+local SHUTDOWN_CONCURRENCY = 16
 
 function M.new(type_name, type_config, handler, data_modules)
     local self = setmetatable({
@@ -407,6 +413,10 @@ function M:_ensure_loaded(entity_id)
         return true, entity
     end
 
+    if self.closing then
+        return false, "node shutting down"
+    end
+
     local tc = self.type_config
     local lock_key = make_lock_key(self.type_name, entity_id)
     local ok, handle, owner = distributed_lock.try_lock(lock_key, make_lock_value(), function(expired)
@@ -416,7 +426,8 @@ function M:_ensure_loaded(entity_id)
         return false, handle, owner
     end
 
-    local loaded, data, err = pcall(dbmgr.load, tc.db_name, tc.db_coll, tc.id_field, entity_id, nil, handle)
+    local loaded, data, err =
+        pcall(dbmgr.load, tc.db_name, tc.db_coll, tc.id_field, entity_id, handle, { create = tc.auto_create == true })
     if not loaded or not data or not distributed_lock.is_valid(handle) then
         local reason
         if not loaded then
@@ -432,6 +443,11 @@ function M:_ensure_loaded(entity_id)
         end
         if distributed_lock.is_valid(handle) then
             distributed_lock.unlock(lock_key, handle)
+        end
+        if reason == "not found" then
+            -- 类型没开 auto_create，ID 对应的文档不存在：多半是调用方传错了 ID
+            log.warn("entity not found", "type", self.type_name, "id", entity_id)
+            return false, reason
         end
         log.error("entity load failed", "type", self.type_name, "id", entity_id, "err", reason)
         return false, reason
@@ -513,7 +529,7 @@ function M:with_loaded_entity(entity_id, f)
     return self:_with_gate(entity_id, function()
         local entity = self:get(entity_id)
         if not entity then
-            return false, "entity not loaded or lease expired"
+            return false, M.NOT_LOADED
         end
         local result = table.pack(pcall(f, entity))
         if not distributed_lock.is_valid(entity.handle) then
@@ -527,22 +543,33 @@ function M:with_loaded_entity(entity_id, f)
     end)
 end
 
-function M:deliver_pending(entity_id)
-    local called, ready, delivered, reason = pcall(self.with_entity, self, entity_id, function(entity)
+-- 投递实体的 pending 可靠消息。返回 true，或 false, reason, owner：
+-- 锁在别的节点手里时 reason 为 "lock held"，owner 是持锁节点，调用方可以把唤醒转给它。
+-- opts.loaded_only 为真时只投给本地已加载的实体，不会为了投递去加载
+function M:deliver_pending(entity_id, opts)
+    local run = (opts and opts.loaded_only) and self.with_loaded_entity or self.with_entity
+    local result = table.pack(pcall(run, self, entity_id, function(entity)
         return self:_deliver_pending_msgs(entity)
-    end)
-    if not called or not ready or not delivered then
+    end))
+    local err, owner
+    if not result[1] then
+        err = result[2]
+    elseif not result[2] then
+        err, owner = result[3], result[4]
+    elseif not result[3] then
+        err = result[4]
+    else
         local entity = self.entities[entity_id]
         if entity then
-            self:_schedule_delivery_retry(entity)
+            self:_cancel_delivery_retry(entity)
         end
-        return false, (not called and ready) or (not ready and delivered) or reason
+        return true
     end
     local entity = self.entities[entity_id]
     if entity then
-        self:_cancel_delivery_retry(entity)
+        self:_schedule_delivery_retry(entity)
     end
-    return true
+    return false, err, owner
 end
 
 -- 卸载中途失败：钩子可能已经拆掉了部分状态，实体必须继续拒绝请求，
@@ -721,6 +748,53 @@ function M:unload(entity_id)
         end
         return self:_unload_entity(entity)
     end)
+end
+
+function M:count()
+    local n = 0
+    for _ in pairs(self.entities) do
+        n = n + 1
+    end
+    return n
+end
+
+-- 停服：从此不再加载新实体，并把已加载的实体全部卸载（落库、释放锁、断开客户端）。
+-- 可以重复调用，卸载失败的实体留给下一次。返回还留在内存里的实体数
+function M:unload_all()
+    self.closing = true
+    local ids = {}
+    for id in pairs(self.entities) do
+        ids[#ids + 1] = id
+    end
+    local next_index = 0
+    local running = 0
+    local waiter = {}
+    local function worker()
+        while true do
+            next_index = next_index + 1
+            local id = ids[next_index]
+            if not id then
+                break
+            end
+            local ok, err = pcall(self.unload, self, id)
+            if not ok then
+                log.error("entity unload failed during shutdown", "type", self.type_name, "id", id, "err", err)
+            end
+        end
+        running = running - 1
+        if running == 0 then
+            skynet.wakeup(waiter)
+        end
+    end
+    local workers = math.min(SHUTDOWN_CONCURRENCY, #ids)
+    if workers > 0 then
+        running = workers
+        for _ = 1, workers do
+            skynet.fork(worker)
+        end
+        skynet.wait(waiter)
+    end
+    return self:count()
 end
 
 function M:touch(entity_id)

@@ -58,6 +58,12 @@ function M.score(node, entity_id)
     return mix64(node_seed(node) ~ (entity_id * GOLDEN))
 end
 
+-- 节点内选 agent 用。snowflake ID 的低位是每秒归零的序号，直接取模会让
+-- 低频发号（比如建角）全挤进同一个 agent，所以先打散再取模
+function M.hash(entity_id)
+    return mix64(entity_id * GOLDEN)
+end
+
 -- 候选为空时返回 nil。分数相同按节点名取小的那个，保证各节点算出同一个结果
 function M.select(nodes, entity_id)
     local best, best_score

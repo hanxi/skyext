@@ -1,1 +1,19 @@
 # 背包：存放玩家道具和资源
+.bag_item {
+    res_id 0 : integer # 资源id
+    res_size 1 : integer # 资源数量
+}
+
+.bag_group {
+    res_type 0 : integer # 资源分类
+    res 1 : *bag_item
+}
+
+# 查看背包
+get_bag 210 {
+    request {}
+    response {
+        code 0 : integer
+        bags 1 : *bag_group
+    }
+}

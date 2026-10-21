@@ -1,6 +1,7 @@
 # 存放玩家道具和资源
 .role_bag {
     bags 0 : *bag(res_type) # 背包列表
+    starter_granted 1 : boolean # 是否已经发过新手道具。不能拿“背包是空的”来判断，玩家自己也能把它用空
 }
 
 .bag {

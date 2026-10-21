@@ -1,6 +1,7 @@
 local t = require "skytest"
 local fs = require "skyext.util.fs"
 local lfs = require "lfs"
+local placement = require "skyext.entity.placement"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "lualib/skyext/entity/types.lua")
 
@@ -29,6 +30,7 @@ local function harness(entity_types)
                 h.placed = { type_name, type_config, entity_id }
                 return "node-from-placement"
             end,
+            hash = placement.hash,
         },
     }
     local env = setmetatable({
@@ -105,13 +107,26 @@ t.describe("entity types", function()
         t.expect(h.placed).to.be_nil()
     end)
 
-    t.it("calc_agent_index wraps by agent_count", function()
+    t.it("calc_agent_index maps the hashed id into 1..agent_count", function()
         local h = harness({ role = ROLE_TYPE })
-        t.expect(h.mod.calc_agent_index("role", 0)).to.equal(1)
-        t.expect(h.mod.calc_agent_index("role", 1)).to.equal(2)
-        t.expect(h.mod.calc_agent_index("role", 3)).to.equal(4)
-        t.expect(h.mod.calc_agent_index("role", 4)).to.equal(1)
-        t.expect(h.mod.calc_agent_index("role", 9)).to.equal(2)
+        for id = 0, 50 do
+            local idx = h.mod.calc_agent_index("role", id)
+            t.expect(idx).to.equal(placement.hash(id) % 4 + 1)
+        end
+    end)
+
+    -- 回归：snowflake 低位是每秒归零的序号，低频发出的 ID 低位几乎全是 0。
+    -- 直接 id % agent_count 时这些 ID 会全部落进第一个 agent
+    t.it("spreads snowflake-like ids whose low bits are zero", function()
+        local h = harness({ role = ROLE_TYPE })
+        local hits = {}
+        for second = 1, 400 do
+            local idx = h.mod.calc_agent_index("role", (second << 31) | (3 << 17))
+            hits[idx] = (hits[idx] or 0) + 1
+        end
+        for idx = 1, 4 do
+            t.expect(hits[idx] ~= nil and hits[idx] > 60).to.equal(true)
+        end
     end)
 
     t.it("calc_agent_index defaults to a single agent", function()

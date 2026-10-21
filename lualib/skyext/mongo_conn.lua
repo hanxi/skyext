@@ -117,6 +117,13 @@ function coll_mt:safe_update(query, update, upsert, multi)
     return conn_obj:call("raw_safe_update", self.coll, to_lightuserdata(bson_obj))
 end
 
+-- single 为真时最多删一条
+function coll_mt:safe_delete(query, single)
+    local conn_obj = self.db:_route()
+    log.debug("safe_delete", "coll", self.coll, "query", query, "single", single)
+    return conn_obj:call("safe_delete", self.coll, query, single)
+end
+
 -- 建索引，幂等。
 -- 单参数（推荐，支持复合索引）：create_index { { a = 1 }, { b = 1 }, name = "a_b", unique = true }
 -- 兼容写法（单字段）：create_index({ a = 1 }, { unique = true })

@@ -19,6 +19,12 @@ function M.unregister(services)
     skynet.send(g_cluster_discovery_service, "lua", "unregister", services)
 end
 
+-- 停服时调用：撤销租约，节点和服务立即从 etcd 消失。返回是否撤销成功
+function M.shutdown()
+    assert(g_cluster_discovery_service, "cluster_discovery service not initialized")
+    return skynet.call(g_cluster_discovery_service, "lua", "shutdown")
+end
+
 local g_services_cache = {} -- service -> service_obj
 local service_mt = {}
 service_mt.__index = service_mt

@@ -55,6 +55,8 @@ local function new_harness(opts)
         agent_starts = {}, -- 每个 agent 收到的 start 参数
         registered = {}, -- cluster_discovery.register 的调用
         wakeups = {},
+        shutdown_replies = {},
+        now = 0,
     }
 
     local function record(event, detail)
@@ -90,6 +92,14 @@ local function new_harness(opts)
             if opts.on_call then
                 opts.on_call(h, addr, cmd, arg)
             end
+            if cmd == "shutdown" then
+                -- 每个 agent 依次报告还剩几个实体卸不掉
+                local remaining = table.remove(h.shutdown_replies, 1)
+                if remaining == "error" then
+                    error("agent gone")
+                end
+                return remaining
+            end
             if cmd == "start" then
                 h.agent_starts[#h.agent_starts + 1] = { addr = addr, conf = arg }
             end
@@ -110,6 +120,17 @@ local function new_harness(opts)
         wakeup = function(token)
             record("wakeup")
             h.wakeups[#h.wakeups + 1] = token
+        end,
+        -- 停服用：fork 直接内联执行，时间只在 sleep 时前进
+        fork = function(f)
+            f()
+        end,
+        now = function()
+            return h.now
+        end,
+        sleep = function(ticks)
+            record("sleep")
+            h.now = h.now + ticks
         end,
     }
 
@@ -135,6 +156,9 @@ local function new_harness(opts)
             register = function(services)
                 record("cluster_register", services[1])
                 h.registered[#h.registered + 1] = services
+            end,
+            unregister = function(services)
+                record("cluster_unregister", services[1])
             end,
         },
     }
@@ -333,5 +357,37 @@ t.describe("entity_agentmgr 两段式启动", function()
         t.expect(result3).to.equal(true)
         t.expect(#h.agents).to.equal(2)
         t.expect(#h.registered).to.equal(1)
+    end)
+end)
+
+t.describe("entity_agentmgr 停服", function()
+    local function started()
+        local h = new_harness()
+        h.CMD.start({ watchdog = 0x01000005 })
+        h.events = {}
+        return h
+    end
+
+    t.it("先从服务发现摘掉自己，再让每个 agent 卸载实体", function()
+        local h = started()
+        h.shutdown_replies = { 0, 0 }
+        t.expect(h.CMD.shutdown(10)).to.equal(0)
+        -- fork 在桩里内联执行，最后一个 agent 回来时会多出一次（没人等的）wakeup
+        t.expect(h.events).to.equal({ "cluster_unregister:entity:role", "call:shutdown", "call:shutdown", "wakeup" })
+        t.expect(h.CMD.is_ready()).to.equal(false)
+    end)
+
+    t.it("有实体卸不掉时每秒重试一轮，卸干净就返回", function()
+        local h = started()
+        h.shutdown_replies = { 1, 0, 0, 0 }
+        t.expect(h.CMD.shutdown(10)).to.equal(0)
+        t.expect(index_of(h.events, "sleep")).to.equal(5)
+        t.expect(#h.shutdown_replies).to.equal(0)
+    end)
+
+    t.it("超时后报告剩余实体数，agent 调用出错按至少剩一个算", function()
+        local h = started()
+        h.shutdown_replies = { 2, "error", 2, "error" }
+        t.expect(h.CMD.shutdown(1)).to.equal(3)
     end)
 end)

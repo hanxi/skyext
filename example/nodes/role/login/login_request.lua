@@ -7,6 +7,7 @@ local config = require "skyext.config"
 local log = require "skyext.log"
 local jwt = require "jwt"
 local sproto_api = require "skyext.sproto_api"
+local role_db_api = require "role_db_api"
 
 local M = {}
 
@@ -126,6 +127,13 @@ function M:login(fd, client_obj)
     if not server2game()[server] then
         return {
             code = errcode.SERVER_NOT_EXIST,
+        }
+    end
+
+    if not role_db_api.has_role(rid, account, server) then
+        log.warn("login role not owned by account", "account", account, "rid", rid, "server", server)
+        return {
+            code = errcode.ROLE_NOT_EXIST,
         }
     end
 

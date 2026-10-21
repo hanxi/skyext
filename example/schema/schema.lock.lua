@@ -21,29 +21,23 @@ return {
         },
         mail = {
             attach = {
-                type = "mail_attach",
+                item = "mail_attach",
+                type = "array",
             },
-            cfg_id = {
-                type = "integer",
-            },
-            detail = {
-                key = "string",
-                type = "map",
-                value = "string",
+            content = {
+                type = "string",
             },
             mail_id = {
                 type = "integer",
             },
-            send_role = {
-                type = "mail_role",
-            },
             send_time = {
                 type = "integer",
             },
+            sender = {
+                type = "mail_sender",
+            },
             title = {
-                key = "string",
-                type = "map",
-                value = "string",
+                type = "string",
             },
         },
         mail_attach = {
@@ -57,7 +51,7 @@ return {
                 type = "integer",
             },
         },
-        mail_role = {
+        mail_sender = {
             name = {
                 type = "string",
             },
@@ -108,11 +102,11 @@ return {
                 type = "map",
                 value = "bag",
             },
+            starter_granted = {
+                type = "boolean",
+            },
         },
         role_mail = {
-            _version = {
-                type = "integer",
-            },
             mails = {
                 key = "integer",
                 type = "map",
@@ -125,14 +119,6 @@ return {
             },
             mail = {
                 type = "role_mail",
-            },
-        },
-        str2str = {
-            key = {
-                type = "string",
-            },
-            value = {
-                type = "string",
             },
         },
     },

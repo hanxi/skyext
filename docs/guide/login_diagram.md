@@ -65,7 +65,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A1[机器人客户端启动] --> B1[直接生成JWT Token<br/>模拟OAuth认证结果]
+    A1[机器人客户端启动] --> B1[HTTP POST /dev_login<br/>开发接口按账号名签发Token]
     B1 --> C1[HTTP GET /roles?token=xxx<br/>向Account服务获取角色列表]
 
     C1 --> D1{是否有角色?}
@@ -203,10 +203,11 @@ sequenceDiagram
     participant A as Account服务
     participant R as RoleNode
 
-    Note over RC: 1. 直接生成JWT Token（模拟OAuth结果）
-    RC->>RC: 本地生成JWT Token<br/>jwt.sign_login({account: "robot3"}, "HS512")
+    Note over RC: 1. 从开发登录接口拿Token（代替OAuth）
+    RC->>A: HTTP POST /dev_login<br/>{account: "robot1"}
+    A-->>RC: {code, token}
 
-    Note over RC: 2. 使用模拟Token获取角色
+    Note over RC: 2. 使用Token获取角色
     RC->>A: HTTP GET /roles?token=xxx
     A-->>RC: 返回角色列表
 
@@ -220,6 +221,7 @@ sequenceDiagram
     R-->>RC: 连接建立成功
 
     RC->>R: sproto login.login<br/>{token, rid, proto_checksum, server}
+    Note over R: 校验token，并确认rid属于token里的账号和区服
     R-->>RC: 登录响应<br/>{code, rid, rolenode}
 
     RC->>R: sproto role.login_info
@@ -254,13 +256,9 @@ sequenceDiagram
 
 未知字段会被忽略。GamePass 这类外部签发方必须按上面的 `iss`/`aud` 签，否则服务端会拒绝。
 
-**机器人客户端**（本地生成，仅用于测试）：
+**机器人客户端**（仅用于开发和测试）：向 Account 的 `POST /dev_login` 要 token，接口内部调用 `jwt.sign_login({ account = account })`。机器人自己不持有签名密钥。
 
-```lua
-local token = jwt.sign_login({ account = "robot3" }, "HS512")
-```
-
-`jwt.sign_login` 从配置取密钥和 `iss`/`aud`/`ttl`，自动补上 `iss`、`aud`、`iat`、`exp`。支持的签名算法：`HS256`、`HS512`。
+`jwt.sign_login` 从配置取密钥和 `iss`/`aud`/`ttl`，自动补上 `iss`、`aud`、`iat`、`exp`。支持的签名算法：`HS256`、`HS512`。`/dev_login` 不校验身份，由 `dev_login_enable` 控制，正式环境必须关掉。
 
 ### Account 服务 API
 

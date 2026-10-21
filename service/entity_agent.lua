@@ -5,6 +5,7 @@ local types = require "skyext.entity.types"
 local entitymgr_mod = require "skyext.entity.entitymgr"
 local log = require "skyext.log"
 local errcode = require "skyext.errcode"
+local config = require "skyext.config"
 
 local type_name, agent_index = ...
 agent_index = tonumber(agent_index)
@@ -26,14 +27,25 @@ local function module_names(modules)
     return names
 end
 
--- 路由跟着集群成员走，实体会换节点，而上一个节点可能还持有着它的分布式锁。
--- 向持有者要一次卸载再重试；只要一次：两边的成员视图短暂分歧时，无限重试会变成互相抢。
+local g_self_node
+local function self_node()
+    if not g_self_node then
+        g_self_node = config.get("cluster_node_name")
+    end
+    return g_self_node
+end
+
+local function agent_name(entity_id)
+    return types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
+end
+
+-- 客户端重新登录时向持锁节点要回实体：对方卸载（顺带踢掉旧连接）后本地再加载。
+-- 只要一次：两边成员视图短暂分歧时，无限重试会变成互相抢
 local function request_handoff(entity_id, holder_node)
     if not holder_node then
         return false
     end
-    local holder_agent = types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
-    local called, released = pcall(cluster.call, holder_node, holder_agent, "unload_entity", entity_id)
+    local called, released = pcall(cluster.call, holder_node, agent_name(entity_id), "unload_entity", entity_id)
     if not called or not released then
         log.warn("entity handoff failed", "type", type_name, "id", entity_id, "holder", holder_node)
         return false
@@ -42,31 +54,84 @@ local function request_handoff(entity_id, holder_node)
     return true
 end
 
--- 锁被别的节点占着时先要一次实体再重试；f 在抢锁阶段还没跑过，重试不会重复副作用
-local function with_entity(entity_id, f)
-    local result = table.pack(entitymgr:with_entity(entity_id, f))
+-- 本地执行失败是因为锁在另一个节点手里时，返回那个节点。
+-- 持锁的是本节点名，说明是上一次进程留下的租约还没过期，转给自己没有意义，只能等它过期
+local function remote_holder(result)
     if result[1] or result[2] ~= "lock held" then
-        return table.unpack(result, 1, result.n)
+        return nil
     end
-    if not request_handoff(entity_id, result[3]) then
-        return table.unpack(result, 1, result.n)
+    local holder = result[3]
+    if not holder or holder == self_node() then
+        return nil
     end
-    return entitymgr:with_entity(entity_id, f)
+    return holder
 end
 
-function CMD.entity_call(entity_id, cmd, ...)
+-- 粘性路由：路由跟着集群成员走，节点进出后实体的目标节点会变，但已经加载的实体
+-- 还留在上一个节点上。这时把请求转给持锁节点执行，而不是让它卸载——卸载会把在线
+-- 玩家踢下线，两边成员视图不一致时实体还会被来回搬。实体在旧节点自然卸载后，
+-- 下一次加载才落到新节点。
+--
+-- run_local 返回 true, ... 或 false, reason, owner；forward_cmd 在持锁节点上只处理
+-- 已加载的实体，没加载时回 NOT_LOADED，表示什么都没执行，可以回到本地再试一次。
+-- 转发本身抛错时不能重试：分不清是没送到，还是对方的 handler 执行到一半出错了。
+-- 返回打包的结果，以及转发出错时的错误
+local function sticky(entity_id, run_local, forward_cmd, args)
+    local result = table.pack(run_local())
+    local holder = remote_holder(result)
+    if not holder then
+        return result
+    end
+    local called, forwarded = pcall(function()
+        return table.pack(
+            cluster.call(holder, agent_name(entity_id), forward_cmd, entity_id, table.unpack(args, 1, args.n))
+        )
+    end)
+    if not called then
+        log.warn("entity forward failed", "type", type_name, "id", entity_id, "holder", holder, "err", forwarded)
+        return nil, forwarded
+    end
+    if forwarded[1] or forwarded[2] ~= entitymgr_mod.NOT_LOADED then
+        return forwarded
+    end
+    -- 持锁节点已经卸掉了实体，锁多半已经空出来
+    return table.pack(run_local())
+end
+
+local function handler_of(cmd)
     local handler_func = handler.handlers[cmd]
     if not handler_func then
         error(string.format("unknown entity command: %s.%s", type_name, cmd))
     end
+    return handler_func
+end
+
+-- 返回 true, handler 的返回值... 或 false, reason（实体不可用，handler 没有执行）。
+-- handler 抛错照常抛给调用方
+function CMD.entity_call(entity_id, cmd, ...)
+    local handler_func = handler_of(cmd)
     local args = table.pack(...)
-    local result = table.pack(with_entity(entity_id, function(entity)
-        return handler_func(entity, table.unpack(args, 1, args.n))
-    end))
-    if not result[1] then
-        return errcode.LOCK_FAILED
+    local result, forward_err = sticky(entity_id, function()
+        return entitymgr:with_entity(entity_id, function(entity)
+            return handler_func(entity, table.unpack(args, 1, args.n))
+        end)
+    end, "entity_call_loaded", table.pack(cmd, ...))
+    if not result then
+        error(forward_err, 0)
     end
-    return table.unpack(result, 2, result.n)
+    if not result[1] then
+        return false, result[2]
+    end
+    return table.unpack(result, 1, result.n)
+end
+
+-- 持锁节点上执行转发过来的请求：只用已经加载的实体，绝不为它加载
+function CMD.entity_call_loaded(entity_id, cmd, ...)
+    local handler_func = handler_of(cmd)
+    local args = table.pack(...)
+    return entitymgr:with_loaded_entity(entity_id, function(entity)
+        return handler_func(entity, table.unpack(args, 1, args.n))
+    end)
 end
 
 function CMD.entity_send(entity_id, cmd, ...)
@@ -76,30 +141,60 @@ function CMD.entity_send(entity_id, cmd, ...)
         return
     end
     local args = table.pack(...)
-    local ok, err = with_entity(entity_id, function(entity)
-        handler_func(entity, table.unpack(args, 1, args.n))
-    end)
+    local ok, result, forward_err = pcall(sticky, entity_id, function()
+        return entitymgr:with_entity(entity_id, function(entity)
+            handler_func(entity, table.unpack(args, 1, args.n))
+        end)
+    end, "entity_call_loaded", table.pack(cmd, ...))
     if not ok then
-        log.error("entity_send failed", "type", type_name, "id", entity_id, "err", err)
+        log.error("entity_send handler failed", "type", type_name, "id", entity_id, "cmd", cmd, "err", result)
+    elseif not result then
+        log.error("entity_send forward failed", "type", type_name, "id", entity_id, "cmd", cmd, "err", forward_err)
+    elseif not result[1] then
+        log.error("entity_send failed", "type", type_name, "id", entity_id, "cmd", cmd, "err", result[2])
     end
 end
 
 function CMD.__deliver_reliable(entity_id)
-    local ok, err = entitymgr:deliver_pending(entity_id)
-    if not ok then
-        log.error("reliable delivery deferred", "type", type_name, "id", entity_id, "err", err)
+    local result, forward_err = sticky(entity_id, function()
+        return entitymgr:deliver_pending(entity_id)
+    end, "deliver_reliable_loaded", table.pack())
+    if not result or not result[1] then
+        -- 消息已经落库，实体下次加载或投递重试时会补上
+        log.warn(
+            "reliable delivery deferred",
+            "type",
+            type_name,
+            "id",
+            entity_id,
+            "err",
+            result and result[2] or forward_err
+        )
+        return false
     end
-    return ok
+    return true
+end
+
+function CMD.deliver_reliable_loaded(entity_id)
+    return entitymgr:deliver_pending(entity_id, { loaded_only = true })
 end
 
 function CMD.unload_entity(entity_id)
     return entitymgr:unload(entity_id)
 end
 
+-- 停服：不再加载新实体，卸载全部已加载的实体。返回还没卸掉的数量，调用方可以再调一次
+function CMD.shutdown()
+    return entitymgr:unload_all()
+end
+
 function CMD.bind_client(entity_id, fd)
     local ok, reason, holder_node = entitymgr:try_ensure_loaded(entity_id)
     if not ok then
-        if reason ~= "lock held" or not holder_node then
+        if reason == "not found" then
+            return errcode.ENTITY_NOT_FOUND
+        end
+        if reason ~= "lock held" or not holder_node or holder_node == self_node() then
             return errcode.LOCK_FAILED
         end
         if not request_handoff(entity_id, holder_node) then
@@ -107,7 +202,7 @@ function CMD.bind_client(entity_id, fd)
         end
     end
 
-    local bound, result = with_entity(entity_id, function(entity)
+    local bound, result = entitymgr:with_entity(entity_id, function(entity)
         if entity.fd then
             client_ext.unbind_kick(entity.fd, entity)
         end

@@ -198,6 +198,17 @@ local function harness(handle, stored, defer)
         return reply
     end
 
+    function collection:find_one(query, fields)
+        h.finds = (h.finds or 0) + 1
+        if h.find_fail then
+            error("network failure")
+        end
+        if match_doc(h.store, query) then
+            return project(h.store, fields)
+        end
+        return nil
+    end
+
     function collection:safe_update(query, update, upsert)
         h.updates[#h.updates + 1] = { query = query, update = update, upsert = upsert }
         if h.on_update then
@@ -292,7 +303,7 @@ local function harness(handle, stored, defer)
     }, { __index = _G })
     h.db = assert(loadfile(source, "t", env))()
     if not defer then
-        h.doc, h.load_error = h.db.load("demo", "role", "rid", 7, nil, handle)
+        h.doc, h.load_error = h.db.load("demo", "role", "rid", 7, handle, { create = true })
         if not handle or h.doc then
             assert(h.doc, h.load_error)
         end
@@ -315,7 +326,7 @@ t.describe("dbmgr persistence", function()
         t.expect(orm.is_dirty(h.doc)).to.equal(true)
         t.expect(h.updates[1].upsert).to.equal(false)
         t.expect(h.updates[1].update["$set"]._version).to.equal(1)
-        t.expect(h.db.load("demo", "role", "rid", 7)).to.equal(h.doc)
+        t.expect(h.db.load("demo", "role", "rid", 7, nil, { create = true })).to.equal(h.doc)
         t.expect(h.calls).to.equal(1)
         h.fail = false
         t.expect(h.db.save("demo", "role", "rid", 7)).to.equal(true)
@@ -331,7 +342,7 @@ t.describe("dbmgr persistence", function()
         h.fail = "exception"
         t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(false)
         t.expect(h.cancelled).to.equal(false)
-        t.expect(h.db.load("demo", "role", "rid", 7)).to.equal(h.doc)
+        t.expect(h.db.load("demo", "role", "rid", 7, nil, { create = true })).to.equal(h.doc)
         h.fail = false
         h.matched = false
         t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(false)
@@ -368,7 +379,7 @@ t.describe("dbmgr persistence", function()
         t.expect(#h.updates).to.equal(1)
         t.expect(h.cancelled).to.equal(false)
         t.expect(orm.is_dirty(h.doc)).to.equal(true)
-        local replacement, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 14, valid = true })
+        local replacement, err = h.db.load("demo", "role", "rid", 7, { fence = 14, valid = true }, { create = true })
         t.expect(replacement).to.be_nil()
         t.expect(err).to.equal("stale dirty cache requires recovery")
     end)
@@ -387,7 +398,7 @@ t.describe("dbmgr persistence", function()
             )
             h.old_reply = reply
         end
-        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 13, valid = true }))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, { fence = 13, valid = true }, { create = true }))
         -- 认领已经抬高 fence，旧持有者的写入被拒
         t.expect(h.old_reply.n).to.equal(0)
         t.expect(h.store.name).to.equal("original")
@@ -411,7 +422,7 @@ t.describe("dbmgr persistence", function()
                 false
             )
         end
-        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 13, valid = true }))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, { fence = 13, valid = true }, { create = true }))
         t.expect(doc.name).to.equal("in-flight")
         t.expect(doc._version).to.equal(1)
         doc.name = "successor"
@@ -423,7 +434,7 @@ t.describe("dbmgr persistence", function()
         local h = harness({ fence = 4, valid = true })
         t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
         h.store._fence = 9
-        local doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 5, valid = true })
+        local doc, err = h.db.load("demo", "role", "rid", 7, { fence = 5, valid = true }, { create = true })
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("fence superseded")
         t.expect(h.duplicates).to.equal(0)
@@ -434,7 +445,7 @@ t.describe("dbmgr persistence", function()
         t.expect(h.fam[#h.fam].query["$or"]).to.be_nil()
         t.expect(h.store.name).to.equal("original")
         -- fence 更高的后继者照常接管
-        local successor = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 11, valid = true }))
+        local successor = assert(h.db.load("demo", "role", "rid", 7, { fence = 11, valid = true }, { create = true }))
         t.expect(successor).to.be_type("table")
         t.expect(h.store._fence).to.equal(11)
     end)
@@ -442,24 +453,33 @@ t.describe("dbmgr persistence", function()
     t.it("rejects an unconfirmed fence claim without caching the document", function()
         local h = harness(nil, nil, true)
         h.fam_fail = true
-        local doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 5, valid = true })
+        local doc, err = h.db.load("demo", "role", "rid", 7, { fence = 5, valid = true }, { create = true })
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("fence claim failed")
         t.expect(h.store._fence).to.be_nil()
         t.expect(h.entry).to.be_nil()
         h.fam_fail = "exception"
-        doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 5, valid = true })
+        doc, err = h.db.load("demo", "role", "rid", 7, { fence = 5, valid = true }, { create = true })
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("fence claim failed")
         h.fam_fail = nil
-        local successor = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 6, valid = true }))
+        local successor = assert(h.db.load("demo", "role", "rid", 7, { fence = 6, valid = true }, { create = true }))
         t.expect(successor).to.be_type("table")
         t.expect(h.store._fence).to.equal(6)
     end)
 
     t.it("creates a missing row that already carries the claiming fence", function()
         local h = harness(nil, false, true)
-        local doc = assert(h.db.load("demo", "role", "rid", 7, { name = "fresh" }, { fence = 21, valid = true }))
+        local doc = assert(
+            h.db.load(
+                "demo",
+                "role",
+                "rid",
+                7,
+                { fence = 21, valid = true },
+                { create = true, default = { name = "fresh" } }
+            )
+        )
         t.expect(doc.name).to.equal("fresh")
         t.expect(doc._version).to.equal(0)
         t.expect(h.calls).to.equal(2)
@@ -474,7 +494,7 @@ t.describe("dbmgr persistence", function()
 
     t.it("does not stamp a fence onto a row created without a lock handle", function()
         local h = harness(nil, false, true)
-        local doc = assert(h.db.load("demo", "role", "rid", 7, { name = "fresh" }))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { create = true, default = { name = "fresh" } }))
         t.expect(doc.name).to.equal("fresh")
         t.expect(h.calls).to.equal(1)
         t.expect(h.store._fence).to.be_nil()
@@ -484,7 +504,7 @@ t.describe("dbmgr persistence", function()
     t.it("does not write the key, version or fence back into the caller's default table", function()
         local h = harness(nil, false, true)
         local default = { name = "fresh" }
-        assert(h.db.load("demo", "role", "rid", 7, default, { fence = 2, valid = true }))
+        assert(h.db.load("demo", "role", "rid", 7, { fence = 2, valid = true }, { create = true, default = default }))
         t.expect(default.rid).to.be_nil()
         t.expect(default._version).to.be_nil()
         t.expect(default._fence).to.be_nil()
@@ -497,7 +517,7 @@ t.describe("dbmgr persistence", function()
                 h.store = { rid = 7, _version = 0, name = "created-elsewhere" }
             end
         end
-        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 8, valid = true }))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, { fence = 8, valid = true }, { create = true }))
         t.expect(doc.name).to.equal("created-elsewhere")
         t.expect(h.calls).to.equal(3)
         t.expect(h.duplicates).to.equal(0)
@@ -511,20 +531,20 @@ t.describe("dbmgr persistence", function()
             h.after_fam = nil
             handle.valid = false
         end
-        local doc, err = h.db.load("demo", "role", "rid", 7, nil, handle)
+        local doc, err = h.db.load("demo", "role", "rid", 7, handle, { create = true })
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("lease expired during fence claim")
         t.expect(h.entry).to.be_nil()
         -- fence 已落库且不回滚：旧持有者本就该被拒，后继者的 fence 一定更大
         t.expect(h.store._fence).to.equal(30)
-        local successor = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 31, valid = true }))
+        local successor = assert(h.db.load("demo", "role", "rid", 7, { fence = 31, valid = true }, { create = true }))
         t.expect(successor).to.be_type("table")
         t.expect(h.store._fence).to.equal(31)
     end)
 
     t.it("refuses to touch the database once the lease is already gone", function()
         local h = harness(nil, nil, true)
-        local doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 3, valid = false })
+        local doc, err = h.db.load("demo", "role", "rid", 7, { fence = 3, valid = false }, { create = true })
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("lease expired")
         t.expect(h.calls).to.equal(0)
@@ -627,7 +647,7 @@ t.describe("dbmgr lease loss recovery", function()
 
     -- 探测缓存是否还在：带着新租约去 load，脏缓存会挡住加载并要求先恢复
     local function dirty_cache_remains(h)
-        local doc, err = h.db.load("demo", "role", "rid", 7, nil, { fence = 31, valid = true })
+        local doc, err = h.db.load("demo", "role", "rid", 7, { fence = 31, valid = true }, { create = true })
         return doc == nil and err == "stale dirty cache requires recovery"
     end
 
@@ -654,7 +674,7 @@ t.describe("dbmgr lease loss recovery", function()
         t.expect(h.store.name).to.equal("unsaved")
         t.expect(h.store._version).to.equal(1)
         -- 缓存已经清掉：同一个 id 再 load 会回数据库重新认领
-        local reloaded = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 22, valid = true }))
+        local reloaded = assert(h.db.load("demo", "role", "rid", 7, { fence = 22, valid = true }, { create = true }))
         t.expect(reloaded.name).to.equal("unsaved")
         t.expect(h.store._fence).to.equal(22)
     end)
@@ -682,7 +702,7 @@ t.describe("dbmgr lease loss recovery", function()
         t.expect(h.store.name).to.equal("written-by-successor")
         t.expect(#h.errors).to.be_gte(1)
         -- 缓存清掉，调用方可以安全地把实体忘掉
-        local reloaded = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 22, valid = true }))
+        local reloaded = assert(h.db.load("demo", "role", "rid", 7, { fence = 22, valid = true }, { create = true }))
         t.expect(reloaded.name).to.equal("written-by-successor")
     end)
 
@@ -731,7 +751,7 @@ t.describe("dbmgr lease loss recovery", function()
         t.expect(h.cancelled).to.equal(true)
         -- 库里还是旧内容：这是一次确定的数据回退，调用方必须已经记过账
         t.expect(h.store.name).to.equal("original")
-        local reloaded = assert(h.db.load("demo", "role", "rid", 7, nil, { fence = 21, valid = true }))
+        local reloaded = assert(h.db.load("demo", "role", "rid", 7, { fence = 21, valid = true }, { create = true }))
         t.expect(reloaded.name).to.equal("original")
     end)
 
@@ -785,7 +805,7 @@ t.describe("dbmgr save wheel", function()
         t.expect(h.db.unload("demo", "role", "rid", 7)).to.equal(true)
         local writes = #h.updates
 
-        local doc = assert(h.db.load("demo", "role", "rid", 7))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { create = true }))
         -- equal 是深比较，这里要的是“不是同一个条目”
         t.expect(h.entry == stale).to.equal(false)
         doc.name = "again"
@@ -805,7 +825,7 @@ t.describe("dbmgr schema drift", function()
         -- 删字段不需要任何迁移脚本：旧文档里残留的 nick 丢掉就行，
         -- 否则它会直接撞在 orm 的类型检查上，这一行永远加载不起来
         local h = harness(nil, { rid = 7, _version = 0, name = "legacy", nick = "old" }, true)
-        local doc = assert(h.db.load("demo", "role", "rid", 7))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { create = true }))
         t.expect(doc.name).to.equal("legacy")
         t.expect(rawget(doc, "nick")).to.be_nil()
         t.expect(#h.warnings).to.equal(1)
@@ -816,7 +836,7 @@ t.describe("dbmgr schema drift", function()
     t.it("fills a field the document predates without marking it dirty", function()
         -- 加字段同样不需要迁移：补零值，玩法代码不用为"上个版本没有这个字段"分支
         local h = harness(nil, { rid = 7, _version = 0 }, true)
-        local doc = assert(h.db.load("demo", "role", "rid", 7))
+        local doc = assert(h.db.load("demo", "role", "rid", 7, nil, { create = true }))
         t.expect(doc.name).to.equal("")
         t.expect(#h.warnings).to.equal(0)
         -- 补出来的零值不算改动，不该因此产生一次回写
@@ -901,5 +921,62 @@ t.describe("dbmgr reload_orm_schema", function()
         t.expect(orm.is_dirty(doc)).to.equal(true)
         t.expect(h.db.save("demo", "role", "rid", 7)).to.equal(true)
         t.expect(h.store.name).to.equal("reloaded")
+    end)
+end)
+
+t.describe("dbmgr load without create", function()
+    t.it("reports a missing row as not found and never inserts one", function()
+        local h = harness(nil, false, true)
+        local doc, err = h.db.load("demo", "role", "rid", 7, { fence = 4, valid = true })
+        t.expect(doc).to.be_nil()
+        t.expect(err).to.equal("not found")
+        t.expect(h.store).to.be_nil()
+        for _, opts in ipairs(h.fam) do
+            t.expect(opts.upsert).to.equal(false)
+        end
+        t.expect(h.entry).to.be_nil()
+        -- 文档不存在是调用方传错 ID，不是数据库故障，不该刷 error
+        t.expect(h.errors).to.equal({})
+    end)
+
+    t.it("reports a missing row as not found without a lock handle too", function()
+        local h = harness(nil, false, true)
+        t.expect(table.pack(h.db.load("demo", "role", "rid", 7))).to.equal({ nil, "not found", n = 2 })
+        t.expect(h.calls).to.equal(0)
+        t.expect(h.store).to.be_nil()
+    end)
+
+    t.it("reads an existing row without a lock handle by a plain query", function()
+        local h = harness(nil, nil, true)
+        local doc = assert(h.db.load("demo", "role", "rid", 7))
+        t.expect(doc.name).to.equal("original")
+        t.expect(h.calls).to.equal(0)
+        t.expect(h.finds).to.equal(1)
+    end)
+
+    t.it("claims an existing row under the handle's fence", function()
+        local h = harness(nil, nil, true)
+        local doc = assert(h.db.load("demo", "role", "rid", 7, { fence = 3, valid = true }))
+        t.expect(doc.name).to.equal("original")
+        t.expect(h.store._fence).to.equal(3)
+        t.expect(h.finds).to.be_nil()
+    end)
+
+    t.it("refuses a row already claimed by a higher fence", function()
+        local h = harness(nil, { rid = 7, _version = 2, name = "taken", _fence = 9 }, true)
+        t.expect(table.pack(h.db.load("demo", "role", "rid", 7, { fence = 5, valid = true }))).to.equal({
+            nil,
+            "fence superseded",
+            n = 2,
+        })
+        t.expect(h.store._fence).to.equal(9)
+    end)
+
+    t.it("fails the load when the existence check itself fails", function()
+        local h = harness(nil, false, true)
+        h.find_fail = true
+        local doc, err = h.db.load("demo", "role", "rid", 7, { fence = 4, valid = true })
+        t.expect(doc).to.be_nil()
+        t.expect(err).to.equal("fence claim failed")
     end)
 end)

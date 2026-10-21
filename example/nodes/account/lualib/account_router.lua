@@ -43,10 +43,38 @@ local function verify_token(res, token)
     return data
 end
 
+local MAX_NAME_LEN = 32
+
+-- 名字只做最基本的检查：非空、不超长、不含控制字符。敏感词之类交给接入方
+local function valid_role_name(name)
+    return type(name) == "string" and name ~= "" and #name <= MAX_NAME_LEN and not name:find("%c")
+end
+
 local M = {
     GET = {},
     POST = {},
 }
+
+-- 开发用登录：按账号名直接签发登录 token，没有任何密码校验。
+-- 正式环境的 token 应由 SDK/平台登录服务在验明身份后签发，这个接口必须关掉
+-- （dev_login_enable 不配就是关的）。
+M.POST["/dev_login"] = function(req, res)
+    if not config.get_boolean("dev_login_enable") then
+        return res.write(404, "not found")
+    end
+    local b = req.read_json()
+    local account = b and b.account
+    if type(account) ~= "string" or not account:match("^[%w_]+$") or #account > 64 then
+        return res.write_json({ code = errcode.PARAM_ERROR })
+    end
+    local token, err = jwt.sign_login({ account = account })
+    if not token then
+        log.error("dev_login cannot sign token", "reason", err)
+        return res.write_json({ code = errcode.TOKEN_ERROR })
+    end
+    log.warn("dev_login issued a token without authentication", "account", account)
+    return res.write_json({ code = errcode.OK, token = token })
+end
 
 local function get_roles(account, query)
     return role_db_api.get_roles(account, query, { _id = false, rid = 1, server = 1, name = 1 })
@@ -103,16 +131,6 @@ M.POST["/create_role"] = function(req, res)
     end
 
     local server = b.server
-    local query = {
-        server = server,
-    }
-    local rids = role_db_api.get_roles(account, query)
-    if #rids > max_role_count() then
-        log.warn("create_role too many roles for account", "account", account, "max", max_role_count())
-        return res.write_json({
-            code = errcode.ROLE_TOO_MANY,
-        })
-    end
     local game = server2game()[server]
     if not game then
         return res.write_json({
@@ -120,12 +138,28 @@ M.POST["/create_role"] = function(req, res)
         })
     end
 
-    -- TODO: 限制单服角色数量
+    local name = b.name
+    if not valid_role_name(name) then
+        return res.write_json({
+            code = errcode.PARAM_ERROR,
+        })
+    end
+
+    -- max_role_count 是单个区服的上限
+    local query = {
+        server = server,
+    }
+    local rids = role_db_api.get_roles(account, query)
+    if #rids >= max_role_count() then
+        log.warn("create_role too many roles for account", "account", account, "max", max_role_count())
+        return res.write_json({
+            code = errcode.ROLE_TOO_MANY,
+        })
+    end
 
     -- TODO: 同名检测(全服同名还是单服同名?)
 
     -- 创建新的角色
-    local name = b.name
     local data = {
         server = server,
         game = game,

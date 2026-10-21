@@ -49,6 +49,20 @@ local function snowflake_service()
         return FIXED_MACHINE_ID ~= nil or (machine_slot ~= nil and machine_slot:valid())
     end
 
+    -- 启动时 id_generator 会立刻来预取一批号，而抢号要等 etcd 回话（通常几毫秒）。
+    -- 这段时间里的请求等号到手再发；等太久说明 etcd 不可用，报错让调用方知道，不无限卡住
+    local MACHINE_ID_WAIT_TICKS = 300
+    local function wait_machine_id()
+        local waited = 0
+        while not machine_id_held() do
+            if waited >= MACHINE_ID_WAIT_TICKS then
+                error("snowflake machine id is not held")
+            end
+            skynet.sleep(10)
+            waited = waited + 10
+        end
+    end
+
     -- 获取当前时间，单位 1s
     local function get_cur_timestamp()
         return math.floor(skynet.time())
@@ -88,17 +102,13 @@ local function snowflake_service()
 
     local CMD = {}
     function CMD.newid()
-        if not machine_id_held() then
-            error("snowflake machine id is not held")
-        end
+        wait_machine_id()
         return generate_one()
     end
 
     -- 返回一个顺序数组 { id1, id2, ... }
     function CMD.newids(count)
-        if not machine_id_held() then
-            error("snowflake machine id is not held")
-        end
+        wait_machine_id()
 
         count = tonumber(count) or 1
         if count < 1 then
@@ -139,7 +149,7 @@ local function snowflake_service()
             last_timestamp
         )
 
-        -- 先开始收消息再去抢号：etcd 还没就绪时调用方应该拿到明确报错，而不是卡死
+        -- 先开始收消息再去抢号：etcd 还没就绪时启动不会卡住，发号请求等一会儿拿不到号就报错
         cmd_api.dispatch(CMD)
         if machine_slot then
             skynet.fork(function()

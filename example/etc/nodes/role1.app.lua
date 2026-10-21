@@ -9,10 +9,7 @@ gate_port = "7012"
 
 maxclient = 1024
 
-agent_count = 2
 login_timeout_sec = 60 -- 登录连接验证超时，单位秒
-
-role_offline_unload_sec = 5 -- 角色离线后多久卸载，单位秒
 
 log_config = {
     {

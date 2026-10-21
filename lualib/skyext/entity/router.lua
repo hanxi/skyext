@@ -21,6 +21,8 @@ local function get_target(type_name, entity_id)
     return node, service_name
 end
 
+-- 返回 true, handler 的返回值...，或 false, reason（实体不可用，handler 没有执行）。
+-- handler 抛错、目标节点不可达时照常抛错
 function M.call(type_name, entity_id, cmd, ...)
     local node, service_name = get_target(type_name, entity_id)
     if node == self_node() then

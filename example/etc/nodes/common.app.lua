@@ -112,7 +112,10 @@ entity_types = {
         id_field = "rid",
         schema = "role",
         agent_count = 2,
+        -- 离线（没有客户端绑定）多久卸载，单位秒
         unload_delay = 300,
+        -- 角色文档由 Account 建角时创建，按 rid 加载时文档不存在就是 rid 错了，不能凭空建一份
+        auto_create = false,
         -- 兜底节点列表：正常情况下实体落在哪个节点由服务发现报告的存活节点决定
         -- （entity_agentmgr 注册的 "entity:role"），这里只在服务发现不可用时生效
         nodes = { "rolenode1", "rolenode2" },
@@ -140,6 +143,8 @@ role_db_coll = "role"
 
 db_save_interval = 3 * 60 -- 数据入库间隔秒
 
+mail_max_count = 100 -- 单个角色邮箱上限，满了丢最早的一封
+
 -- snowflake 机器号默认由各节点启动时从 etcd 抢一个带租约的槽位，扩容不用改配置。
 -- 只有需要把某个节点的号钉死时才在节点配置里写 snowflake_machine_id。
 
@@ -149,6 +154,10 @@ login_jwt_secret = "your_access_secret"
 -- 仅供本地开发：显式打开后允许继续使用弱密钥（日志里会持续告警）。
 -- 生产环境不要设置这一项——弱密钥会直接导致登录被拒绝。
 allow_insecure_secret = true
+
+-- 开发用登录接口 POST /dev_login：按账号名直接签发 token，不校验身份，robot 靠它登录。
+-- 正式环境的 token 由 SDK/平台登录服务签发，这一项必须去掉。
+dev_login_enable = true
 
 -- 登录 token 的签发方与接收方。签名密钥只保证"是我们签的"，这两项进一步保证
 -- "是这套服务签的、是签给这套服务的"：密钥被别的系统或别的用途复用时不会互相串。

@@ -44,6 +44,10 @@ local function harness(opts)
         end
         return self:with_entity(id, f)
     end
+    function fake_mgr:unload_all()
+        h.events[#h.events + 1] = "unload_all"
+        return h.unload_remaining or 0
+    end
     function fake_mgr:try_ensure_loaded(id)
         t.expect(id).to.equal(7)
         return not h.lock_error, h.lock_error, h.owner
@@ -53,9 +57,13 @@ local function harness(opts)
         h.events[#h.events + 1] = "unload"
         return h.unload_ok ~= false
     end
-    function fake_mgr:deliver_pending(id)
+    function fake_mgr:deliver_pending(id, opts)
         t.expect(id).to.equal(7)
         h.deliveries = h.deliveries + 1
+        h.deliver_opts = opts
+        if h.with_entity_error then
+            return false, h.with_entity_error, h.with_entity_owner
+        end
         return h.deliver_ok ~= false, h.deliver_error
     end
     h.mgr = fake_mgr
@@ -87,8 +95,8 @@ local function harness(opts)
     end
 
     local fake_cluster = {}
-    function fake_cluster.call(node, agent, command, id)
-        h.cluster_call = { node, agent, command, id }
+    function fake_cluster.call(node, agent, command, id, ...)
+        h.cluster_call = { node, agent, command, id, ... }
         h.cluster_calls = h.cluster_calls + 1
         if h.cluster_error then
             error(h.cluster_error)
@@ -97,6 +105,10 @@ local function harness(opts)
             -- 上一个持有者真的放了手：之后的重试应该能拿到实体
             h.with_entity_error = nil
             h.lock_error = nil
+        end
+        if command ~= "unload_entity" then
+            -- 持锁节点对转发请求的回复
+            return table.unpack(h.remote_reply or { true }, 1, h.remote_reply and h.remote_reply.n or 1)
         end
         return h.cluster_released ~= false
     end
@@ -153,8 +165,16 @@ local function harness(opts)
             end,
         },
         ["skyext.entity.entitymgr"] = {
+            NOT_LOADED = "not loaded",
             new = function()
                 return fake_mgr
+            end,
+        },
+        ["skyext.config"] = {
+            get = function(key)
+                if key == "cluster_node_name" then
+                    return "node-a"
+                end
             end,
         },
         ["skyext.entity.client_ext"] = fake_client,
@@ -189,13 +209,10 @@ end
 t.describe("entity_agent serialized ingress", function()
     t.it("runs RPC handlers through the entity gate and preserves multiple return values", function()
         local h = harness()
-        local a, b, c = h.CMD.entity_call(7, "change", "new")
-        t.expect(a).to.equal("new")
-        t.expect(b).to.be_nil()
-        t.expect(c).to.equal(3)
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ true, "new", nil, 3, n = 4 })
         t.expect(h.entity.data.name).to.equal("new")
         h.with_entity_error = "no lease"
-        t.expect(h.CMD.entity_call(7, "change", "ignored")).to.equal(errcode.LOCK_FAILED)
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "ignored"))).to.equal({ false, "no lease", n = 2 })
         t.expect(h.entity.data.name).to.equal("new")
     end)
 
@@ -280,51 +297,116 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.forward).to.equal({ 123, "forward" })
     end)
 
-    t.it("takes the entity back from its previous node when routing moves it here", function()
-        -- 集群成员变化后实体换了节点，上一个节点可能还持有着锁
+    t.it("does not hand off to itself when its previous process still holds the lock", function()
+        local h = harness()
+        h.lock_error = "lock held"
+        h.owner = "node-a"
+        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.cluster_calls).to.equal(0)
+    end)
+
+    t.it("reports a missing entity instead of a lock failure", function()
+        local h = harness()
+        h.lock_error = "not found"
+        t.expect(h.CMD.bind_client(7, 9)).to.equal(errcode.ENTITY_NOT_FOUND)
+    end)
+
+    t.it("forwards a call to the node holding the lock instead of taking the entity", function()
+        -- 集群成员变化后路由指到了这里，但实体还在上一个节点上：转过去执行，不卸载
+        local h = harness()
+        h.with_entity_error = "lock held"
+        h.with_entity_owner = "node-b"
+        h.remote_reply = table.pack(true, "remote")
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ true, "remote", n = 2 })
+        t.expect(h.cluster_call).to
+            .equal({ "node-b", ".entity_agent:role:1", "entity_call_loaded", 7, "change", "new" })
+        t.expect(h.cluster_calls).to.equal(1)
+        t.expect(h.events).to.equal({})
+        t.expect(h.entity.data.name).to.equal("before")
+    end)
+
+    t.it("runs locally once more when the holder has already unloaded the entity", function()
         local h = harness()
         h.with_entity_error = "lock held"
         h.with_entity_owner = "node-b"
         h.release_clears_lock = true
-        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal("new")
-        t.expect(h.cluster_call).to.equal({ "node-b", ".entity_agent:role:1", "unload_entity", 7 })
+        h.remote_reply = table.pack(false, "not loaded")
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ true, "new", nil, 3, n = 4 })
         t.expect(h.cluster_calls).to.equal(1)
         t.expect(h.entity.data.name).to.equal("new")
     end)
 
-    t.it("retries the handoff at most once so two nodes cannot ping-pong", function()
+    t.it("gives up after one forward so two nodes cannot bounce a request", function()
         local h = harness()
         h.with_entity_error = "lock held"
         h.with_entity_owner = "node-b"
-        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
+        h.remote_reply = table.pack(false, "not loaded")
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ false, "lock held", n = 2 })
         t.expect(h.cluster_calls).to.equal(1)
         t.expect(h.entity.data.name).to.equal("before")
-
-        h.cluster_error = "node down"
-        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
-        t.expect(h.cluster_calls).to.equal(2)
     end)
 
-    t.it("does not chase a handoff without a verified owner or for other failures", function()
+    t.it("raises a failed forward instead of retrying it locally", function()
+        -- 分不清是没送到还是对方 handler 执行到一半，重试可能让副作用发生两次
         local h = harness()
         h.with_entity_error = "lock held"
-        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
-        t.expect(h.cluster_calls).to.equal(0)
+        h.with_entity_owner = "node-b"
+        h.cluster_error = "node down"
+        t.expect(function()
+            h.CMD.entity_call(7, "change", "new")
+        end).to
+            .throw("node down")
+        t.expect(h.cluster_calls).to.equal(1)
+        t.expect(h.entity.data.name).to.equal("before")
+    end)
 
+    t.it("does not forward without an owner, to itself, or for other failures", function()
+        local h = harness()
+        h.with_entity_error = "lock held"
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ false, "lock held", n = 2 })
+        h.with_entity_owner = "node-a"
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ false, "lock held", n = 2 })
         h.with_entity_error = "entity lease expired"
         h.with_entity_owner = "node-b"
-        t.expect(h.CMD.entity_call(7, "change", "new")).to.equal(errcode.LOCK_FAILED)
+        t.expect(table.pack(h.CMD.entity_call(7, "change", "new"))).to.equal({ false, "entity lease expired", n = 2 })
         t.expect(h.cluster_calls).to.equal(0)
     end)
 
-    t.it("entity_send takes the entity back too", function()
+    t.it("entity_send is forwarded the same way", function()
         local h = harness()
         h.with_entity_error = "lock held"
         h.with_entity_owner = "node-b"
-        h.release_clears_lock = true
         h.CMD.entity_send(7, "change", "sent")
-        t.expect(h.cluster_calls).to.equal(1)
-        t.expect(h.entity.data.name).to.equal("sent")
+        t.expect(h.cluster_call).to
+            .equal({ "node-b", ".entity_agent:role:1", "entity_call_loaded", 7, "change", "sent" })
+        t.expect(h.events).to.equal({})
+    end)
+
+    t.it("forwarded calls only touch an entity that is already loaded", function()
+        local h = harness()
+        t.expect(table.pack(h.CMD.entity_call_loaded(7, "change", "fwd"))).to.equal({ true, "fwd", nil, 3, n = 4 })
+        h.lease_expired = true
+        t.expect(table.pack(h.CMD.entity_call_loaded(7, "change", "late"))).to.equal({ false, "expired", n = 2 })
+        t.expect(h.entity.data.name).to.equal("fwd")
+    end)
+
+    t.it("wakes reliable delivery on the node holding the lock", function()
+        local h = harness()
+        h.with_entity_error = "lock held"
+        h.with_entity_owner = "node-b"
+        t.expect(h.CMD.__deliver_reliable(7)).to.equal(true)
+        t.expect(h.cluster_call).to.equal({ "node-b", ".entity_agent:role:1", "deliver_reliable_loaded", 7 })
+        h.with_entity_error = nil
+        t.expect(h.CMD.deliver_reliable_loaded(7)).to.equal(true)
+        t.expect(h.deliver_opts).to.equal({ loaded_only = true })
+    end)
+
+    t.it("shutdown unloads every entity and reports what is left", function()
+        local h = harness()
+        t.expect(h.CMD.shutdown()).to.equal(0)
+        h.unload_remaining = 2
+        t.expect(h.CMD.shutdown()).to.equal(2)
+        t.expect(h.events).to.equal({ "unload_all", "unload_all" })
     end)
 
     t.it("disconnect respects the entity gate and unbinds an expired client", function()

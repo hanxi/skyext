@@ -94,7 +94,10 @@ local function harness()
 
     function fake_etcd_client:revoke(lease)
         h.revokes[#h.revokes + 1] = lease
-        return { body = {} }
+        if h.revoke_fail then
+            return nil, "connection refused"
+        end
+        return { status = 200, body = {} }
     end
 
     function fake_etcd_client:mod(key, value, opts)
@@ -819,5 +822,32 @@ t.describe("cluster_discovery service watch", function()
             kv("/skynet/service/entity:role/rolenode1", { node_revision = 10 }),
         }, "12")
         t.expect(h.CMD.query_service("entity:role")).to.equal({ "rolenode1" })
+    end)
+end)
+
+t.describe("cluster_discovery shutdown", function()
+    t.it("撤销租约让节点立即下线，之后不再续租也不再注册", function()
+        local h = harness()
+        h.start()
+        h.CMD.register({ "entity:role" })
+        h.tick()
+        t.expect(h.CMD.shutdown()).to.equal(true)
+        t.expect(h.revokes).to.equal({ "777" })
+        t.expect(h.timers["cluster_discovery_heartbeat"]).to.be_nil()
+        t.expect(h.timers["cluster_discovery_keepalive"]).to.be_nil()
+        -- 再调一次没有租约可撤，直接成功
+        t.expect(h.CMD.shutdown()).to.equal(true)
+        t.expect(#h.revokes).to.equal(1)
+        -- 停服后再有注册/注销也不能因为心跳定时器没了而报错
+        h.CMD.register({ "entity:other" })
+        h.CMD.unregister({ "entity:other" })
+    end)
+
+    t.it("撤销失败时如实报告，租约留给 etcd 自己过期", function()
+        local h = harness()
+        h.start()
+        h.tick()
+        h.revoke_fail = true
+        t.expect(h.CMD.shutdown()).to.equal(false)
     end)
 end)

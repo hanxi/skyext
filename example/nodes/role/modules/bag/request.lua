@@ -1,8 +1,9 @@
+local errcode = require "errcode"
+
 local M = {}
 
 function M.get_bag(request, fd, ctx)
-    local bag = ctx.entity.modules.bag
-    return { items = bag.data }
+    return { code = errcode.OK, bags = ctx.entity.modules.bag:snapshot() }
 end
 
 return M

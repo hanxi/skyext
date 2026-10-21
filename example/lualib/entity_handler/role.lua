@@ -19,6 +19,15 @@ function M.handlers.kick(entity)
     return true
 end
 
+-- 可靠消息的 handler：最后一个参数是 msg_id。消息至少投递一次，
+-- 拿 msg_id 当邮件 id，重复投递时 mail 模块会认出来并跳过
+function M.handlers.recv_mail(entity, mail, msg_id)
+    mail.mail_id = msg_id
+    if entity.modules.mail:receive(mail) then
+        log.info("mail received", "rid", entity.id, "mail_id", msg_id)
+    end
+end
+
 function M.on_load(entity)
     log.info("role entity loaded", "rid", entity.id)
 end
@@ -27,13 +36,12 @@ function M.on_unload(entity)
     log.info("role entity unloading", "rid", entity.id)
 end
 
+-- entity.fd 由 client_ext 维护，这里只放业务上的上下线逻辑
 function M.on_bind_client(entity, fd)
-    entity.fd = fd
     log.info("role client bound", "rid", entity.id, "fd", fd)
 end
 
 function M.on_unbind_client(entity)
-    entity.fd = nil
     log.info("role client unbound", "rid", entity.id)
 end
 

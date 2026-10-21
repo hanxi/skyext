@@ -37,7 +37,19 @@ local function harness()
             if fail then
                 error(fail)
             end
+            if cmd == "shutdown" then
+                return h.remaining or 0
+            end
             return true
+        end,
+        fork = function(f, ...)
+            if h.defer_fork then
+                return
+            end
+            f(...)
+        end,
+        abort = function()
+            h.aborted = true
         end,
         send = function(addr, _, cmd, ...)
             if h.fail_send then
@@ -52,6 +64,28 @@ local function harness()
 
     local modules = {
         skynet = fake_skynet,
+        ["skyext.cluster_discovery"] = {
+            shutdown = function()
+                h.calls[#h.calls + 1] = { addr = ".cluster_discovery", cmd = "shutdown", args = {} }
+                return true
+            end,
+        },
+        ["skyext.gm_api"] = {
+            register = function(cmds)
+                h.GM = cmds
+            end,
+        },
+        ["skyext.entity.router"] = {
+            reliable_send = function(...)
+                h.reliable = table.pack(...)
+                return 4242
+            end,
+        },
+        role_db_api = {
+            exists = function(rid)
+                return rid == 7
+            end,
+        },
         ["skyext.cmd_api"] = {
             dispatch_socket = function(cmd, socket)
                 h.CMD = cmd
@@ -200,5 +234,83 @@ t.describe("watchdog close_client", function()
         t.expect(h.calls[1].addr).to.equal(LOGIN)
         t.expect(h.calls[1].cmd).to.equal("open")
         t.expect(h.calls[1].args[1].fd).to.equal(3)
+    end)
+end)
+
+t.describe("watchdog GM shutdown", function()
+    local function commands(h)
+        local list = {}
+        for _, call in ipairs(h.calls) do
+            list[#list + 1] = call.addr .. " " .. call.cmd
+        end
+        return list
+    end
+
+    t.it("stops accepting, unloads every entity, flushes the log and exits", function()
+        local h = harness()
+        t.expect(table.pack(h.GM.shutdown.handler({ timeout = "30" }))).to.equal({ true, "shutdown started", n = 2 })
+        t.expect(commands(h)).to.equal({
+            ":gate close",
+            ":entity_agentmgr shutdown",
+            ".cluster_discovery shutdown",
+            ".logger close",
+        })
+        t.expect(h.calls[2].args[1]).to.equal(30)
+        t.expect(h.aborted).to.equal(true)
+    end)
+
+    t.it("keeps the process alive when some entities could not be unloaded", function()
+        local h = harness()
+        h.remaining = 2
+        h.GM.shutdown.handler({})
+        t.expect(h.calls[2].args[1]).to.equal(60)
+        t.expect(h.aborted).to.be_nil()
+        t.expect(logged(h, "node shutdown incomplete, process kept alive")).to.equal(true)
+        -- 排查后可以再来一次
+        h.remaining = 0
+        t.expect(h.GM.shutdown.handler({})).to.equal(true)
+        t.expect(h.aborted).to.equal(true)
+    end)
+
+    t.it("rejects a second shutdown while one is running", function()
+        local h = harness()
+        h.defer_fork = true
+        t.expect(h.GM.shutdown.handler({})).to.equal(true)
+        t.expect(table.pack(h.GM.shutdown.handler({}))).to.equal({ false, "already shutting down", n = 2 })
+        t.expect(#h.calls).to.equal(0)
+    end)
+end)
+
+t.describe("watchdog GM send_mail", function()
+    t.it("sends a system mail with an attachment through a reliable message", function()
+        local h = harness()
+        local ok, msg_id = h.GM.send_mail.handler({
+            rid = "7",
+            title = "补偿",
+            content = "服务器维护补偿",
+            res_type = "101",
+            res_id = "10086",
+            res_size = "5",
+        })
+        t.expect(ok).to.equal(true)
+        t.expect(msg_id).to.equal(4242)
+        t.expect(h.reliable[1]).to.equal("role")
+        t.expect(h.reliable[2]).to.equal(7)
+        t.expect(h.reliable[3]).to.equal("recv_mail")
+        local mail = h.reliable[4][1]
+        t.expect(mail.title).to.equal("补偿")
+        t.expect(mail.attach).to.equal({ { res_type = 101, res_id = 10086, res_size = 5 } })
+    end)
+
+    t.it("rejects a missing role, a missing title and a bad attachment", function()
+        local h = harness()
+        t.expect(table.pack(h.GM.send_mail.handler({ rid = "8", title = "x" }))).to.equal({
+            false,
+            "role not found",
+            n = 2,
+        })
+        t.expect((h.GM.send_mail.handler({ rid = "7" }))).to.equal(false)
+        t.expect((h.GM.send_mail.handler({ rid = "7", title = "x", res_type = "1", res_size = "0" }))).to.equal(false)
+        t.expect(h.reliable).to.be_nil()
     end)
 end)

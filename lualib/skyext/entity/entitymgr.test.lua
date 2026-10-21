@@ -56,10 +56,14 @@ local function harness(opts)
     end
 
     local fake_db = {}
-    function fake_db.load(dbname, collection, key, id, default, handle)
+    function fake_db.load(dbname, collection, key, id, handle, opts)
         record("load")
         h.load_handle = handle
+        h.load_opts = opts
         h.loads = (h.loads or 0) + 1
+        if h.missing then
+            return nil, "not found"
+        end
         h.cache[id] = handle
         if h.on_load then
             h.on_load()
@@ -252,7 +256,9 @@ local function harness(opts)
                 end,
             },
         }
-    h.mgr = entitymgr.new("role", { db_name = "demo", db_coll = "role", id_field = "rid" }, h.handler, modules)
+    h.entitymgr = entitymgr
+    local type_config = opts.type_config or { db_name = "demo", db_coll = "role", id_field = "rid" }
+    h.mgr = entitymgr.new("role", type_config, h.handler, modules)
     function h:run_jobs()
         while #self.jobs > 0 do
             table.remove(self.jobs, 1)()
@@ -1109,5 +1115,91 @@ t.describe("毒消息隔离", function()
         t.expect(retry).to.be_type("table")
         t.expect(h.mgr:deliver_pending(7)).to.equal(true)
         t.expect(retry.cancelled).to.equal(true)
+    end)
+end)
+
+t.describe("entitymgr addressing", function()
+    t.it("never creates a document unless the type opts into auto_create", function()
+        local h = harness()
+        t.expect(h.mgr:ensure_loaded(7)).to.equal(true)
+        t.expect(h.load_opts).to.equal({ create = false })
+
+        local auto = harness({ type_config = { db_name = "demo", db_coll = "g", id_field = "id", auto_create = true } })
+        t.expect(auto.mgr:ensure_loaded(7)).to.equal(true)
+        t.expect(auto.load_opts).to.equal({ create = true })
+    end)
+
+    t.it("releases the lock and reports a missing document as not found", function()
+        local h = harness()
+        h.missing = true
+        t.expect(table.pack(h.mgr:ensure_loaded(7))).to.equal({ false, "not found", n = 2 })
+        t.expect(h.events).to.equal({ "lock", "load", "unlock" })
+        t.expect(h.mgr:get(7)).to.be_nil()
+    end)
+
+    t.it("tells reliable delivery which node holds the lock", function()
+        local h = harness()
+        h.owner = "node-b"
+        t.expect(table.pack(h.mgr:deliver_pending(7))).to.equal({ false, "lock held", "node-b", n = 3 })
+        t.expect(h.loads).to.be_nil()
+    end)
+
+    t.it("delivers to loaded entities only when asked not to load", function()
+        local h = harness()
+        t.expect(table.pack(h.mgr:deliver_pending(7, { loaded_only = true }))).to.equal({
+            false,
+            h.entitymgr.NOT_LOADED,
+            n = 3,
+        })
+        t.expect(h.loads).to.be_nil()
+        h.mgr:ensure_loaded(7)
+        t.expect(h.mgr:deliver_pending(7, { loaded_only = true })).to.equal(true)
+    end)
+end)
+
+t.describe("entitymgr shutdown", function()
+    -- unload_all 用 skynet.fork 并发卸载；harness 里 fork 只是排队，
+    -- 所以在真协程里调它，再由测试手动跑队列
+    local function unload_all(h)
+        local box = {}
+        skynet.fork(function()
+            box.remaining = h.mgr:unload_all()
+        end)
+        skynet.sleep(0)
+        h:run_jobs()
+        for _ = 1, 10 do
+            if box.remaining then
+                break
+            end
+            skynet.sleep(1)
+        end
+        return box.remaining
+    end
+
+    t.it("unloads every entity and stops loading new ones", function()
+        local h = harness()
+        h.mgr:ensure_loaded(7)
+        h.mgr:ensure_loaded(8)
+        t.expect(unload_all(h)).to.equal(0)
+        t.expect(h.mgr:get(7)).to.be_nil()
+        t.expect(h.mgr:get(8)).to.be_nil()
+        t.expect(count_of(h.events, "persist")).to.equal(2)
+        t.expect(count_of(h.events, "unlock")).to.equal(2)
+        t.expect(table.pack(h.mgr:ensure_loaded(9))).to.equal({ false, "node shutting down", n = 2 })
+        t.expect(h.loads).to.equal(2)
+    end)
+
+    t.it("reports entities it could not unload so the caller can retry", function()
+        local h = harness()
+        h.mgr:ensure_loaded(7)
+        h.unload_ok = false
+        t.expect(unload_all(h)).to.equal(1)
+        h.unload_ok = true
+        t.expect(unload_all(h)).to.equal(0)
+    end)
+
+    t.it("returns immediately when nothing is loaded", function()
+        local h = harness()
+        t.expect(h.mgr:unload_all()).to.equal(0)
     end)
 end)

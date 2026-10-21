@@ -84,6 +84,14 @@ t.describe("mongo_conn collection 包装", function()
         t.expect(calls[2].cmd).to.equal("raw_safe_update")
         t.expect(calls[2].args[2]).to.be_type("userdata")
     end)
+
+    t.it("safe_delete 把查询和 single 原样交给连接服务", function()
+        local coll, calls = new_fake_coll()
+        coll:safe_delete({ rid = 7 }, true)
+        t.expect(calls[1].cmd).to.equal("safe_delete")
+        t.expect(calls[1].args[2]).to.equal({ rid = 7 })
+        t.expect(calls[1].args[3]).to.equal(true)
+    end)
 end)
 
 -- 加载一份全新的 mongo_conn 模块：mongo_config 缓存在模块局部变量里，

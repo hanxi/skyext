@@ -4,93 +4,74 @@
 
 ## 前置条件
 
-- Account 服务已启动（提供 `/roles` 和 `/create_role` HTTP 接口）
+- Account 服务已启动（提供 `/roles`、`/create_role` 以及开发用的 `/dev_login` HTTP 接口）
 - RoleNode（含网关 gate）已启动并监听
 - etcd 和 MongoDB 服务可用
-- 客户端持有有效的 JWT Token（正式客户端通过 GamePass OAuth 获取；机器人客户端本地签发）
+- 客户端持有有效的 JWT Token（正式客户端从 SDK/平台登录服务获取；示例机器人从 Account 的 `/dev_login` 获取）
 
 ## 登录步骤
 
-1. 客户端获取 JWT Token（正式客户端经 GamePass OAuth 回调获得；机器人客户端调用 `jwt.sign_login` 本地生成）
+1. 客户端获取 JWT Token（正式客户端从 SDK/平台登录服务获得；示例机器人 POST `/dev_login` 获得）
 2. 发送 HTTP GET `/roles?token=xxx` 到 Account 服务获取角色列表
 3. 如果没有角色，发送 HTTP POST `/create_role` 到 Account 服务创建角色
 4. 创建角色返回角色信息，其中包含 `rolenode` 字段
 5. 根据 `rolenode` 查找对应网关地址
 6. 连接网关（正式客户端经 WebSocket 网关转接，机器人使用 TCP `socket.open` 直连）
-7. 发送 sproto `login.login` 消息（携带 token、rid、server、proto_checksum）
-8. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
+7. 发送 sproto `login.login` 消息（携带 token、rid、server、proto_checksum）。服务端校验 token 后，还会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**，否则返回 `ROLE_NOT_EXIST`——token 只证明账号，rid 和 server 是客户端自己报的
+8. rid 不该落在本节点时返回 `NOT_THIS_NODE` 和正确的 `rolenode`，客户端改连那个节点重新登录
+9. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
+
+### 开发用登录接口
+
+`POST /dev_login`，body `{"account": "robot1"}`，返回 `{"code": 0, "token": "..."}`。它按账号名直接签发登录 token，**不校验任何身份**，只供本地开发和机器人使用；由 `dev_login_enable` 控制，不配就返回 404。正式环境必须关掉，token 由 SDK/平台登录服务在验明身份后用同一套 `login_jwt_*` 配置签发。
 
 ## Robot 登录创角示例
 
 以下代码来自 `example/nodes/robot/robotagent/main.lua`：
 
 ```lua
+-- 拿登录 token。示例走 Account 的开发登录接口；正式客户端从 SDK/平台登录服务拿
+local function fetch_token(account_host, account)
+    local status, res = httpc.post_json(account_host, "/dev_login", { account = account })
+    if status ~= 200 or type(res) ~= "table" or res.code ~= errcode.OK then
+        log.error("dev_login failed", "status", status, "res", res)
+        return nil
+    end
+    return res.token
+end
+
 function CMD.start(conf)
-    -- 密钥、签发方（iss）、接收方（aud）和有效期都来自配置，调用方只给业务 claim
-    local token, sign_err = jwt.sign_login({ account = "robot3" }, "HS512")
-    if not token then
-        log.error("cannot sign login token", "reason", sign_err)
-        return
-    end
-
     local account_host = config.get("account_host")
+    local gate_nodes = assert(config.get_table("gate_nodes"), "gate_nodes is not configured")
+    local account = "robot" .. conf.id
+    local token = fetch_token(account_host, account)
+    if not token then
+        return
+    end
+
     local status, body = httpc.get(account_host, "/roles?token=" .. token)
-    if status ~= 200 then
-        log.error("failed to get roles", "status", status, "body", body)
-        return
-    end
-    local res = cjson.decode(body)
-    if res.code ~= errcode.OK then
-        log.error("failed to get roles", "res", res)
-        return
-    end
-
-    local roles = res.roles
-    if #roles == 0 then
-        local req = {
-            token = token,
-            server = "s1",
-            name = "robot3",
-        }
-        local status, res = httpc.post_json(account_host, "/create_role", req)
-        if status ~= 200 then
-            log.error("failed to create role", "status", status, "res", res)
-            return
-        end
-        if res.code ~= errcode.OK then
-            log.error("failed to create role", "res", res)
-            return
-        end
-        roles = { res.role }
-    end
-
-    if #roles == 0 then
-        log.error("no roles available")
-        return
-    end
+    -- ……没有角色时 POST /create_role 创建，取第一个角色……
 
     local role = roles[1]
     local rolenode = role.rolenode
-    local gate_ip = gate_nodes[rolenode].ip
-    local gate_port = gate_nodes[rolenode].port
-    local fd, err = socket.open(gate_ip, gate_port)
+    local fd, err = socket.open(gate_nodes[rolenode].ip, gate_nodes[rolenode].port)
     if not fd then
         log.error("failed to connect to gate", "err", err)
         return
     end
     g_fd = fd
-    log.info("connected to gate", "ip", gate_ip, "port", gate_port)
 
-    local param = {
+    local ret = call("login.login", {
         token = token,
         rid = role.rid,
         server = "s1",
         proto_checksum = sproto_api.get_sproto_info().checksum,
-    }
-    local ret = call("login.login", param)
-    log.info("login response", "ret", ret)
-    local ret = call("role.login_info")
-    log.info("login_info response", "ret", ret)
+    })
+    if not ret or ret.code ~= errcode.OK then
+        return
+    end
+    -- 登录后看背包、给自己发一封邮件、再看邮箱
+    play(role.rid)
 end
 ```
 
@@ -193,4 +174,4 @@ server2game = {
 }
 ```
 
-角色的 `rolenode` 由 Entity 系统根据 `entity_types.role.nodes`（`common.app.lua`）自动分配。
+角色的 `rolenode` 由 Entity 系统按服务发现报告的存活节点（rendezvous hashing）计算；`entity_types.role.nodes`（`common.app.lua`）只在服务发现不可用时兜底。

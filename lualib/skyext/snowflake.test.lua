@@ -29,12 +29,13 @@ local function harness(opts)
         sleeps = 0,
         warns = {},
         order = {},
+        slot_valid = opts.slot_valid,
     }
 
     local fake_slot = {
         id = opts.slot_id or 3,
         valid = function()
-            return opts.slot_valid ~= false
+            return h.slot_valid ~= false
         end,
         acquire = function()
             h.acquired = true
@@ -56,6 +57,9 @@ local function harness(opts)
             sleep = function(ticks)
                 h.sleeps = h.sleeps + 1
                 h.now = h.now + ticks / 100
+                if h.on_sleep then
+                    h.on_sleep()
+                end
             end,
             fork = function(fn)
                 fn()
@@ -193,20 +197,33 @@ t.describe("snowflake id generation", function()
         t.expect(decode(h.CMD.newid()).machine).to.equal(3)
     end)
 
-    t.it("机器号不在手上时拒绝发号", function()
+    t.it("机器号一直不在手上时等一会儿后拒绝发号", function()
         -- 接手这个号的进程可能正在用同一个 (时间, 机器号)，发出去就是重复 ID
         local h = harness({ slot_valid = false })
         t.expect(function()
             h.CMD.newid()
         end).to
             .throw("machine id is not held")
+        t.expect(h.sleeps).to.equal(30)
         t.expect(function()
             h.CMD.newids(5)
         end).to
             .throw("machine id is not held")
     end)
 
-    t.it("先开始收消息再去抢号，etcd 没就绪时调用方拿到的是报错而不是卡死", function()
+    -- 回归：启动时 id_generator 抢在机器号到手之前预取，以前直接报错刷一条 error
+    t.it("机器号还在抢的时候先等它到手再发号", function()
+        local h = harness({ slot_valid = false })
+        h.on_sleep = function()
+            if h.sleeps == 3 then
+                h.slot_valid = true
+            end
+        end
+        t.expect(decode(h.CMD.newid()).machine).to.equal(3)
+        t.expect(h.sleeps).to.equal(3)
+    end)
+
+    t.it("先开始收消息再去抢号，etcd 没就绪时启动不会卡住", function()
         -- 反过来先抢号，etcd 不可用时服务会卡在启动里，调用方一律超时而不是拿到明确报错
         local h = harness()
         t.expect(h.order).to.equal({ "dispatch", "acquire" })

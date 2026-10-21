@@ -1,7 +1,7 @@
 local t = require "skytest"
 local fs = require "skyext.util.fs"
 local lfs = require "lfs"
-local crypt = require "skynet.crypt"
+local codec = require "skyext.etcd.codec"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "lualib/skyext/distributed_lock.lua")
 
@@ -51,7 +51,8 @@ local function harness(opts)
                                     {
                                         create_revision = existing.revision,
                                         lease = existing.lease,
-                                        value = crypt.base64encode(existing.value),
+                                        -- 和真实客户端一样：值先 JSON 再 base64
+                                        value = codec.encode_value(existing.value),
                                     },
                                 }
                             or {},
@@ -207,13 +208,13 @@ t.describe("distributed lock lease and fencing", function()
 
     t.it("锁被别的节点占着时如实返回持锁节点名", function()
         local h = harness()
-        -- 另一个节点先拿到了锁：etcd 里是它写的裸字符串，响应里 base64 过一道
+        -- 另一个节点先拿到了锁：它写的是节点名，响应里是 JSON 再 base64
         h.locks["/skynet/lock/entity/role/7"] = { revision = 41, lease = 999, value = "rolenode2" }
         local ok, reason, owner = h.lock.try_lock("entity/role/7", "rolenode1")
         t.expect(ok).to.equal(false)
         t.expect(reason).to.equal("lock held")
-        -- 回归保护：这里曾经对裸字符串做 cjson.decode，owner 恒为 nil，
-        -- 上层据此做的实体交接从来没触发过
+        -- 回归保护：这里曾经只解 base64，拿到带引号的 "\"rolenode2\""，
+        -- 上层的交接和转发全打到不存在的节点上
         t.expect(owner).to.equal("rolenode2")
     end)
 

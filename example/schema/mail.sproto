@@ -1,36 +1,27 @@
-# 存放玩家邮件
+# 存放玩家邮件。邮箱有上限（mail_max_count），满了丢最早的一封，
+# 所以放在角色文档里不会无限增长。全服邮件不要往这里塞，按收件人逐个投递
 .role_mail {
-    _version 0 : integer
-    mails 1 : *mail(mail_id) # 邮件列表
+    mails 0 : *mail(mail_id) # 邮件，按 mail_id 索引
 }
 
 # 一封邮件
 .mail {
-    mail_id 0 : integer # 邮件id
-    cfg_id 1 : integer # 邮件配置id
-    title 2 : *str2str() # 邮件标题
-    detail 3 : *str2str() # 邮件内容
-    send_time 4 : integer # 发送时间
-    send_role 5 : mail_role # 发送人
-    attach 6 : mail_attach # 附件
+    mail_id 0 : integer # 投递这封邮件的可靠消息 msg_id，重复投递靠它去重
+    title 1 : string # 标题
+    content 2 : string # 正文
+    send_time 3 : integer # 发送时间，毫秒
+    sender 4 : mail_sender # 发件人，系统邮件没有
+    attach 5 : *mail_attach # 附件
 }
 
-# format 参数
-.str2str {
-    key 0 : string
-    value 1 : string
-}
-
-.mail_role {
+.mail_sender {
     rid 0 : integer # 玩家id
     name 1 : string # 玩家名字
 }
 
-# 资源
+# 附件：领取时加进背包
 .mail_attach {
     res_type 0 : integer # 资源分类 : 区分不同类型的道具和资源
     res_id 1 : integer # 资源id
     res_size 2 : integer # 资源数量
 }
-
-## TODO: 全局邮件存储 另外定义？

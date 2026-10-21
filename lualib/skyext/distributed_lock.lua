@@ -1,6 +1,6 @@
 local skynet = require "skynet"
-local crypt = require "skynet.crypt"
 local etcd = require "skyext.etcd"
+local codec = require "skyext.etcd.codec"
 local timer = require "skyext.timer"
 local config = require "skyext.config"
 local log = require "skyext.log"
@@ -57,16 +57,19 @@ local function parse_revision(revision)
     return n and math.tointeger(n)
 end
 
--- 锁值就是持锁方自己传进来的字符串（当前全部调用方传的都是节点名），
--- etcd 在 JSON 响应里把它 base64 过一道，解完就是原样。
--- 曾经这里还套了一层 cjson.decode，于是裸字符串永远解不出来，owner 恒为 nil，
--- 上层据此做的实体交接（entity_agent.request_handoff）从来没真正触发过。
+-- 锁值是持锁方传进来的字符串（当前全部调用方传的都是节点名）。写入时 etcd 客户端
+-- 按 codec.encode_value 先 JSON 再 base64，读回来必须走同一套解码。
+-- 这里曾经只解 base64，拿到的是带引号的 "\"rolenode1\""，和任何节点名都对不上，
+-- 上层的交接和转发全都打到一个不存在的节点上。
 local function parse_owner(kv)
     if not kv or not kv.value then
         return nil
     end
-    local owner = crypt.base64decode(kv.value)
-    return owner ~= "" and owner or nil
+    local owner = codec.decode_value(kv.value)
+    if type(owner) ~= "string" or owner == "" then
+        return nil
+    end
+    return owner
 end
 
 function M.try_lock(key, value, expired_cb)

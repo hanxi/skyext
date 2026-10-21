@@ -71,6 +71,9 @@ local function new_holder(etcd_config)
                     safe_update = function(_, ...)
                         return h.collection:safe_update(...)
                     end,
+                    find_one = function(_, ...)
+                        return h.collection:findOne(...)
+                    end,
                 }
             end,
         },
@@ -132,7 +135,9 @@ t.describe("MongoDB and etcd fencing integration", function()
         t.expect(reason).to.equal("lock held")
         t.expect(owner).to.equal("node-1")
 
-        local doc = assert(h.first.dbmgr.load(dbname, "role", "rid", 7, { name = "initial" }, first))
+        local doc = assert(
+            h.first.dbmgr.load(dbname, "role", "rid", 7, first, { create = true, default = { name = "initial" } })
+        )
         doc.name = "updated"
         t.expect(h.first.dbmgr.save(dbname, "role", "rid", 7)).to.equal(true)
         local stored = h.collection:findOne({ rid = 7 })
@@ -152,7 +157,7 @@ t.describe("MongoDB and etcd fencing integration", function()
         h.second_handle = next_handle
         t.expect(h.first.lock.unlock(h.lock_key, first)).to.equal(false)
         t.expect(h.second.lock.is_valid(next_handle)).to.equal(true)
-        local next_doc = assert(h.second.dbmgr.load(dbname, "role", "rid", 7, nil, next_handle))
+        local next_doc = assert(h.second.dbmgr.load(dbname, "role", "rid", 7, next_handle, { create = true }))
         next_doc.name = "successor"
         t.expect(h.second.dbmgr.save(dbname, "role", "rid", 7)).to.equal(true)
 
@@ -172,7 +177,9 @@ t.describe("MongoDB and etcd fencing integration", function()
         h.second.heartbeat()
         local acquired, first = h.second.lock.try_lock(key, "node-2")
         t.expect(acquired).to.equal(true)
-        local doc = assert(h.second.dbmgr.load(dbname, "role", "rid", 8, { name = "initial" }, first))
+        local doc = assert(
+            h.second.dbmgr.load(dbname, "role", "rid", 8, first, { create = true, default = { name = "initial" } })
+        )
         doc.name = "updated"
         t.expect(h.second.dbmgr.save(dbname, "role", "rid", 8)).to.equal(true)
 
@@ -191,7 +198,7 @@ t.describe("MongoDB and etcd fencing integration", function()
         local acquired_next, next_handle = h.first.lock.try_lock(key, "node-1")
         t.expect(acquired_next).to.equal(true)
         t.expect(next_handle.fence).to.be_gt(first.fence)
-        local next_doc = assert(h.first.dbmgr.load(dbname, "role", "rid", 8, nil, next_handle))
+        local next_doc = assert(h.first.dbmgr.load(dbname, "role", "rid", 8, next_handle, { create = true }))
         t.expect(next_doc.name).to.equal("in-flight")
         t.expect(next_doc._version).to.equal(2)
         t.expect(rawget(next_doc, "_fence")).to.be_nil()
@@ -224,7 +231,8 @@ t.describe("MongoDB and etcd fencing integration", function()
         }, true)
         t.expect(ok).to.equal(true)
 
-        local doc, err = h.second.dbmgr.load(dbname, "role", "rid", 9, { name = "loser" }, handle)
+        local doc, err =
+            h.second.dbmgr.load(dbname, "role", "rid", 9, handle, { create = true, default = { name = "loser" } })
         t.expect(doc).to.be_nil()
         t.expect(err).to.equal("fence superseded")
         -- 关键：带 fence 约束的查询不匹配时绝不能 upsert 出第二条同 key 文档
@@ -243,7 +251,9 @@ t.describe("MongoDB and etcd fencing integration", function()
         t.expect(acquired).to.equal(true)
         t.expect(h.collection:find({ rid = 10 }):count()).to.equal(0)
 
-        local doc = assert(h.second.dbmgr.load(dbname, "role", "rid", 10, { name = "created" }, handle))
+        local doc = assert(
+            h.second.dbmgr.load(dbname, "role", "rid", 10, handle, { create = true, default = { name = "created" } })
+        )
         t.expect(doc.name).to.equal("created")
         t.expect(doc._version).to.equal(0)
         t.expect(rawget(doc, "_fence")).to.be_nil()
@@ -253,6 +263,19 @@ t.describe("MongoDB and etcd fencing integration", function()
         t.expect(stored._version).to.equal(0)
         t.expect(stored._fence).to.equal(handle.fence)
         t.expect(h.second.dbmgr.unload(dbname, "role", "rid", 10)).to.equal(true)
+        t.expect(h.second.lock.unlock(key, handle)).to.equal(true)
+    end)
+
+    t.it("never inserts a row for an unknown id when create is off", function()
+        local key = "entity/role/11"
+        h.second.heartbeat()
+        local acquired, handle = h.second.lock.try_lock(key, "node-2")
+        t.expect(acquired).to.equal(true)
+
+        local doc, err = h.second.dbmgr.load(dbname, "role", "rid", 11, handle)
+        t.expect(doc).to.be_nil()
+        t.expect(err).to.equal("not found")
+        t.expect(h.collection:find({ rid = 11 }):count()).to.equal(0)
         t.expect(h.second.lock.unlock(key, handle)).to.equal(true)
     end)
 end)

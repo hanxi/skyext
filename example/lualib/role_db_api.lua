@@ -41,32 +41,33 @@ function M.get_roles(account, query, projection)
     return g_coll_obj:find(query, projection)
 end
 
+-- 角色是否属于这个账号、这个区服。JWT 只证明了账号，rid 和 server 是客户端自己报的，
+-- 登录时不查这一步，拿自己的 token 就能登别人的角色
 function M.has_role(rid, account, server)
-    local projection = g_default_projection
-    local query = {
-        rid = rid,
-    }
-    local data = g_coll_obj:find_one(query, projection)
-    if data and data.account == account and data.server == server then
-        return true
-    end
-    return true
+    local data = g_coll_obj:find_one({ rid = rid }, { _id = false, account = 1, server = 1 })
+    return data ~= nil and data.account == account and data.server == server
 end
 
+function M.exists(rid)
+    return g_coll_obj:find_one({ rid = rid }, { _id = false, rid = 1 }) ~= nil
+end
+
+-- 先写角色文档，再把 rid 挂到账号上：中途失败最多留下一份谁也看不见的角色文档，
+-- 反过来则会在账号上留下指向空气的 rid
 function M.create(rid, account, data)
-    local ok, err = user_db_api.add_rid(account, rid)
-    if not ok then
-        log.error("create role failed by add rid", "account", account, "rid", rid, "err", err)
-        return false
-    end
     data = data or {}
     data.rid = rid
     data.account = account
     data._version = 0
-    ok, err = g_coll_obj:safe_insert(data)
+    local ok, err = g_coll_obj:safe_insert(data)
     if not ok then
         log.warn("create role failed", "account", account, "rid", rid, "err", err)
-        assert(user_db_api.remove_rid(account, rid))
+        return false
+    end
+    ok, err = user_db_api.add_rid(account, rid)
+    if not ok then
+        log.error("create role failed by add rid", "account", account, "rid", rid, "err", err)
+        g_coll_obj:safe_delete({ rid = rid }, true)
         return false
     end
 

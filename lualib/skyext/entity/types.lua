@@ -39,7 +39,7 @@ end
 function M.calc_agent_index(type_name, entity_id)
     local t = M.get(type_name)
     local agent_count = t.agent_count or 1
-    return entity_id % agent_count + 1
+    return placement.hash(entity_id) % agent_count + 1
 end
 
 function M.format_agent_service_name(type_name, index)

@@ -652,7 +652,10 @@ function CMD.register(services)
         log.info("register service", "service", service)
     end
 
-    g_heartbeat_timer:wakeup()
+    -- 停服之后心跳已经停了，不再往 etcd 写
+    if g_heartbeat_timer then
+        g_heartbeat_timer:wakeup()
+    end
 end
 
 function CMD.unregister(services)
@@ -661,7 +664,34 @@ function CMD.unregister(services)
         log.info("unregister service", "service", service)
     end
 
-    g_heartbeat_timer:wakeup()
+    if g_heartbeat_timer then
+        g_heartbeat_timer:wakeup()
+    end
+end
+
+-- 停服：撤销租约，本节点的节点键和服务键随之立即删除，别的节点马上就能看到它下线，
+-- 不用等租约过期。之后不再续租、不再注册，调用方随后退出进程
+function CMD.shutdown()
+    if g_heartbeat_timer then
+        g_heartbeat_timer:cancel()
+        g_heartbeat_timer = nil
+    end
+    if g_keepalive_timer then
+        g_keepalive_timer:cancel()
+        g_keepalive_timer = nil
+    end
+    local leaseid = g_leaseid
+    g_leaseid = nil
+    if not leaseid then
+        return true
+    end
+    local ret, err = g_etcd_client:revoke(leaseid)
+    if not ret or ret.status ~= 200 then
+        log.error("cluster_discovery revoke lease failed", "leaseid", leaseid, "err", err, "ret", ret)
+        return false
+    end
+    log.info("cluster_discovery lease revoked", "leaseid", leaseid)
+    return true
 end
 
 function CMD.query_service(service)

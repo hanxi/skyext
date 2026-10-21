@@ -1,0 +1,52 @@
+# 邮件。玩家之间互发走可靠消息投递：发件方先落库再唤醒收件方，
+# 收件方离线、在别的节点上都能收到
+.mail_item_attach {
+    res_type 0 : integer
+    res_id 1 : integer
+    res_size 2 : integer
+}
+
+.mail_item_sender {
+    rid 0 : integer
+    name 1 : string
+}
+
+.mail_item {
+    mail_id 0 : integer
+    title 1 : string
+    content 2 : string
+    send_time 3 : integer # 毫秒
+    sender 4 : mail_item_sender # 系统邮件没有发件人
+    attach 5 : *mail_item_attach
+}
+
+# 邮件列表，新邮件在前
+list 220 {
+    request {}
+    response {
+        code 0 : integer
+        mails 1 : *mail_item
+    }
+}
+
+# 给另一个玩家（也可以是自己）发邮件。玩家邮件不能带附件
+send 221 {
+    request {
+        to_rid 0 : integer
+        title 1 : string
+        content 2 : string
+    }
+    response {
+        code 0 : integer
+    }
+}
+
+# 领取附件并删除邮件
+claim 222 {
+    request {
+        mail_id 0 : integer
+    }
+    response {
+        code 0 : integer
+    }
+}

@@ -5,5 +5,6 @@ errcode.ROLE_TOO_MANY = 101
 errcode.TOKEN_ERROR = 102
 errcode.PROTO_CHECKSUM = 103
 errcode.SERVER_NOT_EXIST = 104
+errcode.MAIL_NOT_FOUND = 110
 
 return errcode

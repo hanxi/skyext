@@ -1,5 +1,9 @@
 local skynet = require "skynet"
 local cmd_api = require "skyext.cmd_api"
+local gm_api = require "skyext.gm_api"
+local cluster_discovery = require "skyext.cluster_discovery"
+local router = require "skyext.entity.router"
+local time = require "skyext.time"
 local log = require "skyext.log"
 
 local CMD = {}
@@ -10,6 +14,10 @@ local g_entity_agentmgr_service
 local g_clients = {}
 local g_started = false
 local g_starting = false
+local g_shutting_down = false
+
+-- 等实体卸载的默认时长（秒）
+local SHUTDOWN_TIMEOUT = 60
 
 function SOCKET.open(fd, addr)
     assert(not g_clients[fd], fd .. " exists")
@@ -106,6 +114,89 @@ function CMD.start(conf)
     return true
 end
 
+-- 停服顺序：先停止接受新连接，再卸载全部实体（落库、释放锁、踢掉在线玩家），
+-- 全部卸干净才退出进程。有实体卸不掉就不退：那些实体还有没落库的改动，
+-- 退出就丢了。排查后可以再发一次 shutdown。
+local function shutdown(timeout_sec)
+    log.info("node shutdown begin", "timeout", timeout_sec)
+    local closed, close_err = pcall(skynet.call, g_gate_service, "lua", "close")
+    if not closed then
+        log.warn("gate close failed", "err", close_err)
+    end
+    local ok, remaining = pcall(skynet.call, g_entity_agentmgr_service, "lua", "shutdown", timeout_sec)
+    if not ok or remaining ~= 0 then
+        log.error("node shutdown incomplete, process kept alive", "remaining", remaining)
+        g_shutting_down = false
+        return
+    end
+    -- 撤销服务发现租约，别的节点立刻看到本节点下线，不用等 30 秒过期
+    local revoked, revoke_err = pcall(cluster_discovery.shutdown)
+    if not revoked then
+        log.warn("cluster discovery shutdown failed", "err", revoke_err)
+    end
+    log.info("node shutdown complete, exiting")
+    -- 退出前让 logger 把缓冲写完
+    pcall(skynet.call, ".logger", "lua", "close")
+    skynet.abort()
+end
+
+local GM_CMD = {}
+
+GM_CMD.shutdown = {
+    desc = "停服：停止接入、卸载全部实体落库后退出进程",
+    params = { timeout = "等实体卸载的秒数，默认 60" },
+    handler = function(params)
+        if g_shutting_down then
+            return false, "already shutting down"
+        end
+        g_shutting_down = true
+        -- 卸载可能要几十秒，不能让 GM 请求一直挂着，进度看日志
+        skynet.fork(shutdown, tonumber(params.timeout) or SHUTDOWN_TIMEOUT)
+        return true, "shutdown started"
+    end,
+}
+
+-- 非实体服务给实体发可靠消息的示范：消息落库后由收件人自己的 handler 收下
+GM_CMD.send_mail = {
+    desc = "给玩家发一封系统邮件，可带一个附件",
+    params = {
+        rid = "收件人",
+        title = "标题",
+        content = "正文",
+        res_type = "附件资源分类（可选）",
+        res_id = "附件资源id（可选）",
+        res_size = "附件数量（可选）",
+    },
+    handler = function(params)
+        local rid = math.tointeger(tonumber(params.rid))
+        if not rid or type(params.title) ~= "string" or params.title == "" then
+            return false, "rid and title are required"
+        end
+        -- role_db_api 加载时就会连 mongo，只在真要发邮件时才拉进来
+        local role_db_api = require "role_db_api"
+        if not role_db_api.exists(rid) then
+            return false, "role not found"
+        end
+        local attach
+        if params.res_type then
+            local res_type = math.tointeger(tonumber(params.res_type))
+            local res_id = math.tointeger(tonumber(params.res_id))
+            local res_size = math.tointeger(tonumber(params.res_size))
+            if not res_type or not res_id or not res_size or res_size <= 0 then
+                return false, "invalid attachment"
+            end
+            attach = { { res_type = res_type, res_id = res_id, res_size = res_size } }
+        end
+        local mail = {
+            title = params.title,
+            content = params.content,
+            send_time = time.now_ms(),
+            attach = attach,
+        }
+        return true, router.reliable_send("role", rid, "recv_mail", { mail })
+    end,
+}
+
 function CMD.close_client(fd)
     close_client(fd)
 end
@@ -122,4 +213,5 @@ skynet.start(function()
     g_gate_service = skynet.newservice("gate")
     g_login_service = skynet.newservice("login")
     g_entity_agentmgr_service = skynet.newservice("entity_agentmgr", "role")
+    gm_api.register(GM_CMD)
 end)

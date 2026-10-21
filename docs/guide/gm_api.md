@@ -43,7 +43,7 @@ GET /gm/list
 }
 ```
 
-只返回**当前账号有权执行**的命令：看不到的命令就是跑不了的命令。
+返回节点上所有已注册的命令。GM 只认一个 token，没有按命令分级，见下文[为什么不分级](#为什么不分级)。
 
 **字段说明**
 
@@ -394,6 +394,38 @@ curl -X POST http://localhost:9092/gm/execute \
 文档不会被删除，只是不再出现在 `dlq_list` 里。这条消息承载的业务效果就此永久丢失，填上 `operator`。
 
 ---
+
+## 示例 Role 节点命令
+
+这两条由 `example/nodes/role/watchdog.lua` 注册，属于示例游戏层，不是引擎内置命令。
+
+### shutdown — 停服
+
+```bash
+curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=shutdown&timeout=60"
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| timeout | string | 否 | 等实体卸载的秒数，默认 60 |
+
+立即返回 `shutdown started`，停服在后台进行：关 gate 停止接入 → 卸载全部实体（落库、释放锁、踢下在线玩家）→ 撤销服务发现租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。进度看节点日志。
+
+### send_mail — 发系统邮件
+
+```bash
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:9092/gm/execute?cmd=send_mail&rid=123&title=补偿&content=维护补偿&res_type=101&res_id=10086&res_size=5"
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| rid | string | 是 | 收件人，角色必须存在 |
+| title | string | 是 | 标题 |
+| content | string | 否 | 正文 |
+| res_type / res_id / res_size | string | 否 | 附件，三项一起给；领取时加进背包 |
+
+返回可靠消息的 `msg_id`。邮件经可靠消息投递，收件人离线或在别的节点上都能收到。
 
 ## 指标命令
 

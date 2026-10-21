@@ -178,6 +178,57 @@ function CMD.start(conf)
     return true
 end
 
+-- 让每个 agent 卸载一轮，返回还留在内存里的实体总数。agent 之间并行
+local function shutdown_agents()
+    local remaining = 0
+    local pending = #g_agents
+    local waiter = {}
+    for i, agent in ipairs(g_agents) do
+        skynet.fork(function()
+            local ok, count = pcall(skynet.call, agent, "lua", "shutdown")
+            if not ok then
+                log.error("entity_agent shutdown failed", "type", type_name, "index", i, "err", count)
+                -- 不知道还剩多少，至少算一个，免得上层误以为已经卸干净
+                count = 1
+            end
+            remaining = remaining + count
+            pending = pending - 1
+            if pending == 0 then
+                skynet.wakeup(waiter)
+            end
+        end)
+    end
+    if pending > 0 then
+        skynet.wait(waiter)
+    end
+    return remaining
+end
+
+-- 停服：先从服务发现摘掉自己，路由随之移到其他节点；再卸载全部实体（落库、释放锁、
+-- 断开客户端）。卸载失败的实体每秒重试一轮，直到卸干净或超时。
+-- 返回还没卸掉的实体数，0 表示可以安全退出进程
+function CMD.shutdown(timeout_sec)
+    local deadline = skynet.now() + (timeout_sec or 60) * 100
+    if g_ready then
+        cluster_discovery.unregister({ "entity:" .. type_name })
+        g_ready = false
+    end
+    log.info("entity_agentmgr shutting down", "type", type_name)
+    while true do
+        local remaining = shutdown_agents()
+        if remaining == 0 then
+            log.info("entity_agentmgr shutdown complete", "type", type_name)
+            return 0
+        end
+        if skynet.now() >= deadline then
+            log.error("entity_agentmgr shutdown timed out", "type", type_name, "remaining", remaining)
+            return remaining
+        end
+        log.warn("entity_agentmgr shutdown retrying", "type", type_name, "remaining", remaining)
+        skynet.sleep(100)
+    end
+end
+
 function CMD.is_ready()
     return g_ready
 end

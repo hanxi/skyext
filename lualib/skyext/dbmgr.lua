@@ -119,6 +119,48 @@ local function matched_value(ret)
     return nil
 end
 
+-- 认领没匹配时弄清楚原因：文档不存在、已经属于更高的 fence，还是值得再认领一次。
+-- 返回 value（文档已归我们）| nil, reason, detail；reason 为 nil 表示该重试，detail 是重试原因
+local function resolve_unclaimed(coll_obj, key, unique_id, initial, fence, create)
+    if not create then
+        local called, existing = pcall(coll_obj.find_one, coll_obj, { [key] = unique_id }, g_claim_projection)
+        if not called then
+            return nil, "fence claim failed", existing
+        end
+        if type(existing) ~= "table" then
+            return nil, "not found"
+        end
+        if existing._fence and existing._fence > fence then
+            return nil, "fence superseded"
+        end
+        -- 两次查询之间 fence 又落回了可认领的范围，再试一次
+        return nil, nil, "fence changed concurrently"
+    end
+
+    local created, create_err = find_and_modify(coll_obj, {
+        query = { [key] = unique_id },
+        -- 只有 $setOnInsert（initial 里已经带上 _fence），不会改动既有文档。
+        update = { ["$setOnInsert"] = initial },
+        -- 这一步需要读回 _fence 判断文档归谁，调用方负责在建 ORM 文档前剔除。
+        fields = g_claim_projection,
+        upsert = true,
+        new = true,
+    })
+    local value = matched_value(created)
+    if not value then
+        return nil, "fence claim failed", create_err or (created and created.lastErrorObject)
+    end
+    if value._fence == fence then
+        -- 要么是我们刚插入的（插入时就带上了 fence），要么本来就归我们。
+        return value
+    end
+    if value._fence and value._fence > fence then
+        return nil, "fence superseded"
+    end
+    -- 文档刚被别人创建且 fence 更低或缺失：回到上面重新认领。
+    return nil, nil, "document created concurrently"
+end
+
 -- 原子地“认领 fence + 读取文档”。
 --
 -- 必须是同一次 findAndModify：先读后认领会留下窗口，旧持有者在窗口内的写入
@@ -128,8 +170,8 @@ end
 -- 带 fence 约束的查询绝不能开 upsert：文档若已被更高 fence 认领，查询不匹配会让
 -- upsert 直接插入一条同 key 的重复文档（除非恰好建了唯一索引，而索引是配置可选的）。
 -- 所以“不存在就创建”单独走等值查询 + $setOnInsert，既不会改坏既有文档，
--- 也不会插出重复 key。
-local function claim_with_fence(coll_obj, key, unique_id, initial, fence)
+-- 也不会插出重复 key。create 为假时文档不存在就返回 "not found"，绝不新建。
+local function claim_with_fence(coll_obj, key, unique_id, initial, fence, create)
     local last_err
     for _ = 1, FENCE_CLAIM_ATTEMPTS do
         local ret, err = find_and_modify(coll_obj, {
@@ -155,29 +197,11 @@ local function claim_with_fence(coll_obj, key, unique_id, initial, fence)
             return claimed
         end
 
-        -- 没匹配：要么文档还不存在，要么已经属于更高的 fence。
-        local created, create_err = find_and_modify(coll_obj, {
-            query = { [key] = unique_id },
-            -- 只有 $setOnInsert（initial 里已经带上 _fence），不会改动既有文档。
-            update = { ["$setOnInsert"] = initial },
-            -- 这一步需要读回 _fence 判断文档归谁，调用方负责在建 ORM 文档前剔除。
-            fields = g_claim_projection,
-            upsert = true,
-            new = true,
-        })
-        local value = matched_value(created)
-        if not value then
-            return nil, "fence claim failed", create_err or (created and created.lastErrorObject)
+        local value, reason, detail = resolve_unclaimed(coll_obj, key, unique_id, initial, fence, create)
+        if value or reason then
+            return value, reason, detail
         end
-        if value._fence == fence then
-            -- 要么是我们刚插入的（插入时就带上了 fence），要么本来就归我们。
-            return value
-        end
-        if value._fence and value._fence > fence then
-            return nil, "fence superseded"
-        end
-        -- 文档刚被别人创建且 fence 更低或缺失：回到上面重新认领。
-        last_err = "document created concurrently"
+        last_err = detail
     end
     return nil, "fence claim failed", last_err
 end
@@ -252,7 +276,14 @@ local function save_wheel_obj()
     return g_save_wheel
 end
 
-function M.load(dbname, dbcoll, key, unique_id, default, handle)
+-- 读取文档并放进缓存与回存轮。
+-- handle 是分布式锁句柄，带上时用它的 fence 认领文档。
+-- opts.create 为真时文档不存在就按 opts.default 新建，否则返回 nil, "not found"：
+-- 实体按 ID 寻址，调用方传错一个 ID 不该凭空造出一份文档。
+function M.load(dbname, dbcoll, key, unique_id, handle, opts)
+    opts = opts or {}
+    local create = opts.create == true
+    local default = opts.default
     check_collection(dbname, dbcoll)
     return with_row_lock(dbname, dbcoll, unique_id, function()
         if not lease_valid(handle) then
@@ -286,7 +317,10 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
             if not lease_valid(handle) then
                 return nil, "lease expired during load"
             end
-            local claimed, reason, detail = claim_with_fence(coll_obj, key, unique_id, initial, handle.fence)
+            local claimed, reason, detail = claim_with_fence(coll_obj, key, unique_id, initial, handle.fence, create)
+            if reason == "not found" then
+                return nil, reason
+            end
             if not claimed then
                 log.error(
                     "fence claim failed",
@@ -314,6 +348,16 @@ function M.load(dbname, dbcoll, key, unique_id, default, handle)
             end
             claimed._fence = nil
             value = claimed
+        elseif not create then
+            local called, ret = pcall(coll_obj.find_one, coll_obj, { [key] = unique_id }, g_default_projection)
+            if not called then
+                log.error("load failed", "dbname", dbname, "dbcoll", dbcoll, "unique_id", unique_id, "error", ret)
+                return nil, "database load failed"
+            end
+            if type(ret) ~= "table" then
+                return nil, "not found"
+            end
+            value = ret
         else
             local ret, err = find_and_modify(coll_obj, {
                 query = { [key] = unique_id },
@@ -488,7 +532,7 @@ function M.recover(dbname, dbcoll, key, unique_id, old_handle, new_handle)
 
         local coll_obj = get_collection_obj(dbname, dbcoll)
         local initial = { [key] = unique_id, _version = 0, _fence = new_handle.fence }
-        local claimed, reason, detail = claim_with_fence(coll_obj, key, unique_id, initial, new_handle.fence)
+        local claimed, reason, detail = claim_with_fence(coll_obj, key, unique_id, initial, new_handle.fence, true)
         if not claimed then
             return false, reason, detail
         end
