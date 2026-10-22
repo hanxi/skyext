@@ -408,6 +408,35 @@ t.describe("session upstream idempotency", function()
         t.expect({ h.session.with_request(key, handler, 3) }).to.equal({ true, "RESP" })
         t.expect(runs).to.equal(3)
     end)
+
+    -- 客户端在续接之后重置了 request id 计数器：续接不重建 session_io，缓存还是
+    -- 断线前那张，小 id 会命中别的请求的响应。只有协议名能看出来
+    t.it("refuses a cached request id that now carries a different request", function()
+        local h = harness()
+        local _, key = bind(h, 9)
+        local function handler(resp)
+            return function()
+                return resp
+            end
+        end
+        t.expect({ h.session.with_request(key, handler("BAG"), 1, "bag.use_item") }).to.equal({ true, "BAG" })
+
+        local ok, reason, code = h.session.with_request(key, handler("SHOP"), 1, "shop.buy")
+        t.expect(ok).to.equal(false)
+        t.expect(code).to.equal(errcode.REQUEST_CONFLICT)
+        t.expect(reason).to.equal("request id reused for a different request")
+
+        -- 同名的照常命中缓存，不重新执行
+        local runs = 0
+        t.expect({
+            h.session.with_request(key, function()
+                runs = runs + 1
+                return "AGAIN"
+            end, 1, "bag.use_item"),
+        }).to
+            .equal({ true, "BAG" })
+        t.expect(runs).to.equal(0)
+    end)
 end)
 
 t.describe("session lookup", function()

@@ -18,6 +18,9 @@ M.RESUME_UNAVAILABLE = 24
 -- 这个 request id 的响应已经被幂等缓存淘汰了。不重新执行，让客户端重走流程——
 -- 对扣费、抽卡来说，悄悄执行第二遍比报错危险得多
 M.REQUEST_EXPIRED = 25
+-- 这个 request id 上一次是另一条协议。客户端把 request id 计数器重置了（续接不重建
+-- 会话，服务端的幂等缓存还在），再往下走就会把别人的响应当成这次请求的结果
+M.REQUEST_CONFLICT = 26
 
 M.MONGO_DUPLICATE_KEY = 11000
 

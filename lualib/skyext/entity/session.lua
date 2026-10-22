@@ -89,7 +89,8 @@ local function new_session_io()
         acked = 0,
         out_buf = {}, -- seq -> 已编码的包，覆盖 (acked, sent]
         out_bytes = 0,
-        -- 上行幂等。键是客户端的 request id（sproto 包头的 session 字段）
+        -- 上行幂等。键是客户端的 request id（sproto 包头的 session 字段），
+        -- 值是 { pack = 已编码的响应, name = 协议名 }
         resp_cache = {},
         resp_order = { head = 1, tail = 0 },
         resp_bytes = 0,
@@ -114,9 +115,9 @@ local function evict_oldest_response(io_)
     local req_id = order[order.head]
     order[order.head] = nil
     order.head = order.head + 1
-    local pack = io_.resp_cache[req_id]
+    local entry = io_.resp_cache[req_id]
     io_.resp_cache[req_id] = nil
-    io_.resp_bytes = io_.resp_bytes - #pack
+    io_.resp_bytes = io_.resp_bytes - #entry.pack
     -- 淘汰之后这个 id 再来就不能静默重新执行了。对扣费、抽卡来说，"悄悄执行第二遍"
     -- 比"报个错让客户端重走流程"危险得多
     if req_id >= io_.min_cached_req_id then
@@ -124,11 +125,11 @@ local function evict_oldest_response(io_)
     end
 end
 
-local function cache_response(io_, req_id, pack)
+local function cache_response(io_, req_id, pack, request_name)
     local order = io_.resp_order
     order.tail = order.tail + 1
     order[order.tail] = req_id
-    io_.resp_cache[req_id] = pack
+    io_.resp_cache[req_id] = { pack = pack, name = request_name }
     io_.resp_bytes = io_.resp_bytes + #pack
 
     local max_count = conf_number("session_respcache_count", 64)
@@ -387,9 +388,10 @@ function M.is_online(entity)
 end
 
 -- 在会话所绑定实体的串行队列里执行协议处理函数 f，顺带做上行幂等。
+-- request_name 只用于核对幂等缓存命中的那一条是不是同一个请求。
 -- 返回 true, ...        : f 已经执行（或命中缓存），后面是回包
 -- 返回 false, reason, code : 请求被拒绝，f 没有执行
-function M.with_request(key, f, req_id)
+function M.with_request(key, f, req_id, request_name)
     local conn = g_conns[key]
     if not conn then
         return false, "client not bound"
@@ -404,8 +406,26 @@ function M.with_request(key, f, req_id)
         if req_id then
             local cached = io_.resp_cache[req_id]
             if cached then
+                if cached.name ~= request_name then
+                    -- 同一个 request id 换了协议，说明客户端把计数器重置了。续接不重建
+                    -- session_io，这张缓存表还是断线前那张；再往下走就会把另一个请求的
+                    -- 响应当成这次的结果回给客户端，静默拿到错数据。
+                    -- 协议名对不上就拒，这是能在服务端看见的唯一信号
+                    log.warn(
+                        "request id reused for a different request",
+                        "id",
+                        entity.id,
+                        "req_id",
+                        req_id,
+                        "cached",
+                        cached.name,
+                        "got",
+                        request_name
+                    )
+                    return false, "request id reused for a different request", errcode.REQUEST_CONFLICT
+                end
                 -- 续接之后客户端按原 id 重发的在途请求：回缓存的响应，绝不重新执行
-                return true, cached
+                return true, cached.pack
             end
             if req_id < io_.min_cached_req_id then
                 return false, "response for this request id was already evicted", errcode.REQUEST_EXPIRED
@@ -427,7 +447,7 @@ function M.with_request(key, f, req_id)
         return false, "client binding revoked"
     end
     if io_ and req_id and type(result[1]) == "string" then
-        cache_response(io_, req_id, result[1])
+        cache_response(io_, req_id, result[1], request_name)
     end
     return true, table.unpack(result, 1, result.n)
 end
