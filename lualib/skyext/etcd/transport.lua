@@ -15,6 +15,9 @@ local M = {}
 local DEFAULT_TIMEOUT = 5
 local FAIL_TIMEOUT = 10 -- 端点失败后摘除的秒数
 local INIT_COUNT_RESIZE = 2e8
+-- 单次逻辑请求最多换几个端点。三节点 etcd 是标准部署，3 次就能把整个集群试一遍；
+-- 再大的集群也不值得把一次调用的最坏耗时拉到 N × timeout。
+local MAX_ATTEMPTS = 3
 
 -- http_host 形如 http://127.0.0.1:2379
 local function parse_endpoint(host)
@@ -95,6 +98,36 @@ local function working_endpoint(self)
     return endpoint
 end
 
+-- 一次逻辑请求要依次尝试的端点：当前常用的排第一，其次是其它健康端点，
+-- 最后才是还在摘除期内的（它们可能已经恢复，总比整个请求直接失败好）。
+-- 最多 MAX_ATTEMPTS 个，保证单次调用的耗时有上界。
+local function candidate_endpoints(self)
+    local first = working_endpoint(self)
+    local list = { first }
+    if #self.endpoints == 1 then
+        return list
+    end
+
+    local seen = { [first.http_host] = true }
+    for _, endpoint in ipairs(self.endpoints) do
+        if not seen[endpoint.http_host] and is_healthy(self, endpoint.http_host) then
+            seen[endpoint.http_host] = true
+            list[#list + 1] = endpoint
+        end
+    end
+    for _, endpoint in ipairs(self.endpoints) do
+        if not seen[endpoint.http_host] then
+            seen[endpoint.http_host] = true
+            list[#list + 1] = endpoint
+        end
+    end
+
+    while #list > MAX_ATTEMPTS do
+        list[#list] = nil
+    end
+    return list
+end
+
 -- 认证接口的请求体是 etcd 用户名密码，响应体就是签发的 jwt token，
 -- 整段都是凭据，没有可留下来排障的信息，干脆不记。
 local AUTH_BODY_OMITTED = "[auth body omitted]"
@@ -151,13 +184,15 @@ local function request(self, http_host, uri, opts)
     local log_res = loggable(body, opts.ignore_auth)
     log.debug("etcd request end", "uri", uri, "host", http_host, "status", status, "body", log_res)
 
+    -- 第三个返回值表示"换个端点可能成功"：5xx 是这台节点自己的问题，
+    -- 401 是凭据问题，换谁都一样，不该白费请求。
     if status >= 500 then
         log.warn("etcd request failed", "uri", uri, "host", http_host, "status", status, "body", log_res)
-        return nil, "invalid response code: " .. status
+        return nil, "invalid response code: " .. status, true
     end
     if status == 401 then
         log.warn("etcd request failed", "uri", uri, "host", http_host, "status", status, "body", log_res)
-        return nil, "insufficient credentials code: " .. status
+        return nil, "insufficient credentials code: " .. status, false
     end
 
     if type(body) ~= "string" then
@@ -175,32 +210,52 @@ local function request_stream(self, http_host, uri, opts)
     return with_timeout(opts.timeout, httpc.request_stream, "POST", http_host, uri, {}, req.headers, req.body)
 end
 
--- 返回 res, err。网络层异常（连不上、超时）记一次端点失败并摘除该端点。
+-- 返回 res, err。网络层异常（连不上、超时）和 5xx 都摘除该端点并换下一个试，
+-- 把整个集群试完才算失败——三节点 etcd 的冗余只有在这里兑现，
+-- 否则一个端点抖动就会被上层当成"etcd 整体不可用"。
 function M.post(self, uri, body, timeout, ignore_auth)
-    local endpoint = working_endpoint(self)
     local opts = { body = body, timeout = timeout or DEFAULT_TIMEOUT, ignore_auth = ignore_auth }
+    local last_err
 
-    local ok, res, err = xpcall(request, log.xpcall_msgh, self, endpoint.http_host, uri, opts)
-    if not ok then
-        M.report_failure(self, endpoint.http_host)
-        return nil, res
+    for _, endpoint in ipairs(candidate_endpoints(self)) do
+        local ok, res, err, retriable = xpcall(request, log.xpcall_msgh, self, endpoint.http_host, uri, opts)
+        if not ok then
+            M.report_failure(self, endpoint.http_host)
+            last_err = res
+        elseif res then
+            self.working_endpoint = endpoint
+            return res
+        elseif retriable then
+            M.report_failure(self, endpoint.http_host)
+            last_err = err
+        else
+            -- 确定性错误（凭据不对、prepare 失败）：换端点结果一样
+            return nil, err
+        end
     end
-    return res, err
+
+    return nil, last_err
 end
 
 function M.post_stream(self, uri, body, timeout)
-    local endpoint = working_endpoint(self)
     local opts = { body = body, timeout = timeout or DEFAULT_TIMEOUT }
+    local last_err
 
-    local ok, stream, err = xpcall(request_stream, log.xpcall_msgh, self, endpoint.http_host, uri, opts)
-    if not ok then
-        M.report_failure(self, endpoint.http_host)
-        return nil, stream
+    for _, endpoint in ipairs(candidate_endpoints(self)) do
+        local ok, stream, err = xpcall(request_stream, log.xpcall_msgh, self, endpoint.http_host, uri, opts)
+        if not ok then
+            M.report_failure(self, endpoint.http_host)
+            last_err = stream
+        elseif stream then
+            self.working_endpoint = endpoint
+            return { cli = self, stream = stream, endpoint = endpoint }
+        else
+            last_err = err
+            M.report_failure(self, endpoint.http_host)
+        end
     end
-    if not stream then
-        return nil, err
-    end
-    return { cli = self, stream = stream, endpoint = endpoint }
+
+    return nil, last_err
 end
 
 return M

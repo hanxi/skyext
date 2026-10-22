@@ -11,6 +11,7 @@ local mongo = require "skynet.db.mongo"
 local schema = require "game.orm.schema"
 local root = fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir())
 local lock_source = fs.join(root, "lualib/skyext/distributed_lock.lua")
+local lease_source = fs.join(root, "service/node_lease.lua")
 local db_source = fs.join(root, "lualib/skyext/dbmgr.lua")
 local unique = string.format("%d_%d_%d", os.time(), skynet.self(), math.random(1, 1000000000))
 local dbname = "skyext_it_" .. unique
@@ -24,6 +25,75 @@ local function load_module(source, imports)
         end,
     }, { __index = _G })
     return assert(loadfile(source, "t", env))()
+end
+
+-- 起一份真的 node_lease 服务实例，返回 skyext.node_lease 那层的客户端视角。
+-- 不拿假租约糊弄：这个测试要验的就是真租约被吊销后 fence 接管还对不对。
+local function new_lease(holder, etcd_config, log)
+    local CMD
+    local on_lost = {}
+    local epoch = 0
+
+    load_module(lease_source, {
+        skynet = setmetatable({
+            start = function(fn)
+                holder.lease_start = fn
+            end,
+        }, { __index = skynet }),
+        ["skyext.config"] = {
+            get_table = function()
+                return etcd_config
+            end,
+        },
+        ["skyext.timer"] = {
+            repeat_delayed = function(_, _, fn)
+                holder.heartbeat = fn
+                return { cancel = function() end }
+            end,
+        },
+        ["skyext.cmd_api"] = {
+            dispatch = function(cmd)
+                CMD = cmd
+            end,
+        },
+        ["skyext.event_channel_api"] = {
+            init = function() end,
+            publish = function(name, ...)
+                if name ~= "lease_lost" then
+                    return
+                end
+                for _, fn in ipairs(on_lost) do
+                    fn(...)
+                end
+            end,
+        },
+        ["skyext.log"] = log,
+    })
+    holder.lease_start()
+
+    local function snapshot()
+        local s = CMD.get()
+        if s then
+            epoch = s.epoch
+        end
+        return s
+    end
+    return {
+        valid = function()
+            return snapshot() ~= nil
+        end,
+        id = function()
+            local s = snapshot()
+            return s and s.leaseid
+        end,
+        epoch = function()
+            snapshot()
+            return epoch
+        end,
+        on_lost = function(_, fn)
+            on_lost[#on_lost + 1] = fn
+        end,
+    }
 end
 
 local function new_holder(etcd_config)
@@ -41,14 +111,9 @@ local function new_holder(etcd_config)
                 return etcd_config
             end,
         },
-        ["skyext.timer"] = {
-            repeat_delayed = function(_, _, fn)
-                holder.heartbeat = fn
-            end,
-        },
+        ["skyext.node_lease"] = new_lease(holder, etcd_config, log),
         ["skyext.log"] = log,
     })
-    -- init 内部已经同步申请过租约，这里不用再手工跑一轮心跳
     holder.init()
 
     holder.dbmgr = load_module(db_source, {

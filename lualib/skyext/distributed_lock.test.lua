@@ -7,31 +7,8 @@ local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()
 
 local function harness(opts)
     opts = opts or {}
-    local h = { now = 0, revision = 0, lease = 0, locks = {}, grants = 0 }
+    local h = { revision = 0, locks = {} }
     local client = {}
-    function client:grant(ttl)
-        t.expect(ttl).to.equal(30)
-        h.grants = h.grants + 1
-        if h.fail_grant then
-            return nil, "no quorum"
-        end
-        h.lease = h.lease + 1
-        return { status = 200, body = { ID = h.lease } }
-    end
-    function client:keepalive(lease)
-        h.keepalives = (h.keepalives or 0) + 1
-        if h.fail_keepalive then
-            return nil, "no quorum"
-        end
-        return { status = 200, body = { result = { TTL = 30, ID = lease } } }
-    end
-    function client:revoke(lease)
-        h.revoked = lease
-        if h.fail_revoke then
-            return nil, "no quorum"
-        end
-        return { status = 200, body = {} }
-    end
     function client:txn(compare, success, failure)
         h.transactions = (h.transactions or 0) + 1
         local rule = assert(compare[1])
@@ -70,13 +47,29 @@ local function harness(opts)
         return reply
     end
 
+    -- 节点级租约的替身。租约的申请与续租归 node_lease 服务管（见 service/node_lease.test.lua），
+    -- 这里只模拟它对外的三个状态：还活着、换了一代、没了。
+    local lease = { id = "lease-1", epoch = 1, alive = not opts.no_lease, on_lost = {} }
+    h.lease = lease
+    -- 租约失效：node_lease 会先置失效再广播，订阅方据此隔离
+    function h.lose_lease(reason)
+        lease.alive = false
+        for _, fn in ipairs(lease.on_lost) do
+            fn(lease.epoch, reason or "test")
+        end
+    end
+    -- 重新批了一个租约：etcd 已经把旧租约上的锁键全删了
+    function h.regrant()
+        lease.alive = true
+        lease.epoch = lease.epoch + 1
+        lease.id = "lease-" .. lease.epoch
+    end
+
+    local noop = function() end
     local imports = {
         skynet = {
             init = function(fn)
                 h.init = fn
-            end,
-            now = function()
-                return h.now
             end,
         },
         ["skyext.etcd"] = {
@@ -84,16 +77,18 @@ local function harness(opts)
                 return client
             end,
         },
-        ["skyext.timer"] = {
-            repeat_delayed = function(name, sec, fn)
-                h.heartbeat_name = name
-                h.heartbeat_interval = sec
-                h.heartbeat = fn
-                return {
-                    cancel = function()
-                        h.heartbeat_cancelled = true
-                    end,
-                }
+        ["skyext.node_lease"] = {
+            valid = function()
+                return lease.alive
+            end,
+            id = function()
+                return lease.alive and lease.id or nil
+            end,
+            epoch = function()
+                return lease.epoch
+            end,
+            on_lost = function(_, fn)
+                lease.on_lost[#lease.on_lost + 1] = fn
             end,
         },
         ["skyext.config"] = {
@@ -101,7 +96,7 @@ local function harness(opts)
                 return {}
             end,
         },
-        ["skyext.log"] = { info = function() end, error = function() end },
+        ["skyext.log"] = { info = noop, warn = noop, error = noop },
     }
     local env = setmetatable({
         require = function(name)
@@ -109,13 +104,11 @@ local function harness(opts)
         end,
     }, { __index = _G })
     h.lock = assert(loadfile(source, "t", env))()
-    h.fail_grant = opts.fail_grant
     h.init()
-    h.fail_grant = nil
     return h
 end
 
-t.describe("distributed lock lease and fencing", function()
+t.describe("distributed lock fencing", function()
     t.it("returns a fenced handle only with a live lease and never revives an expired one", function()
         local h = harness()
         local ok, first = h.lock.try_lock("role:7", "owner")
@@ -126,12 +119,13 @@ t.describe("distributed lock lease and fencing", function()
         t.expect(same).to.equal(first)
         t.expect(h.transactions).to.equal(1)
 
-        h.now = 2800
+        h.lose_lease("deadline elapsed")
         t.expect(h.lock.is_valid(first)).to.equal(false)
         t.expect(first.valid).to.equal(false)
         t.expect(h.lock.try_lock("role:7", "owner")).to.equal(false)
-        h.locks[first.my_key] = nil -- etcd expires the old lease and key
-        h.heartbeat()
+
+        h.locks[first.my_key] = nil -- etcd 随旧租约一起删掉了锁键
+        h.regrant()
         local acquired, successor = h.lock.try_lock("role:7", "successor")
         t.expect(acquired).to.equal(true)
         t.expect(successor.fence).to.be_gt(first.fence)
@@ -140,7 +134,16 @@ t.describe("distributed lock lease and fencing", function()
         t.expect(h.lock.is_valid(successor)).to.equal(true)
     end)
 
-    t.it("invalidates all handles once when keepalive fails", function()
+    -- 换代即失效：新租约下旧锁键已经被 etcd 删了，别的节点随时可能接手同一个实体，
+    -- 旧句柄的 fence 绝不能继续当成有效
+    t.it("invalidates handles from a superseded lease epoch", function()
+        local h = harness()
+        local _, handle = h.lock.try_lock("role:7", "owner")
+        h.regrant()
+        t.expect(h.lock.is_valid(handle)).to.equal(false)
+    end)
+
+    t.it("invalidates every handle exactly once when the node lease is lost", function()
         local h = harness()
         local calls = 0
         local _, first = h.lock.try_lock("role:1", "owner", function(expired)
@@ -151,13 +154,19 @@ t.describe("distributed lock lease and fencing", function()
             t.expect(expired.valid).to.equal(false)
             calls = calls + 1
         end)
-        h.fail_keepalive = true
-        h.heartbeat()
+        h.lose_lease()
         t.expect(calls).to.equal(2)
         t.expect(h.lock.is_valid(first)).to.equal(false)
         t.expect(h.lock.is_valid(second)).to.equal(false)
-        h.heartbeat()
+        h.lose_lease()
         t.expect(calls).to.equal(2)
+    end)
+
+    t.it("refuses to lock while the node lease is unavailable", function()
+        local h = harness({ no_lease = true })
+        local ok, err = h.lock.try_lock("role:9", "owner")
+        t.expect(ok).to.equal(false)
+        t.expect(err).to.equal("etcd lease unavailable")
     end)
 
     t.it("releases the held revision without firing an expiry callback", function()
@@ -188,36 +197,6 @@ t.describe("distributed lock lease and fencing", function()
         t.expect(acquired).to.equal(false)
     end)
 
-    -- 回归：租约以前是心跳定时器异步申请的，模块加载完到第一轮心跳之间
-    -- 所有 try_lock 都会失败。snowflake 抢机器号正好落在这个窗口里。
-    t.it("holds a usable lease as soon as init returns", function()
-        local h = harness()
-        t.expect(h.grants).to.equal(1)
-        local ok, handle = h.lock.try_lock("role:9", "owner")
-        t.expect(ok).to.equal(true)
-        t.expect(h.lock.is_valid(handle)).to.equal(true)
-        -- 心跳只续租，不会再批一个租约出来
-        t.expect(h.heartbeat_name).to.equal("distributed_lock_heartbeat")
-        t.expect(h.heartbeat_interval).to.equal(10)
-        h.heartbeat()
-        t.expect(h.grants).to.equal(1)
-        t.expect(h.keepalives).to.equal(1)
-        t.expect(h.lock.is_valid(handle)).to.equal(true)
-    end)
-
-    t.it("starts anyway when etcd cannot grant a lease and recovers on the next heartbeat", function()
-        local h = harness({ fail_grant = true })
-        t.expect(h.grants).to.equal(1)
-        local ok, err = h.lock.try_lock("role:9", "owner")
-        t.expect(ok).to.equal(false)
-        t.expect(err).to.equal("etcd lease unavailable")
-
-        h.heartbeat()
-        t.expect(h.grants).to.equal(2)
-        t.expect(h.keepalives).to.be_nil()
-        t.expect(h.lock.try_lock("role:9", "owner")).to.equal(true)
-    end)
-
     t.it("锁被别的节点占着时如实返回持锁节点名", function()
         local h = harness()
         -- 另一个节点先拿到了锁：它写的是节点名，响应里是 JSON 再 base64
@@ -241,28 +220,19 @@ t.describe("distributed lock lease and fencing", function()
 end)
 
 t.describe("distributed lock shutdown", function()
-    t.it("revokes the lease, drops every lock without expiry callbacks and refuses new ones", function()
+    -- 租约是节点级的，本节点别的服务还挂在上面，所以这里只是本服务停止加锁。
+    -- 锁键真正从 etcd 消失是 node_shutdown 撤销节点租约的时候。
+    t.it("drops every lock without expiry callbacks and refuses new ones", function()
         local h = harness()
         local expired = 0
         local _, handle = h.lock.try_lock("machine_id/snowflake/3", "node", function()
             expired = expired + 1
         end)
-        local lease = handle.lease
         t.expect(h.lock.shutdown()).to.equal(true)
-        t.expect(h.revoked).to.equal(lease)
-        t.expect(h.heartbeat_cancelled).to.equal(true)
         t.expect(h.lock.is_valid(handle)).to.equal(false)
         -- 主动放手不是失租：machine_id 收到过期回调会去重新抢号
         t.expect(expired).to.equal(0)
         t.expect(table.pack(h.lock.try_lock("role:1", "node"))).to.equal({ false, "lock service closed", n = 2 })
-        -- 再调一次没有租约可撤
         t.expect(h.lock.shutdown()).to.equal(true)
-    end)
-
-    t.it("reports a failed revoke and leaves the keys to expire with the lease", function()
-        local h = harness()
-        h.lock.try_lock("role:1", "node")
-        h.fail_revoke = true
-        t.expect(h.lock.shutdown()).to.equal(false)
     end)
 end)

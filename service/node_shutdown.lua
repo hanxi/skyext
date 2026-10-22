@@ -2,7 +2,8 @@
 --   1. stop_accepting 钩子：关掉对外入口（gate、HTTP 端口），不再放新请求进来
 --   2. 卸载本节点所有实体类型的全部实体：落库、释放锁、踢下在线玩家
 --   3. release 钩子：实体都落库之后释放其余资源（snowflake 归还机器号之类）
---   4. 撤销服务发现租约，别的节点立刻看到本节点下线
+--   4. 停掉服务注册，再撤销节点级 etcd 租约：节点键、服务键、残留的实体锁一并消失，
+--      别的节点立刻看到本节点下线，不用等 TTL 过期
 --   5. 让 logger 写完缓冲，退出进程
 -- 第 2 步有实体卸不掉时停在这里、进程不退出：那些实体还有没落库的改动，退出就丢了。
 -- 排查后可以再发一次 shutdown。游戏层用 skyext.node_shutdown_api 挂钩子。
@@ -10,6 +11,7 @@ local skynet = require "skynet"
 local cmd_api = require "skyext.cmd_api"
 local gm_api = require "skyext.gm_api"
 local cluster_discovery = require "skyext.cluster_discovery"
+local node_lease = require "skyext.node_lease"
 local log = require "skyext.log"
 
 local DEFAULT_TIMEOUT = 60
@@ -84,9 +86,14 @@ local function shutdown(timeout_sec)
         return
     end
     run_hooks("release")
-    local revoked, revoke_err = pcall(cluster_discovery.shutdown)
+    -- 先停注册再撤租约：反过来的话，撤销之后心跳还会再跑一拍，用新租约把节点键写回去
+    local stopped, stop_err = pcall(cluster_discovery.shutdown)
+    if not stopped then
+        log.warn("cluster discovery shutdown failed", "err", stop_err)
+    end
+    local revoked, revoke_err = pcall(node_lease.shutdown)
     if not revoked then
-        log.warn("cluster discovery shutdown failed", "err", revoke_err)
+        log.warn("node lease revoke failed", "err", revoke_err)
     end
     log.info("node shutdown complete, exiting")
     pcall(skynet.call, ".logger", "lua", "close")

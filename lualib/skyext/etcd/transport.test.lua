@@ -264,7 +264,9 @@ t.describe("etcd.transport", function()
             t.expect(h.requests[2].host).to.equal(h.requests[1].host)
         end)
 
-        t.it("请求抛错后摘除该端点并换到另一个", function()
+        -- 回归：一个端点抖一下曾经就让整次请求失败，上层把它当成"etcd 整体不可用"
+        -- 去隔离实体。三节点 etcd 的冗余必须在这一层兑现。
+        t.it("端点连不上时在同一次请求内换下一个，不把失败抛给上层", function()
             local failing = {}
             local h
             h = harness({
@@ -280,12 +282,64 @@ t.describe("etcd.transport", function()
             local first = h.requests[1].host
             failing[first] = true
 
-            h.transport.post(cli, "/v3/kv/put", {}, 5)
+            local res = h.transport.post(cli, "/v3/kv/put", {}, 5)
+            t.expect(res).to_not.be_nil()
             t.expect(h.requests[2].host).to.equal(first)
-            t.expect(cli.working_endpoint).to.be_nil()
-
-            h.transport.post(cli, "/v3/kv/put", {}, 5)
             t.expect(h.requests[3].host).to_not.equal(first)
+            -- 坏端点已摘除，后续请求粘在好的那个上
+            t.expect(cli.working_endpoint.http_host).to.equal(h.requests[3].host)
+            t.expect(cli.fail_expired_time[first]).to_not.be_nil()
+        end)
+
+        -- 5xx 以前是 return 出去的，xpcall 看到的是"调用成功"，report_failure 根本没被调到，
+        -- 一台持续 503 的节点会被一直粘着用
+        t.it("5xx 同样算端点故障，换下一个端点重试", function()
+            local failing = {}
+            local h
+            h = harness({
+                respond = function(host)
+                    if failing[host] then
+                        return 503, "unavailable"
+                    end
+                    return 200, cjson.encode({})
+                end,
+            })
+            local cli = client(h, { "http://a:2379", "http://b:2379" })
+            h.transport.post(cli, "/v3/kv/put", {}, 5)
+            local first = h.requests[1].host
+            failing[first] = true
+
+            local res = h.transport.post(cli, "/v3/kv/put", {}, 5)
+            t.expect(res).to_not.be_nil()
+            t.expect(h.requests[3].host).to_not.equal(first)
+            t.expect(cli.fail_expired_time[first]).to_not.be_nil()
+        end)
+
+        -- 凭据不对不是端点的问题，换谁都一样，不该白白再发两次
+        t.it("401 不重试其它端点", function()
+            local h = harness({
+                respond = function()
+                    return 401, "unauthorized"
+                end,
+            })
+            local cli = client(h, { "http://a:2379", "http://b:2379" })
+            local res, err = h.transport.post(cli, "/v3/kv/put", {}, 5)
+            t.expect(res).to.be_nil()
+            t.expect(err).to.equal("insufficient credentials code: 401")
+            t.expect(#h.requests).to.equal(1)
+        end)
+
+        t.it("所有端点都坏掉时才向上报错", function()
+            local h = harness({
+                respond = function()
+                    return nil, "connect failed"
+                end,
+            })
+            local cli = client(h, { "http://a:2379", "http://b:2379" })
+            local res, err = h.transport.post(cli, "/v3/kv/put", {}, 5)
+            t.expect(res).to.be_nil()
+            t.expect(err).to_not.be_nil()
+            t.expect(#h.requests).to.equal(2)
         end)
 
         t.it("摘除有有效期，过期后重新参与选择", function()

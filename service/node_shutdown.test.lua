@@ -73,6 +73,12 @@ local function harness(opts)
                 return true
             end,
         },
+        ["skyext.node_lease"] = {
+            shutdown = function()
+                record("node_lease", "revoke")
+                return true
+            end,
+        },
         ["skyext.entity.types"] = {
             all = function()
                 if types == false then
@@ -113,6 +119,7 @@ t.describe("node_shutdown", function()
             ":mgr shutdown",
             ":snowflake shutdown",
             "discovery shutdown",
+            "node_lease revoke",
             ".logger close",
         })
         t.expect(h.aborted).to.equal(true)
@@ -171,7 +178,7 @@ t.describe("node_shutdown", function()
     t.it("shuts down a node without any entity types", function()
         local h = harness({ types = false })
         h.CMD.shutdown()
-        t.expect(h.calls).to.equal({ "discovery shutdown", ".logger close" })
+        t.expect(h.calls).to.equal({ "discovery shutdown", "node_lease revoke", ".logger close" })
         t.expect(h.aborted).to.equal(true)
     end)
 

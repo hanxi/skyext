@@ -1,6 +1,6 @@
 -- 秒级定时器
 local skynet = require "skynet"
-local binaryheap = require "binaryheap"
+local binaryheap = require "skyext.binaryheap"
 local time = require "skyext.time"
 local log = require "skyext.log"
 local log_level = require "skyext.log.log_level"

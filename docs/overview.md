@@ -40,14 +40,15 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 
 | 能力 | 入口或实现 | 说明 |
 | --- | --- | --- |
-| 服务发现 | `lualib/skyext/cluster_discovery.lua`、`service/cluster_discovery.lua` | etcd 注册、租约续期、服务节点查询与变更通知 |
+| 节点租约 | `lualib/skyext/node_lease.lua`、`service/node_lease.lua` | 整个节点唯一的 etcd 租约：申请、续租、撤销，失效时广播给实体锁与服务发现 |
+| 服务发现 | `lualib/skyext/cluster_discovery.lua`、`service/cluster_discovery.lua` | 把节点键与服务键挂到节点租约上，服务节点查询与变更通知 |
 | etcd 客户端 | `lualib/skyext/etcd/` | etcd v3 HTTP 客户端，按 transport/auth/kv/lease/watch 分层，服务发现与分布式锁的底座 |
 | 数据持久化 | `lualib/skyext/dbmgr.lua`、`lualib/skyext/save_wheel.lua`、`lualib/orm/`、`service/mongo_conn.lua` | 加载/缓存 ORM 对象、跟踪变更、按回存轮定时与卸载时写入 MongoDB |
 | ORM schema 变更 | `lualib/orm/init.lua` 的 `orm.decode`、`lualib/skyext/orm_compat.lua`、`./bin/skyext schema check` | 加载时丢弃已删字段、补齐新字段；改名、改类型、重用删过的名字由基线对比在 CI 拦下；见 [改 ORM schema](guide/orm_schema_change.md) |
 | 协议与鉴权 | `lualib/skyext/sproto_api.lua`、`example/lualib/jwt.lua` | sproto 编解码、示例 JWT 登录 |
 | HTTP 与 GM | `lualib/skyext/http_server/`、`lualib/skyext/gm_api.lua`、`service/gm.lua` | HTTP 路由、命令注册/执行、token 鉴权；见 [HTTP 服务端](guide/http_server.md)、[GM HTTP API](guide/gm_api.md) |
 | 指标 | `lualib/skyext/metrics*.lua`、`service/metrics.lua` | counter/gauge/histogram 原语、跨服务合并与 Prometheus 文本导出；见 [指标采集与导出](guide/metrics.md) |
-| 停服 | `service/node_shutdown.lua`、`lualib/skyext/node_shutdown_api.lua` | GM `shutdown` 编排：停止接入 → 卸载实体 → 释放资源 → 撤销服务发现租约 → 退出；游戏层挂钩子 |
+| 停服 | `service/node_shutdown.lua`、`lualib/skyext/node_shutdown_api.lua` | GM `shutdown` 编排：停止接入 → 卸载实体 → 释放资源 → 撤销节点租约 → 退出；游戏层挂钩子 |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
 | 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、粘性转发、实体生命周期、常驻实体与预加载、作用域实体（`scope`）、实体定时器、停服卸载、业务模块扩展 |
 | 网关会话 | `service/session_gate.lua`、`lualib/skyext/entity/session.lua`、`example/service/login/` | gate 监听 TCP、拆包、会话表与亲和转发；实体侧会话绑定/上行入队/下行推送；登录服务经 `router.bind_session` 把会话绑到实体 |
@@ -59,13 +60,13 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 
 **扩缩容不踢人**：节点进出后实体的目标节点会变，但已经加载的实体不会被搬走。发给它的请求由新目标节点转给持锁节点执行（粘性路由），实体在旧节点自然卸载后，下一次加载才落到新节点；只有玩家重新登录时才把实体要过来。细节见[实体系统设计](https://github.com/hanxi/skyext/blob/main/docs/design/entity_system.md)。
 
-**停服**：任何节点都用 GM 命令 `shutdown` 停服，流程由引擎的 `service/node_shutdown.lua` 编排：先回调游戏层的 `stop_accepting` 钩子停止接入（示例 role/gateway 节点在这里关 gate），从服务发现摘掉实体类型，再把全部实体卸载（落库、释放锁、踢下在线玩家）；卸干净后回调 `release` 钩子（snowflake 在这里归还机器号），撤销服务发现租约，最后退出进程。有实体卸不掉就不退出。etcd 里属于本节点的键在退出前都已删除，别的节点不用等租约过期。游戏层用 `skyext.node_shutdown_api.add_hook(phase, cmd)` 挂钩子。**直接杀进程不是停服**：内存里离上次回存（`db_save_interval`，默认 3 分钟）之后的改动会丢，锁也要等租约过期。
+**停服**：任何节点都用 GM 命令 `shutdown` 停服，流程由引擎的 `service/node_shutdown.lua` 编排：先回调游戏层的 `stop_accepting` 钩子停止接入（示例 role/gateway 节点在这里关 gate），从服务发现摘掉实体类型，再把全部实体卸载（落库、释放锁、踢下在线玩家）；卸干净后回调 `release` 钩子（snowflake 在这里归还机器号），撤销节点租约（节点键、服务键、残留的实体锁一并从 etcd 消失），最后退出进程。有实体卸不掉就不退出。etcd 里属于本节点的键在退出前都已删除，别的节点不用等租约过期。游戏层用 `skyext.node_shutdown_api.add_hook(phase, cmd)` 挂钩子。**直接杀进程不是停服**：内存里离上次回存（`db_save_interval`，默认 3 分钟）之后的改动会丢，锁也要等租约过期。
 
-**节点崩溃后的接管窗口**：实体锁挂在节点级的 etcd 租约上，TTL 30 秒、每 10 秒续一次。走 `shutdown` 停服时锁是主动释放的，没有空窗；节点**硬崩**（进程被杀、机器掉电、网络分区）时没人能主动释放锁，必须等 etcd 把租约过期掉。这段时间里，落到该实体上的请求会一直失败（`router.call` 返回 `false, reason`，`bind_session` 返回 `LOCK_FAILED`，能查到持锁节点、交接又失败时返回 `IN_OTHER_NODE`）：接管节点向已死的持有者转发或请求交接都会失败，而锁键还在，抢不过来。
+**节点崩溃后的接管窗口**：实体锁和服务发现键挂在同一个节点级 etcd 租约上（`service/node_lease.lua`，全节点只此一个），TTL 30 秒、每 10 秒续一次。租约失效时实体隔离与服务发现摘除是同一个事件的两面，不会出现「对外还在服务列表里、对内每个实体都加不上锁」。走 `shutdown` 停服时锁是主动释放的，没有空窗；节点**硬崩**（进程被杀、机器掉电、网络分区）时没人能主动释放锁，必须等 etcd 把租约过期掉。这段时间里，落到该实体上的请求会一直失败（`router.call` 返回 `false, reason`，`bind_session` 返回 `LOCK_FAILED`，能查到持锁节点、交接又失败时返回 `IN_OTHER_NODE`）：接管节点向已死的持有者转发或请求交接都会失败，而锁键还在，抢不过来。
 
 所以**单个实体的最坏不可用时长约 30 秒**，不是秒级。客户端重连逻辑要能容忍这个量级，不要在收到 `LOCK_FAILED` 后立刻放弃或提示玩家"账号异常"。想缩短窗口就得调小 `distributed_lock.lua` 里的 `LEASE_TTL`，代价是心跳更密、对 etcd 抖动更敏感——续租晚一拍就会误判失租，把一个健康节点上的实体全部隔离。
 
-**etcd 是玩法的核心依赖**：每个实体的加载和卸载都要在 etcd 上做一次事务，etcd 的写延迟直接加在登录耗时上，停服维护后的登录高峰也会集中压到 etcd。更要紧的是，etcd **连续约 28 秒不可达**（租约 TTL 减去 2 秒余量）时，每个节点都会判定自己的租约已失效，把所有已加载实体隔离并踢下线——数据不会写坏（fence 挡住了旧持有者），但全服掉线。这是"同一实体绝不同时在两个节点上"这一保证的代价。etcd 要按核心存储部署（至少三节点、独立磁盘、监控 raft 延迟和 leader 切换），不能当成可有可无的服务发现组件。
+**etcd 是玩法的核心依赖**：每个实体的加载和卸载都要在 etcd 上做一次事务，etcd 的写延迟直接加在登录耗时上，停服维护后的登录高峰也会集中压到 etcd。单次续租失败不会有任何后果：连不上、超时、5xx 都只当成这一拍没续上，下一拍（10 秒后）再试，etcd 的 GC 抖动和 leader 切换都在这个容忍范围内；transport 层还会在一次请求内把集群的其它端点都试一遍。更要紧的是，etcd **连续约 28 秒不可达**（租约 TTL 减去 2 秒余量）时，或者 etcd 明确回答租约已不存在时，节点会判定自己的租约已失效，把所有已加载实体隔离并踢下线——数据不会写坏（fence 挡住了旧持有者），但全服掉线。这是"同一实体绝不同时在两个节点上"这一保证的代价。etcd 要按核心存储部署（至少三节点、独立磁盘、监控 raft 延迟和 leader 切换），不能当成可有可无的服务发现组件。
 
 **数据可靠性边界**：`dbmgr` 对脏数据制作快照，在 MongoDB 确认更新后才清除脏标记；写入失败、不确定或未匹配时保留脏对象及缓存，卸载不得先释放实体锁。进程异常退出时仍不能据此推断数据已持久化；可靠消息为至少一次投递，业务 handler 需以 `msg_id` 幂等处理。生产使用前应结合一致性、失败日志和恢复策略评估。示例 JWT 密钥必须更换，GM token 要现生成并限制接口来源。
 

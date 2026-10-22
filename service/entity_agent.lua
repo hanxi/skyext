@@ -190,7 +190,8 @@ function CMD.unload_entity(entity_id)
 end
 
 -- 停服：不再加载新实体，卸载全部已加载的实体。返回还没卸掉的数量，调用方可以再调一次。
--- 卸干净之后撤销本服务的锁租约，etcd 里不留等待过期的租约
+-- 卸干净之后本服务不再加锁。锁键真正从 etcd 消失是在 node_shutdown 撤销节点租约时，
+-- 这里不撤——租约是节点级的，本节点别的服务还挂在上面。
 function CMD.shutdown()
     local remaining = entitymgr:unload_all()
     if remaining == 0 then

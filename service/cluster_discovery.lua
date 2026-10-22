@@ -3,6 +3,7 @@ local etcd = require "skyext.etcd"
 local cluster = require "skynet.cluster"
 local queue = require "skynet.queue"
 local timer = require "skyext.timer"
+local node_lease = require "skyext.node_lease"
 local event_channel_api = require "skyext.event_channel_api"
 local util_table = require "skyext.util.table"
 local cmd_api = require "skyext.cmd_api"
@@ -19,13 +20,11 @@ local NODE_PREFIX = "/skynet/node/"
 local PATTERN_NODE = "([^/]+)$"
 local PATTERN_SERVICE = "([^/]+)/([^/]+)$"
 local SERVICE_PREFIX = "/skynet/service/"
-local LEASE_TTL = 30 -- 秒
-local HEARTBEAT_INTERVAL = LEASE_TTL // 3
+local HEARTBEAT_INTERVAL = 10 -- 秒
 local WATCH_SLEEP = 50 -- 500 毫秒
 
 -- 服务发布
 local g_etcd_client
-local g_leaseid
 -- 同步服务到 etcd
 local g_service_local_synced = {}
 local g_service_local = {}
@@ -33,8 +32,9 @@ local g_service_local = {}
 local g_self_node_info
 local g_local_node_revision
 
-local g_keepalive_timer
 local g_heartbeat_timer
+-- 停服后置位：不再往 etcd 写
+local g_closed = false
 
 -- 服务发现
 local g_map_service = {} -- service -> { map_node = { [node] = node_revision } }
@@ -52,33 +52,14 @@ end
 
 local g_cluster_listened
 
-local function etcd_grant()
-    local ret, err = g_etcd_client:grant(LEASE_TTL)
-    if not ret then
-        log.warn("cluster_discovery grant leaseid failed", "err", err)
-        return
-    elseif (not ret.body) or not ret.body.ID then
-        log.error("cluster_discovery grant leaseid failed", "ret", ret)
-        return
+-- 节点键和服务键都挂在节点级租约上（见 skyext.node_lease）。本服务不再自己申请租约：
+-- 从前锁和服务发现各有一个租约，锁的没了而这里的还在，本节点就会留在 etcd 的服务
+-- 列表里继续被路由进来，但每个实体都加不上锁——对外存活、对内全拒，还不会自动摘除。
+local function leaseid()
+    if g_closed or not node_lease.valid() then
+        return nil
     end
-
-    g_leaseid = ret.body.ID
-    log.info("cluster_discovery grant succ", "leaseid", g_leaseid)
-    return true
-end
-
-local function etcd_keepalive()
-    local ret, err = g_etcd_client:keepalive(g_leaseid)
-    if not ret then
-        log.warn("cluster_discovery keepalive failed socket", "err", err)
-        return true
-    elseif (not ret.body) or not ret.body.result or not ret.body.result.TTL then
-        log.error("cluster_discovery keepalive overdue", "leaseid", g_leaseid)
-        return false
-    end
-
-    log.debug("cluster_discovery etcd keepalive succ", "leaseid", g_leaseid, "ttl", ret.body.result.TTL)
-    return true
+    return node_lease.id()
 end
 
 local function make_node_key()
@@ -105,12 +86,13 @@ local function get_self_node_info()
 end
 
 local function etcd_do_register_node(node_info)
-    if not g_leaseid then
+    local lease = leaseid()
+    if not lease then
         return nil
     end
 
     local key = make_node_key()
-    local ret, err = g_etcd_client:setnx(key, node_info, { lease = g_leaseid })
+    local ret, err = g_etcd_client:setnx(key, node_info, { lease = lease })
     if err then
         return nil, err
     end
@@ -119,44 +101,60 @@ local function etcd_do_register_node(node_info)
         return nil
     end
     local revision = ret.body.header.revision
-    log.info("etcd register node ok", "key", key, "leaseid", g_leaseid, "revision", revision)
+    log.info("etcd register node ok", "key", key, "leaseid", lease, "revision", revision)
     return tonumber(revision)
 end
 
-local function etcd_revoke_if_same_node(node_info)
+-- setnx 失败说明节点键已存在。两种情况：
+--   * 键是本节点上一次注册写的（写成功了但响应丢在路上）——直接认领它的 revision；
+--   * 键属于本节点的上一个进程实例，那个实例的租约还没过期——撤销它，腾出位置。
+-- @return revision, revoked
+local function claim_existing_node(node_info)
     local key = make_node_key()
     local r = g_etcd_client:get(key)
     if (not r) or not r.body or not r.body.kvs or (#r.body.kvs == 0) then
-        return false
+        return nil, false
     end
 
     local kv = r.body.kvs[1]
     local r_node_info = kv.value
     if r_node_info.address ~= node_info.address then
         log.error("etcd node address conflict", "local", node_info.address, "remote", r_node_info.address)
-        return false
+        return nil, false
     end
 
     assert(r_node_info.lease)
+    -- 千万不能撤销自己当前的租约：节点键、服务键、全部实体锁都挂在上面，
+    -- 撤掉等于把本节点整个踢下线，而这只是一次响应丢失。
+    if tostring(r_node_info.lease) == tostring(leaseid()) then
+        log.warn("etcd node key already written by current lease, adopting", "key", key)
+        return tonumber(kv.mod_revision), false
+    end
+
     g_etcd_client:revoke(tostring(r_node_info.lease))
-    return true
+    return nil, true
 end
 
 local function etcd_register_node(node_info)
     assert(node_info)
-    if not g_leaseid then
+    local lease = leaseid()
+    if not lease then
         return
     end
 
     node_info = util_table.deepcopy(node_info)
-    node_info.lease = g_leaseid
+    node_info.lease = lease
 
     local rev, err = etcd_do_register_node(node_info)
     if rev or err then
         return rev
     end
 
-    if not etcd_revoke_if_same_node(node_info) then
+    local existing, revoked = claim_existing_node(node_info)
+    if existing then
+        return existing
+    end
+    if not revoked then
         return
     end
 
@@ -166,12 +164,13 @@ end
 local function etcd_update_node(node_info, node_revision)
     assert(node_info)
     assert(node_revision)
-    if not g_leaseid then
+    local lease = leaseid()
+    if not lease then
         return nil
     end
 
     local key = make_node_key()
-    local ret, err = g_etcd_client:mod(key, node_info, { lease = g_leaseid, mod_revision = node_revision })
+    local ret, err = g_etcd_client:mod(key, node_info, { lease = lease, mod_revision = node_revision })
     if err then
         return nil, err
     end
@@ -180,19 +179,20 @@ local function etcd_update_node(node_info, node_revision)
         return nil
     end
     local revision = ret.body.header.revision
-    log.info("etcd update node ok", "key:", key, "leaseid", g_leaseid, "revision:", revision)
+    log.info("etcd update node ok", "key:", key, "leaseid", lease, "revision:", revision)
     return tonumber(revision)
 end
 
 local function etcd_do_register_service(service, info)
     assert(service)
     assert(info)
-    if not g_leaseid then
+    local lease = leaseid()
+    if not lease then
         return false
     end
 
     local key = etcd_make_service_key(service)
-    local ret, err = g_etcd_client:set(key, info, { lease = g_leaseid })
+    local ret, err = g_etcd_client:set(key, info, { lease = lease })
     if not ret then
         log.error("etcd set fail", "key", key, "err", err)
         return false
@@ -245,33 +245,12 @@ local function etcd_unregister_service(service)
     end
 end
 
-local function heartbeat_timer_reset()
-    if g_keepalive_timer then
-        g_keepalive_timer:cancel()
-        g_keepalive_timer = nil
-    end
+-- 租约没了，挂在它上面的节点键和服务键已经被 etcd 删掉，本地那份"已同步"的记账
+-- 就全作废了。清空之后，下一拍心跳会拿新租约从头注册一遍。
+local function on_lease_lost(_, reason)
+    log.error("cluster_discovery lost node lease, will re-register", "reason", reason)
     g_local_node_revision = nil
-    log.info("cluster_discovery heartbeat timer reset")
-end
-
-local function init_keepalive_timer()
-    g_local_node_revision = nil
-
-    if not etcd_grant() then
-        return
-    end
-
-    if g_keepalive_timer then
-        g_keepalive_timer:cancel()
-        g_keepalive_timer = nil
-    end
-
-    g_keepalive_timer = timer.repeat_immediately("cluster_discovery_keepalive", HEARTBEAT_INTERVAL, function()
-        if not etcd_keepalive() then
-            heartbeat_timer_reset()
-        end
-    end)
-    log.info("cluster_discovery keepalive timer initialized", "timer_obj", g_keepalive_timer)
+    g_service_local_synced = {}
 end
 
 local function cluster_listen(node_info)
@@ -669,28 +648,17 @@ function CMD.unregister(services)
     end
 end
 
--- 停服：撤销租约，本节点的节点键和服务键随之立即删除，别的节点马上就能看到它下线，
--- 不用等租约过期。之后不再续租、不再注册，调用方随后退出进程
+-- 停服：停掉心跳，之后不再往 etcd 注册。
+--
+-- 这里不撤销租约——它是节点级的，本节点别的服务还挂在上面。节点键和服务键真正
+-- 消失是在 node_shutdown 最后撤销节点租约时，etcd 连带删掉，别的节点立刻看到本节点
+-- 下线，不用等 TTL 过期。
 function CMD.shutdown()
+    g_closed = true
     if g_heartbeat_timer then
         g_heartbeat_timer:cancel()
         g_heartbeat_timer = nil
     end
-    if g_keepalive_timer then
-        g_keepalive_timer:cancel()
-        g_keepalive_timer = nil
-    end
-    local leaseid = g_leaseid
-    g_leaseid = nil
-    if not leaseid then
-        return true
-    end
-    local ret, err = g_etcd_client:revoke(leaseid)
-    if not ret or ret.status ~= 200 then
-        log.error("cluster_discovery revoke lease failed", "leaseid", leaseid, "err", err, "ret", ret)
-        return false
-    end
-    log.info("cluster_discovery lease revoked", "leaseid", leaseid)
     return true
 end
 
@@ -703,14 +671,16 @@ skynet.start(function()
     -- 配置写错时在这里就要炸：带着 nil 客户端起来，第一次心跳才报错更难查
     g_etcd_client = assert(etcd.new(config.get_table("etcd_config")))
 
+    node_lease.on_lost("cluster_discovery", on_lease_lost)
+
     g_heartbeat_timer = timer.repeat_immediately("cluster_discovery_heartbeat", HEARTBEAT_INTERVAL, function()
-        if not g_keepalive_timer then
-            init_keepalive_timer()
+        if not leaseid() then
+            return
         end
         if not g_local_node_revision then
             init_node_revision()
         end
-        if g_keepalive_timer and g_local_node_revision then
+        if g_local_node_revision then
             sync_service()
         end
     end)

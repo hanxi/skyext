@@ -237,7 +237,7 @@ entity_router.reliable_send("role", rid, "add_item", { item_id = 1001, count = 5
 
 `entity_agentmgr` 的 `shutdown` 先从服务发现注销 `entity:<type>`，路由随之移到其他节点；再让每个 agent
 执行 `unload_all`：置 `closing` 拒绝加载新实体，以有限并发卸载全部已加载实体（落库、释放锁、断开客户端），
-返回剩余数量；卸干净的 agent 随即撤销自己的锁租约。有实体卸不掉时每秒再来一轮，直到卸干净或超时，返回剩余实体数。
+返回剩余数量；卸干净的 agent 随即停止加锁（锁键真正从 etcd 消失是 `node_shutdown` 撤销节点租约时，租约是节点级的，别的服务还挂在上面）。有实体卸不掉时每秒再来一轮，直到卸干净或超时，返回剩余实体数。
 整个节点的停服由引擎服务 `service/node_shutdown.lua`（GM 命令 `shutdown`）驱动：它按 `.entity_agentmgr:<type>`
 本地名找到本节点起了的实体类型，前后分别回调游戏层挂的 `stop_accepting` / `release` 钩子；卸不掉就不退出，
 那些实体还有没落库的改动。
@@ -374,7 +374,7 @@ GM 指令会在所有注册该指令的服务上执行，每类型注册一次�
 - `CMD.deliver_reliable_loaded(entity_id)` — 转发入口，只投递给已加载的实体
 - `CMD.activate(entity_id)` — 主动把实体加载进内存（`ensure_loaded`），返回是否成功；供预加载、 scoped 实体激活使用
 - `CMD.unload_entity(entity_id)` — 强制卸载（供登录交接跨节点调用）
-- `CMD.shutdown()` — 停服：拒绝新加载、卸载全部实体，返回剩余数量；卸干净后撤销本服务的锁租约
+- `CMD.shutdown()` — 停服：拒绝新加载、卸载全部实体，返回剩余数量；卸干净后本服务不再加锁（节点租约由 `node_shutdown` 统一撤销）
 - `CMD.bind_session(entity_id, gate_node, fd)` — 把 gate 上的一条会话绑到实体（含重登交接、踢旧会话，见上节）；由登录服务经 `router.bind_session` 调用，返回错误码
 - `CMD.client_msg(gate_node, fd, data)` — gate 转来的上行字节：`sproto_api.dispatch_message(session.key(gate_node, fd), data)` 解码并分发到对应模块的 request handler
 - `CMD.session_closed(gate_node, fd)` — gate 通知会话断开：在 `with_loaded_entity` 门内确认仍是当前会话后 `session.unbind`，触发 `on_unbind_client`；实体已失效时兜底解绑
@@ -581,7 +581,7 @@ mongo_config.entity = {
 ## 已知问题
 
 - per-target `seq` 分配与消息 insert 未使用多文档事务：单目标并发发送不保证跨节点严格全序投递，详见上文。
-- `persistence.integration.test.lua` 已用真实 MongoDB/etcd 验证两个独立锁/DB 实例的租约撤销、fence 接管和旧 token 写入被拒绝；仍需部署多进程节点交接、网络分区和真实客户端重连的故障注入测试。
+- `persistence.integration.test.lua` 已用真实 MongoDB/etcd 验证两个独立节点租约/锁/DB 实例的租约撤销、fence 接管和旧 token 写入被拒绝；仍需部署多进程节点交接、网络分区和真实客户端重连的故障注入测试。
 - 失租恢复在重试 8 次（约 15 分钟）后会丢弃脏改动，这是一次无人值守的数据回退。日志里的 `dirty entity changes discarded` 和 `dirty cache superseded while lease was lost` 都是 error 级，应当接到告警上做事后对账；目前没有把被丢弃的改动落盘留档的机制。
 - schema 热更的旧模块缓存与活跃对象迁移尚未验证（见 `docs/guide/hotfix.md`）。
 

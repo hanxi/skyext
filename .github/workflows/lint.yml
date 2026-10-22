@@ -21,6 +21,15 @@ jobs:
         submodules: recursive
         fetch-depth: 1
 
+    - name: Setup Lua
+      uses: leafo/gh-actions-lua@v11
+      with:
+        luaVersion: "5.4"
+
+    # 裸名 require 和节点目录重名都不会报错，只会悄悄加载到别的文件
+    - name: Search path check
+      run: lua scripts/ci/check_paths.lua .
+
     - name: Luacheck linter
       uses: lunarmodules/luacheck@v1
 

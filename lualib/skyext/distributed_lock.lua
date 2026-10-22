@@ -1,22 +1,25 @@
+-- 基于 etcd 的实体锁，带 fencing token。
+--
+-- 锁键挂在节点级租约上（见 skyext.node_lease）：租约一没，etcd 自动删掉本节点
+-- 持有的全部锁键，别的节点立刻就能接手，不用等谁来主动释放。本模块只负责
+-- 加锁/解锁和租约失效时的本地隔离，租约本身的申请与续租是 node_lease 服务的事。
+--
+-- fence 用的是锁键的 create_revision——etcd 全局单调递增，同一把锁的新持有者
+-- 拿到的 fence 一定比旧持有者大。存储层据此拒绝旧持有者的迟到写入。
 local skynet = require "skynet"
 local etcd = require "skyext.etcd"
 local codec = require "skyext.etcd.codec"
-local timer = require "skyext.timer"
+local node_lease = require "skyext.node_lease"
 local config = require "skyext.config"
 local log = require "skyext.log"
 
 local M = {}
 
 local LOCK_PREFIX = "/skynet/lock/"
-local LEASE_TTL = 30
-local HEARTBEAT_INTERVAL = LEASE_TTL // 3
 
 local g_etcd_client
-local g_leaseid
-local g_deadline
 local g_locks = {}
-local g_heartbeat
--- 停服后置位：不再续租、不再加锁
+-- 停服后置位：不再加锁
 local g_closed = false
 
 local function notify_lock_expired(key, handle)
@@ -31,8 +34,6 @@ end
 local function invalidate_all(reason)
     local old_locks = g_locks
     g_locks = {}
-    g_leaseid = nil
-    g_deadline = nil
     for key, handle in pairs(old_locks) do
         handle.valid = false
         log.error("distributed lock expired", "key", key, "reason", reason)
@@ -40,19 +41,12 @@ local function invalidate_all(reason)
     end
 end
 
-local function lease_valid()
-    if not g_leaseid or not g_deadline then
-        return false
-    end
-    if skynet.now() >= g_deadline then
-        invalidate_all("lease heartbeat deadline elapsed")
-        return false
-    end
-    return true
-end
-
 function M.is_valid(handle)
-    return handle ~= nil and handle.valid and lease_valid() and g_locks[handle.key] == handle
+    return handle ~= nil
+        and handle.valid
+        and node_lease.valid()
+        and handle.epoch == node_lease.epoch()
+        and g_locks[handle.key] == handle
 end
 
 local function parse_revision(revision)
@@ -84,11 +78,11 @@ function M.try_lock(key, value, expired_cb)
     if existing and M.is_valid(existing) then
         return true, existing
     end
-    if not lease_valid() then
+    if not node_lease.valid() then
         return false, "etcd lease unavailable"
     end
 
-    local leaseid = g_leaseid
+    local leaseid, epoch = node_lease.id(), node_lease.epoch()
     local lock_key = LOCK_PREFIX .. key
     local ret, err = g_etcd_client:txn({
         { target = "CREATE", key = lock_key, create_revision = 0 },
@@ -101,7 +95,8 @@ function M.try_lock(key, value, expired_cb)
         log.error("etcd lock transaction failed", "key", key, "err", err, "ret", ret)
         return false, err or "etcd lock transaction failed"
     end
-    if not lease_valid() or leaseid ~= g_leaseid then
+    -- 请求往返期间租约可能已经换过一轮，那样这次写入已经被 etcd 连带删掉了
+    if not node_lease.valid() or epoch ~= node_lease.epoch() then
         return false, "lease changed during acquisition"
     end
     if g_locks[key] and M.is_valid(g_locks[key]) then
@@ -129,6 +124,7 @@ function M.try_lock(key, value, expired_cb)
         key = key,
         my_key = lock_key,
         lease = leaseid,
+        epoch = epoch,
         fence = revision,
         valid = true,
         expired_cb = expired_cb,
@@ -160,7 +156,7 @@ function M.unlock(key, handle)
         end
         return false, err or "lock no longer owned"
     end
-    if g_locks[key] ~= handle or not lease_valid() then
+    if g_locks[key] ~= handle or not M.is_valid(handle) then
         return false, "lease expired during unlock"
     end
     g_locks[key] = nil
@@ -169,77 +165,24 @@ function M.unlock(key, handle)
     return true
 end
 
-local function grant_lease()
-    local started = skynet.now()
-    local ret, err = g_etcd_client:grant(LEASE_TTL)
-    if not ret or ret.status ~= 200 or not ret.body or not ret.body.ID then
-        log.error("distributed lock grant failed", "err", err, "ret", ret)
-        return false
-    end
-    g_leaseid = ret.body.ID
-    g_deadline = started + (LEASE_TTL - 2) * 100
-    if not lease_valid() then
-        return false
-    end
-    log.info("distributed lock lease granted", "leaseid", g_leaseid)
-    return true
-end
-
-local function keepalive()
-    local started = skynet.now()
-    local leaseid = g_leaseid
-    local ret, err = g_etcd_client:keepalive(leaseid)
-    local ttl = ret and ret.body and ret.body.result and tonumber(ret.body.result.TTL)
-    if not ret or ret.status ~= 200 or not ttl or ttl <= 0 or leaseid ~= g_leaseid then
-        log.error("distributed lock keepalive failed", "err", err, "leaseid", leaseid, "ret", ret)
-        return false
-    end
-    g_deadline = started + (math.min(ttl, LEASE_TTL) - 2) * 100
-    return lease_valid()
-end
-
--- 停服：撤销本服务的租约，挂在上面的锁随之全部释放，别的节点马上就能接手。
+-- 本服务停止加锁，并丢弃手里的锁句柄。
+--
+-- 这里不撤销租约：租约是节点级的，归 node_lease 管，本节点还有别的服务在用它。
+-- 停服时真正放锁的动作是 node_shutdown 最后撤销节点租约，etcd 会连带删掉所有锁键。
 -- 这是主动放手，不触发过期回调（回调的语义是失租，machine_id 会据此重新抢号）。
--- 之后不再续租、不再加锁。返回是否撤销成功；失败时锁留给 etcd 按 TTL 过期
 function M.shutdown()
     g_closed = true
-    if g_heartbeat then
-        g_heartbeat:cancel()
-        g_heartbeat = nil
-    end
     for _, handle in pairs(g_locks) do
         handle.valid = false
     end
     g_locks = {}
-    local leaseid = g_leaseid
-    g_leaseid = nil
-    g_deadline = nil
-    if not leaseid then
-        return true
-    end
-    local ret, err = g_etcd_client:revoke(leaseid)
-    if not ret or ret.status ~= 200 then
-        log.error("distributed lock revoke failed", "leaseid", leaseid, "err", err, "ret", ret)
-        return false
-    end
-    log.info("distributed lock lease revoked", "leaseid", leaseid)
     return true
 end
 
 skynet.init(function()
     g_etcd_client = assert(etcd.new(config.get_table("etcd_config")))
-    -- 同步拿到租约再往下走：require 一返回调用方就能加锁。
-    -- 以前租约是交给心跳定时器异步申请的，模块加载完到定时器跑第一轮之间
-    -- 所有 try_lock 都会拿到 etcd lease unavailable，snowflake 抢机器号就栽在这里。
-    -- etcd 此刻不可用不挡启动，继续交给心跳重试。
-    grant_lease()
-    g_heartbeat = timer.repeat_delayed("distributed_lock_heartbeat", HEARTBEAT_INTERVAL, function()
-        if g_leaseid and not keepalive() then
-            invalidate_all("keepalive failed or lease expired")
-        end
-        if not g_leaseid then
-            grant_lease()
-        end
+    node_lease.on_lost("distributed_lock", function(_, reason)
+        invalidate_all(reason)
     end)
 end)
 

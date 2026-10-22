@@ -180,6 +180,22 @@ local function harness()
                 h.published[#h.published + 1] = { channel = channel, service = service, nodes = nodes }
             end,
         },
+        -- 节点级租约的替身。申请与续租归 node_lease 服务管（见 service/node_lease.test.lua），
+        -- 这里只模拟它对外的状态。
+        ["skyext.node_lease"] = {
+            valid = function()
+                return h.lease_alive
+            end,
+            id = function()
+                return h.lease_alive and h.lease_id or nil
+            end,
+            epoch = function()
+                return h.lease_epoch
+            end,
+            on_lost = function(_, fn)
+                h.on_lease_lost = fn
+            end,
+        },
         ["skyext.cmd_api"] = {
             dispatch = function(commands)
                 h.CMD = commands
@@ -220,8 +236,9 @@ local function harness()
     }
 
     -- 默认让整条注册链路走通，用例只改自己关心的那一环
-    h.grant_reply = { body = { ID = "777" } }
-    h.keepalive_reply = { body = { result = { TTL = "30" } } }
+    h.lease_alive = true
+    h.lease_id = "777"
+    h.lease_epoch = 1
     h.setnx_reply = { body = { succeeded = true, header = { revision = "101" } } }
     h.mod_reply = { body = { succeeded = true, header = { revision = "202" } } }
     h.set_reply = { body = { header = { revision = "303" } } }
@@ -235,8 +252,15 @@ local function harness()
     h.tick = function()
         h.timers["cluster_discovery_heartbeat"].fn()
     end
-    h.tick_keepalive = function()
-        assert(h.timers["cluster_discovery_keepalive"], "keepalive timer not installed").fn()
+    -- 节点租约失效：node_lease 广播，cluster_discovery 据此作废本地的已注册记账
+    h.lose_lease = function()
+        h.lease_alive = false
+        assert(h.on_lease_lost, "lease lost callback not registered")(h.lease_epoch, "test")
+    end
+    h.regrant_lease = function()
+        h.lease_alive = true
+        h.lease_epoch = h.lease_epoch + 1
+        h.lease_id = "lease-" .. h.lease_epoch
     end
     -- 让后台 watch 循环跑一轮就退出
     h.run_watch = function(fn)
@@ -355,14 +379,19 @@ t.describe("cluster_discovery service discovery", function()
     end)
 end)
 
-t.describe("cluster_discovery lease lifecycle", function()
-    t.it("首轮心跳依次拿租约、注册节点、把本地服务写进 etcd", function()
+-- 节点键和服务键都挂在节点级租约上。本服务自己不申请、不续租租约——从前它和实体锁
+-- 各持一个，锁的没了而这里的还在，本节点就会继续留在服务列表里被路由进来，
+-- 但每个实体都加不上锁。租约的生命周期测试在 service/node_lease.test.lua。
+t.describe("cluster_discovery node lease", function()
+    t.it("首轮心跳用节点租约注册节点，再把本地服务写进 etcd", function()
         local h = harness()
         h.start()
         h.CMD.register({ "entity:role" })
         h.tick()
 
-        t.expect(h.grants).to.equal({ 30 })
+        -- 自己不再 grant：全节点只有 node_lease 一条申请路径
+        t.expect(#h.grants).to.equal(0)
+        t.expect(#h.keepalives).to.equal(0)
         t.expect(h.setnxs[1].key).to.equal("/skynet/node/rolenode1")
         t.expect(h.setnxs[1].value.address).to.equal("127.0.0.1:7001")
         t.expect(h.setnxs[1].opts).to.equal({ lease = "777" })
@@ -371,75 +400,45 @@ t.describe("cluster_discovery lease lifecycle", function()
         t.expect(h.sets[1].value.node_revision).to.equal(101)
     end)
 
-    t.it("拿不到租约时不会带着空租约去注册节点", function()
+    t.it("租约不可用时一个字都不往 etcd 写", function()
         local h = harness()
+        h.lease_alive = false
         h.start()
-        h.grant_reply = nil
-        h.grant_err = "connection refused"
         h.CMD.register({ "entity:role" })
         h.tick()
 
         t.expect(#h.setnxs).to.equal(0)
         t.expect(#h.sets).to.equal(0)
-        -- 下一轮必须重新 grant，而不是认定租约已经有了
-        h.tick()
-        t.expect(#h.grants).to.equal(2)
     end)
 
-    t.it("grant 回包里没有租约 ID 时同样算失败", function()
-        local h = harness()
-        h.start()
-        h.grant_reply = { body = {} }
-        h.tick()
-        t.expect(#h.setnxs).to.equal(0)
-    end)
-
-    t.it("续期成功时租约和节点 revision 原封不动", function()
+    t.it("租约还在时反复心跳不会重复注册", function()
         local h = harness()
         h.start()
         h.CMD.register({ "entity:role" })
         h.tick()
-        h.tick_keepalive()
-
-        t.expect(h.keepalives).to.equal({ "777" })
-        -- 把一次正常续期误判成过期，节点 key 就会被反复重建，整个集群跟着抖
-        t.expect(h.timers["cluster_discovery_keepalive"]).to.exist()
         h.tick()
-        t.expect(#h.grants).to.equal(1)
+        h.tick()
         t.expect(#h.setnxs).to.equal(1)
         t.expect(#h.sets).to.equal(1)
     end)
 
-    t.it("续期只是网络抖动失败时保住租约，不会重新 grant 一个新的", function()
-        local h = harness()
-        h.start()
-        h.tick()
-        h.keepalive_reply = nil
-        h.keepalive_err = "timeout"
-        h.tick_keepalive()
-
-        -- 一次超时就重新 grant 会把已经注册好的节点 key 换一个租约，白白制造一次抖动
-        h.tick()
-        t.expect(#h.grants).to.equal(1)
-        t.expect(#h.setnxs).to.equal(1)
-    end)
-
-    t.it("续期发现租约已经过期时清空状态，下一轮重新 grant 并重新注册节点", function()
+    t.it("租约失效后换新租约重新注册节点和服务", function()
         local h = harness()
         h.start()
         h.CMD.register({ "entity:role" })
         h.tick()
         t.expect(#h.sets).to.equal(1)
 
-        -- etcd 回包里没有 TTL，说明租约在服务端已经没了
-        h.keepalive_reply = { body = { result = {} } }
-        h.tick_keepalive()
-        t.expect(h.timers["cluster_discovery_keepalive"]).to.be_nil()
+        -- 租约没了，etcd 已经把节点键和服务键一并删掉，本地的"已同步"记账全作废
+        h.lose_lease()
+        h.tick()
+        t.expect(#h.setnxs).to.equal(1)
 
+        h.regrant_lease()
         h.setnx_reply = { body = { succeeded = true, header = { revision = "999" } } }
         h.tick()
-        t.expect(#h.grants).to.equal(2)
         t.expect(#h.setnxs).to.equal(2)
+        t.expect(h.setnxs[2].opts).to.equal({ lease = "lease-2" })
         -- 节点 revision 换了，本地服务必须跟着重写一遍，否则发现端会按旧 revision 把它判为过期
         t.expect(#h.sets).to.equal(2)
         t.expect(h.sets[2].value.node_revision).to.equal(999)
@@ -451,11 +450,22 @@ t.describe("cluster_discovery lease lifecycle", function()
         h.tick()
         t.expect(h.opens).to.equal({ 7001 })
 
-        h.keepalive_reply = { body = { result = {} } }
-        h.tick_keepalive()
+        h.lose_lease()
+        h.regrant_lease()
         h.tick()
         -- 重新注册时再 open 一次会撞端口
         t.expect(h.opens).to.equal({ 7001 })
+    end)
+
+    -- 停服时撤租约是 node_shutdown 的事：租约是节点级的，本节点别的服务还挂在上面
+    t.it("停服只停注册，不撤销节点租约", function()
+        local h = harness()
+        h.start()
+        h.CMD.register({ "entity:role" })
+        h.tick()
+        t.expect(h.CMD.shutdown()).to.equal(true)
+        t.expect(#h.revokes).to.equal(0)
+        t.expect(h.timers["cluster_discovery_heartbeat"]).to.be_nil()
     end)
 end)
 
@@ -826,28 +836,17 @@ t.describe("cluster_discovery service watch", function()
 end)
 
 t.describe("cluster_discovery shutdown", function()
-    t.it("撤销租约让节点立即下线，之后不再续租也不再注册", function()
+    t.it("停服后不再往 etcd 写，重复调用和后续注册都不报错", function()
         local h = harness()
         h.start()
         h.CMD.register({ "entity:role" })
         h.tick()
         t.expect(h.CMD.shutdown()).to.equal(true)
-        t.expect(h.revokes).to.equal({ "777" })
-        t.expect(h.timers["cluster_discovery_heartbeat"]).to.be_nil()
-        t.expect(h.timers["cluster_discovery_keepalive"]).to.be_nil()
-        -- 再调一次没有租约可撤，直接成功
         t.expect(h.CMD.shutdown()).to.equal(true)
-        t.expect(#h.revokes).to.equal(1)
         -- 停服后再有注册/注销也不能因为心跳定时器没了而报错
         h.CMD.register({ "entity:other" })
         h.CMD.unregister({ "entity:other" })
-    end)
-
-    t.it("撤销失败时如实报告，租约留给 etcd 自己过期", function()
-        local h = harness()
-        h.start()
-        h.tick()
-        h.revoke_fail = true
-        t.expect(h.CMD.shutdown()).to.equal(false)
+        t.expect(#h.setnxs).to.equal(1)
+        t.expect(#h.sets).to.equal(1)
     end)
 end)
