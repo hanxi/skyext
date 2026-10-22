@@ -58,7 +58,42 @@ end
 -------------------------------------------------------------------
 -- 外部模块名的白名单：skynet 自带的、以及编译进 luaclib 的 C 模块。
 -- 动态枚举而不是写死清单，免得加一个 C 模块就要改这里。
+-- .so 是构建产物（被 gitignore），CI 里不编译就扫不到；所以 C 模块
+-- 一律从 Makefile 的声明枚举（build.mk / skynet 的 Makefile），
+-- .so 扫描只作为本地已构建产物的补充。
 -------------------------------------------------------------------
+-- 从 Makefile 里取 VAR = a b c 的清单，支持反斜杠续行；$(...) 这类
+-- make 变量引用跳过（如 skynet 的 $(TLS_MODULE)，视平台而定）。
+local function makefile_list(path, varname)
+    local names = {}
+    local f = io.open(path, "r")
+    if not f then
+        return names
+    end
+    local value, pending
+    for line in f:lines() do
+        if pending then
+            value = value .. " " .. line
+        else
+            value = line:match("^" .. varname .. "%s*=%s*(.*)$")
+        end
+        if value then
+            pending = value:match("\\%s*$") ~= nil
+            value = value:gsub("\\%s*$", "")
+            if not pending then
+                break
+            end
+        end
+    end
+    f:close()
+    for token in (value or ""):gmatch("%S+") do
+        if not token:find("[%$#()]") then
+            names[token] = true
+        end
+    end
+    return names
+end
+
 local function external_modules()
     local names = {}
     local dirs = {
@@ -76,6 +111,15 @@ local function external_modules()
                 -- skynet/lualib/http 这类目录，require "http.url" 走的是它
                 names[path] = true
             end
+        end
+    end
+    local makefiles = {
+        { root .. "/build.mk", "SKYEXT_LUA_CLIB" },
+        { root .. "/skynet/Makefile", "LUA_CLIB" },
+    }
+    for _, spec in ipairs(makefiles) do
+        for name in pairs(makefile_list(spec[1], spec[2])) do
+            names[name] = true
         end
     end
     return names
