@@ -176,9 +176,31 @@ mail_max_count = 100 -- 单个角色邮箱上限，满了丢最早的一封
 -- snowflake 机器号默认由各节点启动时从 etcd 抢一个带租约的槽位，扩容不用改配置。
 -- 只有需要把某个节点的号钉死时才在节点配置里写 snowflake_machine_id。
 
--- 登录用的 jwt 密钥。下面这个示例值是公开的，谁都能拿它伪造登录态，
--- 部署前必须换成随机长串（例如 openssl rand -hex 32），且不少于 16 字符。
+-- 登录 token 的签名算法。HS256/HS512 是共享密钥，RS256/ES256 是公私钥。
+-- 本地开发用共享密钥最省事；一旦 token 由平台/SDK 签发，就该换成公私钥——
+-- 游戏节点只需要公钥，私钥不用下发，泄露一台机器也伪造不出登录态。
+login_jwt_alg = "HS256"
+-- 登录用的 jwt 密钥（HS256/HS512 才用得上）。下面这个示例值是公开的，
+-- 谁都能拿它伪造登录态，部署前必须换成随机长串（例如 openssl rand -hex 32），
+-- 且不少于 16 字符。
 login_jwt_secret = "your_access_secret"
+
+-- 改用 RS256/ES256 时配下面这组，login_jwt_secret 就不再读了。
+-- 公钥和私钥都可以直接写 PEM 字符串，或者写 _path 指到文件；两种写法只能选一种。
+--
+--   login_jwt_alg = "ES256"
+--   login_jwt_public_key_path = "etc/keys/login_pub.pem"    -- 校验方（游戏节点）只要这个
+--   login_jwt_private_key_path = "etc/keys/login_priv.pem"  -- 只有签发方才配
+--   login_jwt_kid = "login-2026"                            -- 写进 token 头，轮转时用来认领
+--
+-- 轮转期可以同时信任新旧两把公钥，这时 login_jwt_public_key 写成 kid -> PEM 的表：
+--
+--   login_jwt_public_key = { ["login-2025"] = old_pem, ["login-2026"] = new_pem }
+--
+-- 生成一对 P-256 密钥：
+--   openssl ecparam -name prime256v1 -genkey -noout -out login_priv.pem
+--   openssl ec -in login_priv.pem -pubout -out login_pub.pem
+-- 私钥不能带口令，服务端不会去问密码。
 -- 仅供本地开发：显式打开后允许继续使用弱密钥（日志里会持续告警）。
 -- 生产环境不要设置这一项——弱密钥会直接导致登录被拒绝。
 allow_insecure_secret = true
