@@ -23,7 +23,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | Gateway | `example/nodes/gateway/main.lua` | 独立网关节点（`start = "gateway"`，实例 `gate1`）：只接客户端连接 + 登录，不承载实体，上行转发到实体所在节点 |
 | Robot | `example/nodes/robot/main.lua` | 示例客户端，用于本地登录/游戏流程验证 |
 
-各节点分别运行在 skynet 进程中。示例的 Account、Role、Gateway 节点都调用游戏层 `example/lualib/launcher.lua` 启动 GM、hotfix 服务，并在启动阶段创建 MongoDB 索引。客户端连任意一个 gate（Role 节点同进程部署的 gate，或独立的 Gateway 节点）都能进游戏：gate 只管会话与拆包，上行按会话转发到实体真正所在的节点（同节点 `skynet.send`，跨节点 `cluster.send`）。服务发现组件把服务注册到 etcd，并为服务端调用方维护节点缓存；示例 Robot 则根据本地 `gate_addrs` 配置直连某个 gate，而非从 etcd 缓存选择客户端地址（`/roles` 也不再返回 `rolenode`）。角色与账号数据通过 MongoDB 连接池、ORM 和业务 handler 读取/保存。详细的客户端交互见[登录流程](guide/login.md)及[流程图](guide/login_diagram.md)。
+各节点分别运行在 skynet 进程中。示例的 Account、Role、Gateway 节点都调用游戏层 `example/lualib/launcher.lua` 启动 GM、hotfix 服务，并在启动阶段创建 MongoDB 索引。客户端连任意一个 gate（Role 节点同进程部署的 gate，或独立的 Gateway 节点）都能进游戏：gate 只管会话与拆包，上行按会话转发到实体真正所在的节点（同节点 `skynet.send`，跨节点 `cluster.send`）。服务发现组件把服务注册到 etcd，并为服务端调用方维护节点缓存；示例 Robot 和正式客户端一样，先请求 Account 的 `GET /gates` 拿在线网关列表再直连其中一台（网关地址由各网关节点上报进区服目录，挂在节点租约上；`/roles` 不返回 `rolenode`，客户端不需要知道实体在哪）。角色与账号数据通过 MongoDB 连接池、ORM 和业务 handler 读取/保存。详细的客户端交互见[登录流程](guide/login.md)及[流程图](guide/login_diagram.md)。
 
 示例业务配置位于 `example/etc/nodes/`：Account HTTP、Role/Gateway 网关、GM HTTP 端口，以及 `mongo_config`、`etcd_config`、JWT 密钥等都在这里配置。跨机器部署时，需同时调整监听/对外地址、服务发现地址和外部服务连接地址；示例中的 `127.0.0.1` 只适用于本机环境。
 
@@ -51,7 +51,7 @@ skyext 在 [skynet](https://github.com/cloudwu/skynet) 上提供通用的游戏�
 | 停服 | `service/node_shutdown.lua`、`lualib/skyext/node_shutdown_api.lua` | GM `shutdown` 编排：停止接入 → 卸载实体 → 释放资源 → 撤销节点租约 → 退出；游戏层挂钩子 |
 | 热更新 | `service/hotfix.lua`、`example/hotfix/` | 热更包、预演与执行；按[热更新操作](guide/hotfix.md)进行 |
 | 通用实体 | `lualib/skyext/entity/`、`service/entity_agent*.lua` | 按存活节点路由（HRW）、粘性转发、实体生命周期、常驻实体与预加载、作用域实体（`scope`）、实体定时器、停服卸载、业务模块扩展 |
-| 网关会话 | `service/session_gate.lua`、`lualib/skyext/entity/session.lua`、`example/service/login/` | gate 监听 TCP、拆包、会话表与亲和转发；实体侧会话绑定/上行入队/下行推送；登录服务经 `router.bind_session` 把会话绑到实体 |
+| 网关会话 | `service/gate_tcp.lua`、`lualib/skyext/entity/session.lua`、`example/service/login/` | gate 监听 TCP、拆包、会话表与亲和转发；实体侧会话绑定/上行入队/下行推送；登录服务经 `router.bind_session` 把会话绑到实体 |
 | 测试 | `lualib/skytest/`、`scripts/commands/test.lua` | 每个 `.test.lua` 文件独立 skynet 进程 |
 
 **区服**：逻辑节点**不按区服划分**，任何 role 节点都能承载任何区服的角色。作用域分四层：server（出生服）→ game（逻辑服，一起玩的那批人）→ zone（战区，跨服玩法的范围）→ global。映射存在 etcd 的**区服目录**里（`service/realm.lua`，查询用 `skyext.realm`），由 GM 命令 `realm_open`（开服）、`realm_set_zone`（调战区）维护，所有节点 watch，改了即生效，不用改配置、不用重启。**角色只记出生服**，game / zone 每次用 `realm.game_of(server)` 现查，所以合服只改目录里的一条映射，不改任何玩家文档；实体 ID 是全局唯一的 snowflake，合服也不会撞 ID。

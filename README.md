@@ -82,8 +82,8 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 
 - [架构概览](docs/overview.md)：节点、引擎/游戏分层与配置流向。
 - [快速上手](docs/getting-started.md)：依赖、构建、运行、测试及常见问题。
-- [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md)。
-- [完整客户端联调](docs/guide/fullstack_client.md)：gamepass OAuth + goscon 网关 + phaser-game 浏览器客户端，跑通正式客户端链路。
+- [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md) · [客户端接入规范](docs/guide/client_protocol.md)：写客户端 SDK 看最后一篇。
+- [完整客户端联调](docs/guide/fullstack_client.md)：gamepass OAuth + phaser-game 浏览器客户端，跑通正式客户端链路（该示例客户端用 SCP，仍需 goscon；新客户端直连 `gate_ws`）。
 - [热更新操作](docs/guide/hotfix.md) · [GM HTTP API](docs/guide/gm_api.md)。
 - [HTTP 服务端](docs/guide/http_server.md)：命名实例、连接与超时上限、路由注册。
 - [指标采集与导出](docs/guide/metrics.md)：指标原语、Prometheus 端点与内置指标。
@@ -95,10 +95,10 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 ## 相关项目与参与
 
 - [phaser-game](https://github.com/hanxi/phaser-game)：示例 Phaser 客户端（submodule：`example/tools/phaser-game`）。
-- [goscon](https://github.com/hanxi/goscon)：WebSocket 到 TCP 网关（submodule：`example/tools/goscon`）。
 - [gamepass](https://github.com/hanxi/gamepass)：第三方登录鉴权服务（submodule：`example/tools/gamepass`）。
+- [goscon](https://github.com/hanxi/goscon)：WebSocket 到 TCP 网关（submodule：`example/tools/goscon`）。**可选，默认不启用**：WebSocket 接入由 `service/gate_ws.lua` 原生支持，断线续接由会话层原生支持（见[登录流程](docs/guide/login.md)），默认部署里 goscon 已经没有职责。只有真的需要字节级连接续接时才接它，并且**不能打开它的 `-sproto` 开关**——那个开关会往游戏服注入 `login.report_remote_addr`，该协议已经删除（真要在代理后面拿客户端真实 IP，用 PROXY protocol，而不是带内消息）。
 
-三者的启动与联调步骤见[完整客户端联调](docs/guide/fullstack_client.md)。
+前两者的启动与联调步骤见[完整客户端联调](docs/guide/fullstack_client.md)。
 
 问题与建议可提交 [GitHub Issues](https://github.com/hanxi/skyext/issues)。修改前请阅读 [AGENTS.md](AGENTS.md) 中的项目约定，并运行相关测试和代码检查。
 

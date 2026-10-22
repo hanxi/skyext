@@ -1,23 +1,24 @@
 # 登录流程
 
-> 查看 [登录流程图](login_diagram.md) 了解完整的登录流程可视化展示
+> 可视化展示见 [登录流程图](login_diagram.md)。要实现一个客户端 SDK，看 [客户端接入规范](client_protocol.md)——那份文档才是实现依据，本文讲的是服务端这一侧怎么配、怎么跑。
 
 ## 前置条件
 
-- Account 服务已启动（提供 `/servers`、`/roles`、`/create_role` 以及开发用的 `/dev_login` HTTP 接口）
-- gate 已启动并监听（Role 节点同进程部署的 gate，或独立的 Gateway 节点；客户端连任意一个 gate 都能进游戏）
+- Account 服务已启动（提供 `/servers`、`/gates`、`/roles`、`/create_role` 以及开发用的 `/dev_login` HTTP 接口）
+- 至少一个网关节点已启动并监听（Role 节点同进程部署的网关，或独立的 Gateway 节点；客户端连任意一个都能进游戏）
 - etcd 和 MongoDB 服务可用
 - 客户端持有有效的 JWT Token（正式客户端从 SDK/平台登录服务获取；示例机器人从 Account 的 `/dev_login` 获取）
 
 ## 登录步骤
 
 1. 客户端获取 JWT Token（正式客户端从 SDK/平台登录服务获得；示例机器人 POST `/dev_login` 获得）
-2. 发送 HTTP GET `/servers` 获取服务器列表（不需要登录，最新开放的服带 `recommended = true`），选一个服建角
-3. 发送 HTTP GET `/roles?token=xxx` 到 Account 服务获取角色列表；没有角色时 POST `/create_role` 创建（只能选 `status = "open"` 的服）
-4. 连接任意一个 gate（正式客户端经 gate 前的负载均衡/goscon 转接，机器人从 `gate_addrs` 列表里依次试到第一个连得上的，用 TCP `socket.open` 直连）。**客户端不需要知道角色实体在哪个节点**——gate 只管会话，上行包由它转发到实体真正所在的节点
-5. 发送 sproto `login.login` 消息（携带 token、rid、server、proto_checksum）。服务端校验 token 后，还会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**，否则返回 `ROLE_NOT_EXIST`——token 只证明账号，rid 和 server 是客户端自己报的
-6. 登录服务经 Entity 路由调用 `router.bind_session("role", rid, gate_node, fd)`：按 HRW 找到实体所在节点，把这条 gate 会话绑到角色实体上（实体可能在别的节点，gate 会记下 `owner_node`，后续上行包跨节点转发）。**不再有 `NOT_THIS_NODE` 让客户端改连节点**
-7. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
+2. HTTP GET `/servers` 取服务器列表（不需要登录，最新开放的服带 `recommended = true`），选一个服建角
+3. HTTP GET `/roles` 取角色列表；没有角色时 POST `/create_role` 创建（只能选 `status = "open"` 的服）。两个接口都要带 `Authorization: Bearer <token>` 头——**token 不走 URL query**，那会被访问日志、代理日志、Referer 和浏览器历史一路抄送
+4. HTTP GET `/gates` 取在线网关列表（不需要登录），挑一台连上。原生 APP 连 `tcp_addr`（裸 TCP，2 字节大端长度前缀），浏览器和小程序连 `ws_url`（WebSocket binary 帧，不加长度头）。**客户端不需要知道角色实体在哪个节点**——网关只管会话，上行包由它转发到实体真正所在的节点
+5. 发送 sproto `login.login`（携带 token、rid、server、proto_checksum）。服务端校验 token 后，还会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**，否则返回 `ROLE_NOT_EXIST`——token 只证明账号，rid 和 server 是客户端自己报的
+6. 登录服务经 Entity 路由调用 `router.bind_session("role", rid, ...)`：按 HRW 找到实体所在节点，把这条会话绑到角色实体上（实体可能在别的节点，网关会记下 `owner_node`，后续上行包跨节点转发）。**不再有 `NOT_THIS_NODE` 让客户端改连节点**
+7. 登录响应里带回一枚 `nonce`（16 字节续接凭据），客户端存下来，断线后用它走 `login.resume` 把会话接回去，见下面的[断线续接](#断线续接)
+8. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
 
 ### 开发用登录接口
 
@@ -68,64 +69,103 @@ local function fetch_token(account_host, account)
     return res.token
 end
 
+-- 网关地址来自 account 的 /gates，不写死在配置里。列表里只会有真的在线的网关
+-- （网关键挂在节点租约上），所以也不用自己判断某个端口通不通
+local function fetch_gates(account_host)
+    local status, body = httpc.get(account_host, "/gates")
+    local res = status == 200 and cjson.decode(body)
+    if type(res) ~= "table" or res.code ~= errcode.OK or not res.gates[1] then
+        log.error("no gate is online", "status", status, "res", res)
+        return nil
+    end
+    return res.gates
+end
+
+-- 登录 token 走 Authorization 头，不进 URL
+local function authed(method, account_host, url, token, body)
+    local header = { authorization = "Bearer " .. token }
+    local data
+    if body then
+        header["content-type"] = "application/json"
+        data = cjson.encode(body)
+    end
+    local status, res = httpc.request(method, account_host, url, nil, header, data)
+    return status, cjson.decode(res) or res
+end
+
 function CMD.start(conf)
-    -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
-    -- 所以 account_host 和 gate_addrs 都要在这里取
     local account_host = config.get("account_host")
-    local gate_addrs = assert(config.get_table("gate_addrs"), "gate_addrs is not configured")
     local account = "robot" .. conf.id
     local token = fetch_token(account_host, account)
-    if not token then
-        return
-    end
+    -- ……GET /servers 挑推荐服；GET /roles，没有角色时 POST /create_role……
+    local role = ensure_role(account_host, token, account, pick_server(account_host))
+    local gates = fetch_gates(account_host)
 
-    -- 服务器列表不需要登录；没有角色时在推荐服建角
-    local server = "s1"
-    local list_status, list = httpc.get(account_host, "/servers")
-    local servers = list_status == 200 and cjson.decode(list)
-    for _, entry in ipairs(servers and servers.servers or {}) do
-        if entry.recommended then
-            server = entry.server
+    -- 按编号错开起点，依次试到第一个跑通的网关；网关不必和角色实体在同一个节点
+    local start = conf.gate or (conf.id % #gates + 1)
+    for i = 0, #gates - 1 do
+        local gate = gates[(start + i - 1) % #gates + 1]
+        -- 同一套用例在 tcp 和 ws 上各跑一遍，行为必须完全一致
+        for _, transport in ipairs(config.get_table("robot_transports") or { "tcp", "ws" }) do
+            run(transport, gate, role, token)
         end
     end
-
-    local status, body = httpc.get(account_host, "/roles?token=" .. token)
-    -- ……没有角色时 POST /create_role（带 server）创建，取第一个角色……
-
-    local role = roles[1]
-    -- 按编号错开起点，依次试到第一个连得上的 gate；gate 不必和角色实体在同一个节点
-    local fd = connect_gate(gate_addrs, conf.gate or (conf.id % #gate_addrs + 1))
-    if not fd then
-        log.error("no gate is reachable", "gate_addrs", gate_addrs)
-        return
-    end
-    g_fd = fd
-
-    local ret = call("login.login", {
-        token = token,
-        rid = role.rid,
-        server = server,
-        proto_checksum = sproto_api.get_sproto_info().checksum,
-    })
-    if not ret or ret.code ~= errcode.OK then
-        return
-    end
-    -- 登录后看背包、给自己发一封邮件、看邮箱，再报一次排行榜
-    play(role.rid)
 end
 ```
 
-> **说明**：机器人使用 `socket.open` 建立原始 TCP 连接直连 skynet gate。正式客户端通常经 WebSocket 网关（如 [goscon](https://github.com/hanxi/goscon)）转接到 skynet gate 的 TCP 端口。
+连接、登录、计数、心跳、续接这些都在 `example/lualib/client_session.lua` 里，机器人只负责编排业务流程。`run()` 建一个会话，跑一遍业务，中间主动断一次连接验证续接，再跑一遍：
+
+```lua
+local s = client_session.new({
+    transport = transport, -- "tcp" 或 "ws"
+    host = host,
+    port = port,
+    url = gate.ws_url,
+    login_param = function()
+        return { token = token, rid = role.rid, server = role.server, proto_checksum = ... }
+    end,
+})
+s:start()
+play(s, role.rid)
+check_resume(s) -- 断开、续接、断言凭据轮换且计数没有倒退
+play(s, role.rid)
+s:close()
+```
+
+## 断线续接
+
+断线不等于重新登录。客户端重连后先发 `login.resume`，把会话接回新连接上：在途请求按原 id 重发（服务端回缓存的响应，不重复执行），断线期间的下行包重放过来，业务层**观察不到**这次断线（不触发 `on_bind_client` / `on_unbind_client`）。
+
+服务端这一侧的要点：
+
+- **会话活在角色实体进程里**，不在网关里。`entity.session` 是连接（断了就是 nil），`entity.session_io` 才是会话，它跨连接存活
+- **续接窗口 = 实体的 `unload_delay`**。没有单独的计时器：实体卸载时会话一起消失，续接自然失败并退化成完整登录
+- **续接能落到任意一台网关**。会话键 `<gate_node>/<fd>` 全集群唯一，实体寻址与网关在哪无关
+- **凭据每次轮换**。`login` 和每次成功的 `resume` 都返回新的 nonce，旧的立即失效；比对是恒定时间的
+- **不加载实体**。`resume` 不验 token、不查库、不抢锁，实体不在内存里就直接失败
+
+相关配置都在 `example/etc/nodes/common.app.lua`：
+
+| 配置 | 作用 | 默认 |
+| --- | --- | --- |
+| `session_replay_bytes` / `session_replay_packets` | 未确认下行的重放缓冲上限 | 32 KiB / 256 包 |
+| `session_respcache_count` / `session_respcache_bytes` | 上行幂等缓存上限 | 64 条 / 16 KiB |
+| `session_idle_timeout` | 多久没有上行包就断开连接 | 60 秒 |
+| `session_idle_interval` | 空闲扫描间隔 | 10 秒 |
+
+两个缓冲上限是**内存保护**，不是性能参数：撑爆了只是退化成重新登录，取大了则是每个在线角色都多占这么多常驻内存。
+
+客户端那一侧的义务（计数、心跳、原 id 重发、不假设重放与响应保序）一条都不能省，全部写在[客户端接入规范](client_protocol.md)里。设计取舍见 `docs/design/session_resume.md`。
 
 ## 登录协议定义
 
-### login（协议号 101）
+### login（协议号 100）
 
 定义于 `example/proto/login.sproto`：
 
 ```sproto
 # 角色登录
-login 101 {
+login 100 {
     request {
         token 0 : string # jwt token {account}
         rid 1 : integer # role id 直接登录角色
@@ -135,11 +175,14 @@ login 101 {
     response {
         code 0 : integer
         rid 1 : integer
+        nonce 2 : string # 续接凭据，断线后拿它走 resume
     }
 }
 ```
 
-> **登出**：没有专门的登出协议。客户端直接关闭连接即视为登出——gate 把断开事件转给角色实体，实体解绑会话（触发 `on_unbind_client` 钩子），数据由实体系统的定时保存与卸载统一落库。
+另外两条 `login.resume`（101）和 `login.ping`（102）属于会话层，含义和客户端义务见[客户端接入规范](client_protocol.md)。
+
+> **登出**：没有专门的登出协议。客户端直接关闭连接即视为登出——网关把断开事件转给角色实体，实体解绑会话（触发 `on_unbind_client` 钩子），数据由实体系统的定时保存与卸载统一落库。
 
 ### role.login_info（协议号 200）
 
@@ -177,25 +220,49 @@ HTTP 服务，端口由各节点的 `account_http_port` 指定：
 account_host = "http://127.0.0.1:8080"
 ```
 
-### 网关地址（gate_addrs）
+### 网关地址
 
-机器人从 `gate_addrs` 列表里按编号错开起点、依次试到第一个连得上的 gate，不关心角色实体在哪个节点。配置示例（`example/etc/nodes/robot.app.lua`）：
+网关地址**不配在客户端**。每个网关节点启动时把自己的接入地址上报进区服目录（etcd 的 `/skyext/realm/gate/<node>`，挂在节点租约上），客户端请求 `GET /gates` 拿列表：
 
-```lua
-gate_addrs = {
-    { ip = "127.0.0.1", port = 7012 }, -- rolenode1 同进程部署的 gate
-    { ip = "127.0.0.1", port = 7022 }, -- rolenode2 同进程部署的 gate
-    { ip = "127.0.0.1", port = 7052 }, -- 独立的 gate1 节点
-}
+```json
+{ "code": 0, "gates": [
+  { "node": "gate1", "tcp_addr": "127.0.0.1:7052", "ws_url": "ws://127.0.0.1:7053", "weight": 1 }
+] }
 ```
 
-正式环境客户端连的是 gate 前面的负载均衡（或 goscon），不需要列出具体节点。各节点的 gate 端口由 `gate_port` 配置：
+节点挂掉时租约过期、键消失；节点优雅停服时在 `stop_accepting` 阶段主动摘掉自己——已连上的客户端照常走完停服流程，新客户端立刻不再被引导过来。
 
-| 节点 | 配置文件 | gate_port | GM 端口 |
-|------|---------|-----------|---------|
-| rolenode1 | `example/etc/nodes/role1.app.lua` | 7012 | 9092 |
-| rolenode2 | `example/etc/nodes/role2.app.lua` | 7022 | 9093 |
-| gate1（独立网关） | `example/etc/nodes/gate1.app.lua` | 7052 | 9094 |
+**这意味着前面不需要挂会话保持（sticky）的负载均衡**：续接能落到任意一台网关（会话状态在角色实体里，不在网关里），客户端从列表里随便挑都行。手机从 WiFi 切 4G 时源 IP 会变，粘性恰恰在最需要续接的那一刻失效。
+
+各节点的端口配置：
+
+| 节点 | 配置文件 | gate_port | ws_port | GM 端口 |
+|------|---------|-----------|---------|---------|
+| rolenode1 | `example/etc/nodes/role1.app.lua` | 7012 | 7013 | 9092 |
+| rolenode2 | `example/etc/nodes/role2.app.lua` | 7022 | 7023 | 9093 |
+| gate1（独立网关） | `example/etc/nodes/gate1.app.lua` | 7052 | 7053 | 9094 |
+
+`ws_port` 不配就只开裸 TCP 网关。下发给客户端的是公网可达地址，和监听地址（`gate_host`，通常 `0.0.0.0`）不是一回事：
+
+| 配置 | 作用 | 默认 |
+| --- | --- | --- |
+| `gate_public_host` | 下发给客户端的主机名/IP | `cluster_host` |
+| `ws_public_url` | 整条 WS URL，前面挂了 TLS 终止、客户端连域名 443 时配它 | 由 `ws_protocol` + `gate_public_host` + `ws_port` 拼出 |
+| `gate_weight` | 客户端分流权重 | 1 |
+
+### wss
+
+小程序平台要求已备案、证书合法的域名，端口基本只能 443，所以线上这一侧大概率要前置一层做 TLS 终止，`ws_protocol` 留 `ws` 即可——那一层只做 TLS 和转发，**不做会话保持**。
+
+直连 `wss` 是给小规模自建部署用的，在节点配置里写：
+
+```lua
+ws_protocol = "wss"
+ws_certfile = "etc/keys/server-cert.pem"
+ws_keyfile = "etc/keys/server-key.pem"
+```
+
+再在该节点的 `.conf.lua` 里加 `enablessl = true`（ltls 要用）。这几项**不能写进 `common.app.lua`**：节点配置的最后一行是 `include "common.app.lua"`，公共文件里的赋值会反过来把节点自己写的那份盖掉。
 
 ### 区服目录
 

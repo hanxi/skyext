@@ -173,7 +173,7 @@ entity_types.team = {
 
 | 层 | 组件 | 职责 |
 |----|------|------|
-| 框架 | `service/session_gate.lua`（本地名 `.session_gate`） | 基于 skynet gateserver：监听 TCP、按 2 字节长度拆包、维护会话表 `fd -> { owner_node, owner_service }`。未绑定的会话把包交给登录服务；绑定后**原样**转发给实体所在节点（同节点 `skynet.send`，跨节点 `cluster.send`）。提供 `bind / push / kick`，挂停服钩子 `stop_accepting` |
+| 框架 | `service/gate_tcp.lua`（本地名 `.gate_tcp`） | 基于 skynet gateserver：监听 TCP、按 2 字节长度拆包、维护会话表 `fd -> { owner_node, owner_service }`。未绑定的会话把包交给登录服务；绑定后**原样**转发给实体所在节点（同节点 `skynet.send`，跨节点 `cluster.send`）。提供 `bind / push / kick`，挂停服钩子 `stop_accepting` |
 | 框架 | `skyext.entity.session`（取代 `client_ext`） | 实体侧的会话：会话键 `"<gate_node>/<fd>"`，`bind / unbind / with_request / kick / push`；把 `sproto_api` 的发送端换成"发给会话所在的 gate" |
 | 框架 | `entity_agent` | `bind_session(id, gate_node, fd)`（取代 `bind_client`，含重登交接、踢旧会话）、`client_msg`（上行解码分发）、`session_closed`（取代 `disconnect`）；不再需要 watchdog |
 | 框架 | `router.bind_session(type, id, gate_node, fd)` | 登录服务调用：按 HRW 找到实体节点并绑定，**不再有 `NOT_THIS_NODE` 重定向** |

@@ -1,6 +1,6 @@
 # 通用实体系统
 
-> **状态：已实现。** 核心组件（types / router / entitymgr / reliable_msg / session / entity_agent / entity_agentmgr）均已合入主线。`role` 类型已通过 entity 系统运行——`example/nodes/role/main.lua` 直接 `newservice("entity_agentmgr", "role")` 并 `call(mgr, "lua", "start")`，旧版 roleagent / rolemgr / watchdog 已移除。客户端接入改为**会话层**（`skyext.entity.session` + `service/session_gate.lua`）：连接落在 gate 上，实体只持有 `entity.session = { gate_node, fd, key }`，详见[独立网关层设计](../plan/architecture_refactor.md#四独立网关层)。
+> **状态：已实现。** 核心组件（types / router / entitymgr / reliable_msg / session / entity_agent / entity_agentmgr）均已合入主线。`role` 类型已通过 entity 系统运行——`example/nodes/role/main.lua` 直接 `newservice("entity_agentmgr", "role")` 并 `call(mgr, "lua", "start")`，旧版 roleagent / rolemgr / watchdog 已移除。客户端接入改为**会话层**（`skyext.entity.session` + `service/gate_tcp.lua`）：连接落在 gate 上，实体只持有 `entity.session = { gate_node, fd, key }`，详见[独立网关层设计](../plan/architecture_refactor.md#四独立网关层)。
 
 ## 概述
 
@@ -37,7 +37,7 @@
 | `lualib/skyext/entity/entitymgr.lua` | 单 agent 内实体生命周期（加载/卸载/缓存），复用 dbmgr + distributed_lock |
 | `lualib/skyext/entity/reliable_msg.lua` | 可靠消息持久化（MongoDB），加载时投递 pending 消息 |
 | `lualib/skyext/entity/session.lua` | 实体侧客户端会话：会话键 `"<gate_node>/<fd>"` 的绑定/解绑、上行入队、下行推送，仅 `client_enabled` 类型启用 |
-| `service/session_gate.lua` | gate 服务（本地名 `.session_gate`）：基于 gateserver 监听 TCP、按 2 字节长度拆包、维护 `fd -> {owner_node, owner_service}`，未绑定时交登录服务、绑定后原样转发给实体所在节点 |
+| `service/gate_tcp.lua` | gate 服务（本地名 `.gate_tcp`）：基于 gateserver 监听 TCP、按 2 字节长度拆包、维护 `fd -> {owner_node, owner_service}`，未绑定时交登录服务、绑定后原样转发给实体所在节点 |
 | `service/entity_agent.lua` | 通用实体 agent 服务，按 type 参数化 |
 | `service/entity_agentmgr.lua` | agent 管理器，负责模块扫描和 agent 创建 |
 
@@ -328,7 +328,7 @@ GM 指令会在所有注册该指令的服务上执行，每类型注册一次�
 ### 5. session.lua — 客户端会话管理
 
 仅在 `client_enabled = true` 的实体类型中由 entity_agent 加载（`CMD.start` 里 `session.init(entitymgr)`）。
-连接落在 gate 服务（`service/session_gate.lua`，本地名 `.session_gate`）上，实体只持有一个**会话键**
+连接落在 gate 服务（`service/gate_tcp.lua`，本地名 `.gate_tcp`）上，实体只持有一个**会话键**
 `key = "<gate_node>/<fd>"`（全集群唯一），模块内维护 `g_sessions: key -> entity`。回包和推送都发给会话
 所在的 gate：gate 与实体同进程走本地 `skynet.send/call`，否则走 `cluster.send/call`（由 `self_node()`
 即 `config.get("cluster_node_name")` 判断）。
@@ -550,7 +550,7 @@ mongo_config.entity = {
 | `lualib/skyext/entity/entitymgr.lua` | 实体生命周期管理 |
 | `lualib/skyext/entity/reliable_msg.lua` | 可靠消息持久化 |
 | `lualib/skyext/entity/session.lua` | 实体侧客户端会话（会话键绑定/解绑、上行入队、下行推送） |
-| `service/session_gate.lua` | gate 服务（`.session_gate`）：监听 TCP、拆包、会话表、上行转发/下行 push |
+| `service/gate_tcp.lua` | gate 服务（`.gate_tcp`）：监听 TCP、拆包、会话表、上行转发/下行 push |
 | `service/entity_agent.lua` | 通用实体 agent 服务 |
 | `service/entity_agentmgr.lua` | agent 管理器 |
 

@@ -409,7 +409,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=sh
 |------|------|------|------|
 | timeout | string | 否 | 等实体卸载的秒数，默认 60 |
 
-立即返回 `shutdown started`，停服在后台进行：`stop_accepting` 钩子（role/gateway 节点的 `session_gate` 在这里关 gate，不再接新连接）→ 卸载本节点全部实体（落库、释放锁、踢下在线玩家）→ `release` 钩子（snowflake 归还机器号）→ 撤销节点租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。重复发送时返回 `already shutting down`。进度看节点日志。
+立即返回 `shutdown started`，停服在后台进行：`stop_accepting` 钩子（role/gateway 节点的 `gate_tcp` 在这里关 gate，不再接新连接）→ 卸载本节点全部实体（落库、释放锁、踢下在线玩家）→ `release` 钩子（snowflake 归还机器号）→ 撤销节点租约 → 进程退出。有实体在超时内卸不掉时进程**不退出**并打 ERROR 日志，排查后可以再发一次。重复发送时返回 `already shutting down`。进度看节点日志。
 
 游戏层挂钩子：
 
