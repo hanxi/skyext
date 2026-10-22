@@ -35,6 +35,22 @@ local function fetch_token(account_host, account)
     return res.token
 end
 
+-- 机器人按编号错开起点，再依次试到第一个连得上的 gate。
+-- 连哪个 gate 都能进游戏（gate 只管会话，上行包转发到角色实体所在节点），
+-- 所以只起了部分节点时不该因为"轮到"的那个没开就失败
+local function connect_gate(gate_addrs, start)
+    local count = #gate_addrs
+    for i = 0, count - 1 do
+        local gate = gate_addrs[(start + i - 1) % count + 1]
+        local fd, err = socket.open(gate.ip, gate.port)
+        if fd then
+            log.info("connected to gate", "ip", gate.ip, "port", gate.port)
+            return fd
+        end
+        log.warn("gate unreachable", "ip", gate.ip, "port", gate.port, "err", err)
+    end
+end
+
 -- 登录后走一遍背包和邮件：给自己发一封信，等可靠消息投递完再看邮箱
 local function play(rid)
     log.info("login_info response", "ret", call("role.login_info"))
@@ -106,16 +122,12 @@ function CMD.start(conf)
     end
 
     local role = roles[1]
-    -- 机器人轮流连不同的 gate；gate 不必和角色实体在同一个节点
-    local gate = gate_addrs[conf.gate or (conf.id % #gate_addrs + 1)]
-    local gate_ip, gate_port = gate.ip, gate.port
-    local fd, err = socket.open(gate_ip, gate_port)
+    local fd = connect_gate(gate_addrs, conf.gate or (conf.id % #gate_addrs + 1))
     if not fd then
-        log.error("failed to connect to gate", "err", err)
+        log.error("no gate is reachable", "gate_addrs", gate_addrs)
         return
     end
     g_fd = fd
-    log.info("connected to gate", "ip", gate_ip, "port", gate_port)
 
     local param = {
         token = token,

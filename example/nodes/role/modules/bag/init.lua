@@ -1,12 +1,8 @@
 local orm = require "orm"
+local res = require "skyext.res"
 
 local M = {}
 M.__index = M
-
--- 新角色送的初始道具
-local STARTER_ITEMS = {
-    { res_type = 101, res_id = 10086, res_size = 1 },
-}
 
 function M.new(entity, data)
     local obj = setmetatable({ entity = entity, data = data }, M)
@@ -15,7 +11,9 @@ function M.new(entity, data)
         data.bags = {}
     end
     if not data.starter_granted then
-        for _, item in ipairs(STARTER_ITEMS) do
+        -- 新角色送的初始道具来自策划配置表。每次用的时候才去 res 里取，不在模块加载期
+        -- 抄成本地常量——GM 的 reload_res 换掉的是 res 里那张表，抄过的副本不会跟着变
+        for _, item in ipairs(res.param.InitItem) do
             obj:add_item(item.res_type, item.res_id, item.res_size)
         end
         data.starter_granted = true

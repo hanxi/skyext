@@ -31,7 +31,7 @@ return function(server_name, agent_id, limits, watchdog)
         ["X-Powered-By"] = "skyext framework",
         ["Access-Control-Allow-Origin"] = "*",
         ["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS",
-        ["Access-Control-Allow-Headers"] = "Content-Type,x-token",
+        ["Access-Control-Allow-Headers"] = "Content-Type,Authorization,x-token",
         ["Access-Control-Allow-Credentials"] = "true",
     }
 
@@ -104,8 +104,18 @@ return function(server_name, agent_id, limits, watchdog)
             parse_query = function()
                 return urllib.parse_query(query)
             end,
+            -- 返回 table，或 nil, reason。空 body、坏 JSON、以及 JSON 标量都归为失败：
+            -- 直接索引解析结果是路由里最容易漏掉的一步，让它返回 nil 而不是让调用方
+            -- 自己去判断类型，漏判就会在 handler 里抛错
             read_json = function()
-                return decode_json(body)
+                if body == nil or body == "" then
+                    return nil, "empty body"
+                end
+                local decoded = decode_json(body)
+                if type(decoded) ~= "table" then
+                    return nil, "body is not a json object"
+                end
+                return decoded
             end,
         },
             path
@@ -193,7 +203,16 @@ return function(server_name, agent_id, limits, watchdog)
         end
 
         local res = build_response(conn)
-        handler(req, res)
+        -- handler 抛错必须回 500。放任它冒到 serve_connection 的 xpcall 去，连接会被直接
+        -- 关掉而一个字节都不回，客户端只能等到自己超时——比 500 更难排查
+        local handled, handler_err = xpcall(handler, xpcall_msgh, req, res)
+        if not handled then
+            log.error("http handler failed", "method", method, "path", path, "id", conn.id, "err", handler_err)
+            -- 已经写过响应再出错，剩下的字节无从得知，连接不能再复用
+            conn.keepalive = false
+            send_response(conn, 500)
+            return false
+        end
         if not conn.responded then
             -- 路由没写响应，keep-alive 下客户端会一直等到自己超时，这里兜底
             log.error("http handler wrote no response", "method", method, "path", path, "id", conn.id)

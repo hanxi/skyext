@@ -76,7 +76,7 @@ flowchart TD
     G1 -->|失败| I1[登录失败]
 
     H1 --> E1
-    E1 --> J1[从gate_addrs里轮流连一个gate<br/>gate不必和角色实体在同一节点]
+    E1 --> J1[从gate_addrs里依次试到第一个连得上的gate<br/>gate不必和角色实体在同一节点]
     J1 --> L1[TCP直连到gate]
 
     L1 --> M1{连接成功?}

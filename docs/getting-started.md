@@ -70,7 +70,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 ./bin/skyext serve role1     # Role：客户端网关端口 7012，GM 端口 9092，指标端口 9192
 ```
 
-也可以启动 `account2`、`role2`，以及独立网关节点 `gate1`（端口由各自的 `example/etc/nodes/*.app.lua` 配置决定）。`gate1` 只负责连接与登录，实体仍转发给 Role 逻辑节点处理；role1/role2 已同进程带 gate，gate1 属可选。`./bin/skyext serve robot` 启动示例机器人；其 `gate_addrs` 列出三个可连 gate：7012/7022（rolenode1/rolenode2 同进程 gate）与 7052（独立 gate1），机器人按编号轮流连其中一个——连哪个 gate 都能进游戏，gate 会把包转到角色实体所在节点。默认单个机器人（id 1）连 7022，故需运行 `role2`；若只起 `role1`，请相应调整 `gate_addrs` 或机器人编号。
+也可以启动 `account2`、`role2`，以及独立网关节点 `gate1`（端口由各自的 `example/etc/nodes/*.app.lua` 配置决定）。`gate1` 只负责连接与登录，实体仍转发给 Role 逻辑节点处理；role1/role2 已同进程带 gate，gate1 属可选。`./bin/skyext serve robot` 启动示例机器人；其 `gate_addrs` 列出三个可连 gate：7012/7022（rolenode1/rolenode2 同进程 gate）与 7052（独立 gate1）。机器人按编号错开起点，再依次试到第一个连得上的——连哪个 gate 都能进游戏，gate 会把包转到角色实体所在节点，所以只起了 `role1` 也能跑通。
 
 CLI 的 `serve` 会自动切换到仓库根目录。直接使用 skynet 时**不能**在 `example/` 下启动，否则 `example/etc/core.conf.lua` 中的 `root = "./"` 会指向错误位置：
 
@@ -123,7 +123,7 @@ GM 口是管理员接口，只认一个 token，分人分权交给对接它的�
 curl -H "Authorization: Bearer <gm_auth_token>" "http://127.0.0.1:9092/gm/execute?cmd=shutdown&timeout=60"
 ```
 
-它会先停止接受新连接，再把全部实体落库、释放锁、踢下在线玩家，然后归还 snowflake 机器号、撤销服务发现租约，进程自己退出；有实体卸不掉时进程保持运行并打 ERROR 日志，排查后可以再发一次。直接杀进程会丢掉上次回存（默认 3 分钟一次）之后的改动，实体锁和节点注册也要等 30 秒租约过期才会被清掉。没有实体的节点（如 Account）走同一个命令，只是少了卸载那一步。
+它会先停止接受新连接，再把全部实体落库、释放锁、踢下在线玩家，然后归还 snowflake 机器号、撤销节点租约，进程自己退出；有实体卸不掉时进程保持运行并打 ERROR 日志，排查后可以再发一次。直接杀进程会丢掉上次回存（默认 3 分钟一次）之后的改动，实体锁和节点注册也要等 30 秒租约过期才会被清掉。没有实体的节点（如 Account）走同一个命令，只是少了卸载那一步。
 
 ## 6. 测试、检查与打包
 

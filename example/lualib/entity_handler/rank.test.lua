@@ -89,6 +89,16 @@ t.describe("rank entity", function()
         t.expect(h.top(3)).to.equal({ 120, 119, 118 })
     end)
 
+    t.it("keeps derived state off the entity root, which belongs to the engine", function()
+        local h = harness()
+        h.submit(1, 50)
+        h.tick()
+        t.expect(h.top(1)).to.equal({ 1 })
+        for key in pairs(h.entity) do
+            t.expect(key == "data" or key == "every").to.equal(true)
+        end
+    end)
+
     t.it("ranks what is already stored as soon as it loads", function()
         local h = harness()
         h.entity.data.entries[5] = { rid = 5, name = "p5", score = 10, time = 1 }

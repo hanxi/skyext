@@ -8,13 +8,23 @@ local M = {}
 local g_coll_obj
 local g_default_projection = { _id = false, rid = 1, server = 1 }
 
--- 从数据库读取角色列表
-function M.get_roles(account, query, projection)
-    if projection then
-        projection._id = false
-    else
-        projection = g_default_projection
+-- 查询条件和投影都复制一份再改：调用方常常把同一张表传两次（先查列表再查单个），
+-- 就地改会让第二次查询带上第一次留下的条件
+local function with_field(tbl, key, value)
+    local copy = {}
+    if tbl then
+        for k, v in pairs(tbl) do
+            copy[k] = v
+        end
     end
+    copy[key] = value
+    return copy
+end
+
+-- 从数据库读取角色列表。query.rid 可选：指定了就只查那一个角色，
+-- 但必须是这个账号自己的角色
+function M.get_roles(account, query, projection)
+    projection = projection and with_field(projection, "_id", false) or g_default_projection
 
     local rids = user_db_api.get_rids(account)
     local ret = {}
@@ -22,12 +32,28 @@ function M.get_roles(account, query, projection)
         return ret
     end
 
-    query = query or {}
+    -- 账号范围始终由 rids 决定。调用方指定的 rid 只能在其中挑一个，
+    -- 不然传一个别人的 rid 就能查到别人的角色；
+    -- 同时这一步也保证了下面不会用 $in 把调用方指定的 rid 冲掉
+    local wanted = query and query.rid
+    if wanted ~= nil then
+        local owned = false
+        for _, rid in ipairs(rids) do
+            if rid == wanted then
+                owned = true
+                break
+            end
+        end
+        if not owned then
+            return ret
+        end
+        rids = { wanted }
+    end
+
     if #rids == 1 then
         local rid = rids[1]
-        query["rid"] = rid
         log.debug("get_roles", "account", account, "rid", rid)
-        local data = g_coll_obj:find_one(query, projection)
+        local data = g_coll_obj:find_one(with_field(query, "rid", rid), projection)
         if data then
             ret[1] = data
         else
@@ -37,8 +63,7 @@ function M.get_roles(account, query, projection)
         return ret
     end
 
-    query["rid"] = { ["$in"] = rids }
-    return g_coll_obj:find(query, projection)
+    return g_coll_obj:find(with_field(query, "rid", { ["$in"] = rids }), projection)
 end
 
 -- 角色是否属于这个账号、这个区服。JWT 只证明了账号，rid 和 server 是客户端自己报的，

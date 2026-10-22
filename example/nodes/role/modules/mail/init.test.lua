@@ -6,8 +6,10 @@ local root = fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir())
 local mail_source = fs.join(root, "example/nodes/role/modules/mail/init.lua")
 local bag_source = fs.join(root, "example/nodes/role/modules/bag/init.lua")
 
+local DEFAULT_INIT_ITEM = { { res_type = 101, res_id = 10086, res_size = 1 } }
+
 -- 模块只依赖 pairs / 赋值，普通表就能代替 ORM 文档
-local function load(source, max_mails)
+local function load(source, max_mails, init_item)
     local imports = {
         ["skyext.config"] = {
             get_number = function(key)
@@ -15,6 +17,8 @@ local function load(source, max_mails)
                 return max_mails
             end,
         },
+        -- 策划配置表换成假件，断言的是 bag 怎么用它，不是 example/res 里当前填了什么
+        ["skyext.res"] = { param = { InitItem = init_item or DEFAULT_INIT_ITEM } },
     }
     local env = setmetatable({
         require = function(name)
@@ -111,6 +115,15 @@ t.describe("bag module", function()
             bag:add_item(102, 1, 0)
         end).to
             .throw("positive integer")
+    end)
+
+    t.it("grants the starter items listed in the res table", function()
+        local bag = load(bag_source, nil, {
+            { res_type = 101, res_id = 10086, res_size = 1 },
+            { res_type = 102, res_id = 20001, res_size = 3 },
+        }).new({ id = 7 }, {})
+        t.expect(bag:count(101, 10086)).to.equal(1)
+        t.expect(bag:count(102, 20001)).to.equal(3)
     end)
 
     t.it("snapshots the bag as sorted arrays for the protocol", function()
