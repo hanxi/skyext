@@ -7,6 +7,10 @@ local errcode = require "skyext.errcode"
 
 local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "service/entity_agent.lua")
 
+-- 网关的注册名。登录服务转过来的绑定请求必须说清楚连接落在哪个网关上，
+-- 裸 TCP 和 WebSocket 是两个进程
+local GATE = ".gate_tcp"
+
 local function harness(opts)
     opts = opts or {}
     local h = {
@@ -85,17 +89,36 @@ local function harness(opts)
     function fake_session.get_entity(key)
         return h.bound[key]
     end
-    function fake_session.bind(gate_node, fd, e, owner_service)
+    function fake_session.bind(gate_node, gate_service, fd, e, owner_service)
         if h.session_bind_result == false then
             return false
         end
         local key = fake_session.key(gate_node, fd)
         h.bound[key] = e
-        e.session = { gate_node = gate_node, fd = fd, key = key }
+        e.session = { gate_node = gate_node, gate_service = gate_service, fd = fd, key = key }
+        h.bind_gate_service = gate_service
         h.bind_owner = owner_service
         h.events[#h.events + 1] = "bind"
-        return true
+        return true, "nonce-" .. tostring(fd)
     end
+    function fake_session.resume(gate_node, gate_service, fd, e, owner_service, nonce, recv)
+        if h.session_resume_code and h.session_resume_code ~= errcode.OK then
+            return h.session_resume_code
+        end
+        local key = fake_session.key(gate_node, fd)
+        if e.session then
+            h.bound[e.session.key] = nil
+        end
+        h.bound[key] = e
+        e.session = { gate_node = gate_node, gate_service = gate_service, fd = fd, key = key }
+        h.resume_args = { nonce = nonce, recv = recv, owner = owner_service }
+        h.events[#h.events + 1] = "resume"
+        return errcode.OK, "nonce-" .. tostring(fd), 42
+    end
+    function fake_session.replay()
+        h.events[#h.events + 1] = "replay"
+    end
+    fake_session.cmds = { ping = function() end }
     function fake_session.unbind(key)
         local e = h.bound[key]
         h.bound[key] = nil
@@ -146,6 +169,9 @@ local function harness(opts)
         end,
         on_unbind_client = function()
             h.events[#h.events + 1] = "on_unbind"
+        end,
+        on_resume_client = function(_, key)
+            h.events[#h.events + 1] = "on_resume:" .. key
         end,
     }
     local fake_skynet = setmetatable({
@@ -266,7 +292,7 @@ t.describe("entity_agent serialized ingress", function()
         end)
         skynet.sleep(1)
         skynet.fork(function()
-            t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
+            t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.OK)
             done = done + 1
         end)
         skynet.sleep(1)
@@ -295,20 +321,20 @@ t.describe("entity_agent serialized ingress", function()
     t.it("remote handoff uses a verified owner and requires confirmed unload", function()
         local h = harness()
         h.lock_error = "etcd unavailable"
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.LOCK_FAILED)
         t.expect(h.cluster_call).to.be_nil()
         h.lock_error = "lock held"
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.LOCK_FAILED)
         h.owner = "node-b"
         h.cluster_released = false
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.IN_OTHER_NODE)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.IN_OTHER_NODE)
         t.expect(h.cluster_call).to.equal({ "node-b", ".entity_agent:role:1", "unload_entity", 7 })
         t.expect(h.bound["gate1/9"]).to.be_nil()
         h.cluster_error = "node down"
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.IN_OTHER_NODE)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.IN_OTHER_NODE)
         h.cluster_error = nil
         h.cluster_released = true
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.OK)
         t.expect(h.bound["gate1/9"]).to.equal(h.entity)
         -- 绑定成功后 gate 被指向本 agent，后续上行包直接转给它，不再经过 watchdog
         t.expect(h.bind_owner).to.equal(".entity_agent:role:1")
@@ -317,14 +343,14 @@ t.describe("entity_agent serialized ingress", function()
     t.it("bind_session reports SESSION_CLOSED when the gate already dropped the connection", function()
         local h = harness()
         h.session_bind_result = false
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.SESSION_CLOSED)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.SESSION_CLOSED)
         t.expect(h.bound["gate1/9"]).to.be_nil()
     end)
 
     t.it("bind_session kicks the previous session when a role relogs on a new connection", function()
         local h = harness()
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
-        t.expect(h.CMD.bind_session(7, "gate1", 10)).to.equal(errcode.OK)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.OK)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 10)).to.equal(errcode.OK)
         -- 旧会话被解绑并踢掉，新会话生效
         t.expect(h.bound["gate1/9"]).to.be_nil()
         t.expect(h.bound["gate1/10"]).to.equal(h.entity)
@@ -332,18 +358,51 @@ t.describe("entity_agent serialized ingress", function()
         t.expect(h.events).to.equal({ "bind", "on_bind:gate1/9", "unbind", "kick", "bind", "on_bind:gate1/10" })
     end)
 
+    t.it("resume_session replays the backlog before telling the handler, and rotates the credential", function()
+        local h = harness()
+        h.CMD.bind_session(7, "gate1", GATE, 9)
+        h.events = {}
+        local code, nonce, sent = h.CMD.resume_session(7, "gate2", ".gate_ws", 5, "nonce-9", 3)
+        t.expect(code).to.equal(errcode.OK)
+        t.expect(nonce).to.equal("nonce-5")
+        t.expect(sent).to.equal(42)
+        t.expect(h.resume_args).to.equal({ nonce = "nonce-9", recv = 3, owner = ".entity_agent:role:1" })
+        -- 重放必须排在 on_resume_client 之前：回调里推的新包要跟在旧包后面
+        t.expect(h.events).to.equal({ "resume", "replay", "on_resume:gate2/5" })
+        t.expect(h.bound["gate1/9"]).to.be_nil()
+        t.expect(h.bound["gate2/5"]).to.equal(h.entity)
+    end)
+
+    t.it("resume_session passes the session layer's refusal through untouched", function()
+        local h = harness()
+        h.CMD.bind_session(7, "gate1", GATE, 9)
+        h.events = {}
+        h.session_resume_code = errcode.AUTH_FAILED
+        t.expect(h.CMD.resume_session(7, "gate2", ".gate_ws", 5, "wrong", 0)).to.equal(errcode.AUTH_FAILED)
+        t.expect(h.events).to.equal({})
+        t.expect(h.bound["gate1/9"]).to.equal(h.entity)
+    end)
+
+    -- 续接绝不加载实体：不验 token、不查库，能触发加载就等于开放一个无认证的接口
+    t.it("resume_session refuses rather than load an entity that is no longer in memory", function()
+        local h = harness()
+        h.lease_expired = true
+        t.expect(h.CMD.resume_session(7, "gate1", GATE, 9, "nonce-9", 0)).to.equal(errcode.ENTITY_NOT_FOUND)
+        t.expect(h.events).to.equal({})
+    end)
+
     t.it("does not hand off to itself when its previous process still holds the lock", function()
         local h = harness()
         h.lock_error = "lock held"
         h.owner = "node-a"
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.LOCK_FAILED)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.LOCK_FAILED)
         t.expect(h.cluster_calls).to.equal(0)
     end)
 
     t.it("reports a missing entity instead of a lock failure", function()
         local h = harness()
         h.lock_error = "not found"
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.ENTITY_NOT_FOUND)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.ENTITY_NOT_FOUND)
     end)
 
     t.it("forwards a call to the node holding the lock instead of taking the entity", function()
@@ -457,11 +516,11 @@ t.describe("entity_agent serialized ingress", function()
 
     t.it("session_closed respects the entity gate and unbinds an expired session", function()
         local h = harness()
-        t.expect(h.CMD.bind_session(7, "gate1", 9)).to.equal(errcode.OK)
+        t.expect(h.CMD.bind_session(7, "gate1", GATE, 9)).to.equal(errcode.OK)
         h.CMD.session_closed("gate1", 9)
         t.expect(h.bound["gate1/9"]).to.be_nil()
         t.expect(h.events[#h.events]).to.equal("on_unbind")
-        h.CMD.bind_session(7, "gate1", 10)
+        h.CMD.bind_session(7, "gate1", GATE, 10)
         h.lease_expired = true
         h.CMD.session_closed("gate1", 10)
         t.expect(h.bound["gate1/10"]).to.be_nil()
@@ -493,10 +552,25 @@ t.describe("entity_agent module loading", function()
         }
     end
 
-    t.it("registers exactly the request modules that exist on disk", function()
+    -- 心跳、续接这类传输层协议也注册成 "login.*"，和业务模块走同一条分发路径
+    local LOGIN_MODULE = { name = "login", request = { ping = true } }
+
+    local function without_login(registered)
+        local out = {}
+        for _, entry in ipairs(registered) do
+            if entry.name ~= "login" then
+                out[#out + 1] = entry
+            end
+        end
+        return out
+    end
+
+    t.it("registers exactly the request modules that exist on disk, plus the transport protocols", function()
         local src = sources()
         local h = harness({ modules = MODULES, module_sources = src })
-        t.expect(h.registered_modules).to.equal({
+        t.expect(#h.registered_modules).to.equal(3)
+        t.expect(h.registered_modules[3].name).to.equal(LOGIN_MODULE.name)
+        t.expect(without_login(h.registered_modules)).to.equal({
             { name = "bag", request = src["modules.bag.request"] },
             { name = "mail", request = src["modules.mail.request"] },
         })
@@ -513,7 +587,7 @@ t.describe("entity_agent module loading", function()
                 ["modules.plain"] = { helper = function() end },
             },
         })
-        t.expect(h.registered_modules).to.equal({})
+        t.expect(without_login(h.registered_modules)).to.equal({})
     end)
 
     -- 回归：路径配错时 require 失败必须炸掉启动。

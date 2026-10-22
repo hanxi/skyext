@@ -45,4 +45,11 @@ function M.on_unbind_client(entity)
     log.info("role client unbound", "rid", entity.id)
 end
 
+-- 断线续接成功。**不是**一次上线：续接的全部意义就是这次网络抖动不构成上下线，
+-- 所以 on_bind_client / on_unbind_client 都不会触发。在线时长、上线奖励、好友在线
+-- 状态这类逻辑不要写在这里，它们属于那两个钩子
+function M.on_resume_client(entity, session_key)
+    log.info("role client resumed", "rid", entity.id, "session", session_key)
+end
+
 return M

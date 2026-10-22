@@ -12,6 +12,12 @@ M.ENTITY_NOT_FOUND = 20
 M.ENTITY_LOCK_FAILED = 21
 M.ENTITY_LOAD_FAILED = 22
 M.SESSION_CLOSED = 23
+-- 这条会话续接不了：重放缓冲溢出、客户端报的计数越界、这类实体压根没启用会话层。
+-- 和 AUTH_FAILED 区分开：客户端收到这个要重新走 login，而不是重试 resume。
+M.RESUME_UNAVAILABLE = 24
+-- 这个 request id 的响应已经被幂等缓存淘汰了。不重新执行，让客户端重走流程——
+-- 对扣费、抽卡来说，悄悄执行第二遍比报错危险得多
+M.REQUEST_EXPIRED = 25
 
 M.MONGO_DUPLICATE_KEY = 11000
 

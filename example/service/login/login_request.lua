@@ -28,30 +28,26 @@ local function proto_checksum_enable()
     return g_proto_checksum_enable
 end
 
--- 网关/代理上报客户端的真实连接地址。直连时 gate 的 open 已带 peer addr，
--- 这条主要给 goscon 之类代理场景补上真实 IP；当前仅用于登录期的可观测日志。
-function M:report_remote_addr(fd)
-    log.info("report_remote_addr", "fd", fd, "remote_addr", self.remote_addr, "local_addr", self.local_addr)
-end
-
--- 把会话绑到角色实体上。实体加载在哪个节点由实体系统决定，和本 gate 在不在一个节点无关
-local function load_bind_role(fd, rid)
-    local code = router.bind_session("role", rid, self_node(), fd)
+-- 把会话绑到角色实体上。实体加载在哪个节点由实体系统决定，和本网关在不在一个节点无关
+local function load_bind_role(fd, rid, gate_service)
+    local code, nonce = router.bind_session("role", rid, self_node(), gate_service, fd)
     if code ~= errcode.OK then
         log.warn("bind_session failed", "rid", rid, "fd", fd, "code", code)
         return { code = code }
     end
 
-    -- 会话已经交给实体，之后的包 gate 直接转过去，登录服务不再管它
+    -- 会话已经交给实体，之后的包网关直接转过去，登录服务不再管它
     client.unbind(fd)
     log.info("load_bind_role success", "rid", rid, "fd", fd)
     return {
         code = errcode.OK,
         rid = rid,
+        -- 续接凭据。断线后客户端拿它走 resume，不用重新登录
+        nonce = nonce,
     }
 end
 
-function M:login(fd)
+function M:login(fd, obj)
     local data, err, kind = jwt.verify_login(self.token)
     if not data then
         if kind == "config" then
@@ -108,7 +104,35 @@ function M:login(fd)
         }
     end
 
-    return load_bind_role(fd, rid)
+    return load_bind_role(fd, rid, obj.gate)
+end
+
+-- 断线续接。不验 token、不查库：凭据是 nonce，它只代表一条会话、最长活到实体卸载，
+-- 比代表整个账号的 access token 权限小得多。实体不在内存里就直接失败，不会去加载它。
+-- 任何错误码客户端都退化成走 login
+function M:resume(fd, obj)
+    local rid = self.rid
+    if (not rid) or (rid <= 0) then
+        return { code = errcode.PARAM_ERROR }
+    end
+    local code, nonce, sent = router.resume_session("role", rid, self_node(), obj.gate, fd, self.nonce, self.recv)
+    if code ~= errcode.OK then
+        log.info("resume rejected", "rid", rid, "fd", fd, "code", code)
+        return { code = code }
+    end
+    client.unbind(fd)
+    log.info("resume success", "rid", rid, "fd", fd)
+    return {
+        code = errcode.OK,
+        nonce = nonce,
+        sent = sent,
+    }
+end
+
+-- 登录阶段的心跳。这时还没有会话，计数无从谈起，回 0 就行。它之所以必须被应答，是因为
+-- 客户端要靠收到 pong 才能判断连接还通着——切网络时旧连接会直接黑洞化，不产生 FIN/RST
+function M.ping()
+    return { sent = 0 }
 end
 
 return M

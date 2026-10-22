@@ -11,6 +11,8 @@
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
+#include <openssl/crypto.h>
 
 static const char base64url_enc[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -396,6 +398,33 @@ lpkey_sign(lua_State *L) {
     return 1;
 }
 
+// 密码学安全随机字节。注意不要用 skynet.crypto.randomkey 代替：那个是 random()
+// 且只有 8 字节，当会话凭据不够。
+static int
+lrandom_bytes(lua_State *L) {
+    lua_Integer n = luaL_checkinteger(L, 1);
+    luaL_argcheck(L, n >= 1 && n <= 1024, 1, "length must be in [1, 1024]");
+
+    unsigned char buf[1024];
+    if (RAND_bytes(buf, (int)n) != 1) {
+        ERR_clear_error();
+        return luaL_error(L, "RAND_bytes failed");
+    }
+    lua_pushlstring(L, (const char *)buf, (size_t)n);
+    return 1;
+}
+
+// 恒定时间比较。长度不同直接返回假：长度本身不是秘密，而 CRYPTO_memcmp 要求等长。
+static int
+lconst_equals(lua_State *L) {
+    size_t alen, blen;
+    const char *a = luaL_checklstring(L, 1, &alen);
+    const char *b = luaL_checklstring(L, 2, &blen);
+
+    lua_pushboolean(L, alen == blen && CRYPTO_memcmp(a, b, alen) == 0);
+    return 1;
+}
+
 LUAMOD_API int
 luaopen_crypto(lua_State* L) {
     luaL_checkversion(L);
@@ -407,6 +436,8 @@ luaopen_crypto(lua_State* L) {
         {"base64urldecode", lb64urldecode},
         {"pkey_verify", lpkey_verify},
         {"pkey_sign", lpkey_sign},
+        {"random_bytes", lrandom_bytes},
+        {"const_equals", lconst_equals},
         {NULL, NULL}
     };
     luaL_newlib(L, l);

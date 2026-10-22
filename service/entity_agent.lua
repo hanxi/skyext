@@ -39,6 +39,11 @@ local function agent_name(entity_id)
     return types.format_agent_service_name(type_name, types.calc_agent_index(type_name, entity_id))
 end
 
+-- 本服务的注册名，网关按它转发这条会话之后的上行包
+local function self_service_name()
+    return types.format_agent_service_name(type_name, agent_index)
+end
+
 -- 客户端重新登录时向持锁节点要回实体：对方卸载（顺带踢掉旧连接）后本地再加载。
 -- 只要一次：两边成员视图短暂分歧时，无限重试会变成互相抢
 local function request_handoff(entity_id, holder_node)
@@ -200,10 +205,10 @@ function CMD.shutdown()
     return remaining
 end
 
--- 把 gate 上的一个会话绑到实体上（玩家登录）。由登录服务经 router.bind_session 调用。
+-- 把网关上的一个会话绑到实体上（玩家登录）。由登录服务经 router.bind_session 调用。
 -- 实体还被别的节点持有着时向它要一次（重新登录的语义：对方卸载并踢掉旧连接）。
--- 返回错误码
-function CMD.bind_session(entity_id, gate_node, fd)
+-- 返回错误码和下发给客户端的续接凭据
+function CMD.bind_session(entity_id, gate_node, gate_service, fd)
     local ok, reason, holder_node = entitymgr:try_ensure_loaded(entity_id)
     if not ok then
         if reason == "not found" then
@@ -218,25 +223,54 @@ function CMD.bind_session(entity_id, gate_node, fd)
     end
 
     local key = session.key(gate_node, fd)
-    local bound, result = entitymgr:with_entity(entity_id, function(entity)
+    local bound, result, nonce = entitymgr:with_entity(entity_id, function(entity)
         local old = entity.session
         if old and old.key ~= key then
             session.unbind_kick(old.key, entity)
         end
-        if not session.bind(gate_node, fd, entity, types.format_agent_service_name(type_name, agent_index)) then
+        local ok_bind, new_nonce = session.bind(gate_node, gate_service, fd, entity, self_service_name())
+        if not ok_bind then
             -- 排队期间客户端已经断开
             return errcode.SESSION_CLOSED
         end
         if handler.on_bind_client then
             handler.on_bind_client(entity, key)
         end
-        return errcode.OK
+        return errcode.OK, new_nonce
     end)
     if not bound then
         log.error("bind_session failed", "type", type_name, "id", entity_id, "err", result)
         return errcode.LOCK_FAILED
     end
-    return result
+    return result, nonce
+end
+
+-- 断线后把一条新连接接回原来的会话。和 bind_session 的区别是**绝不加载实体**：
+-- 续接不验 token、不查库，能触发加载就等于开放一个无认证的接口。实体不在内存里意味着
+-- 会话状态早已不存在，续接本来也必然失败，这不是额外限制。
+-- 返回错误码、轮换后的新凭据、服务端已发出的包数
+function CMD.resume_session(entity_id, gate_node, gate_service, fd, nonce, recv)
+    if not session then
+        -- 这类实体根本没启用会话层，不是"实体不存在"
+        return errcode.RESUME_UNAVAILABLE
+    end
+    local ok, code, new_nonce, sent = entitymgr:with_loaded_entity(entity_id, function(entity)
+        local c, n, s = session.resume(gate_node, gate_service, fd, entity, self_service_name(), nonce, recv)
+        if c ~= errcode.OK then
+            return c
+        end
+        -- 先重放再回调。on_resume_client 里业务多半会推一些状态，这些新包必须排在
+        -- 重放的旧包后面，否则客户端的收包顺序和计数就对不上了
+        session.replay(entity)
+        if handler.on_resume_client then
+            handler.on_resume_client(entity, entity.session.key)
+        end
+        return c, n, s
+    end)
+    if not ok then
+        return errcode.ENTITY_NOT_FOUND
+    end
+    return code, new_nonce, sent
 end
 
 -- gate 转发来的上行包
@@ -299,6 +333,9 @@ function CMD.start(conf)
     entitymgr = entitymgr_mod.new(type_name, type_config, handler, g_data_modules)
 
     if session then
+        -- 心跳这类传输层协议也注册成 "login.*"：会话绑定之后上行包由网关直接转给实体，
+        -- 登录服务再也看不到这条连接，两份同名注册在不同进程角色里，不冲突
+        require("skyext.sproto_api").register_module("login", session, session.cmds)
         session.init(entitymgr)
     end
 

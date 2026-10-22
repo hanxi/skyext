@@ -6,6 +6,7 @@ gm_http_port = 9092 -- GM HTTP 服务端口
 metrics_http_port = 9192 -- 指标抓取端口
 
 gate_port = "7012" -- 客户端连接端口（同进程部署的 gate）
+ws_port = "7013" -- WebSocket 端口（浏览器、小程序）。不配就只开裸 TCP
 
 maxclient = 1024
 

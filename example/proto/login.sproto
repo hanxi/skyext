@@ -1,13 +1,5 @@
-# 网关向游戏报告连接信息
-report_remote_addr 100 {
-    request {
-        remote_addr 0 : string # 客户端ip
-        local_addr 1 : string
-    }
-}
-
-# 角色登录
-login 101 {
+# 角色登录。校验 JWT、查库，成功后把会话绑到角色实体上。
+login 100 {
     request {
         token 0 : string # jwt token {account}
         rid 1 : integer # role id 直接登录角色
@@ -17,5 +9,34 @@ login 101 {
     response {
         code 0 : integer
         rid 1 : integer
+        nonce 2 : string # 续接凭据，断线后拿它走 resume
+    }
+}
+
+# 会话续接。不验 token、不查库，也不会把实体从库里加载起来——
+# 只能续上还在内存里的实体。失败时客户端退化成走 login。
+resume 101 {
+    request {
+        rid 0 : integer # 仅用于路由
+        nonce 1 : string # 16 字节续接凭据
+        recv 2 : integer # 客户端已收到的包数（Tier 2）
+    }
+    response {
+        code 0 : integer
+        nonce 1 : string # 轮换后的新凭据
+        sent 2 : integer # 服务端已发出的包数，供客户端自检（Tier 2）
+    }
+}
+
+# 心跳。客户端每 15s 或未确认积压超过 64 包时发一次。
+# 必须是请求/响应而不是单向：单向心跳只让服务端知道客户端活着，
+# 客户端自己无从判断连接是不是已经黑洞了（WiFi 换 4G 不产生 FIN/RST）。
+# recv/sent 只有 Tier 2 才有意义，没做 Tier 2 时客户端填 0、服务端忽略。
+ping 102 {
+    request {
+        recv 0 : integer # 客户端已收到的包数
+    }
+    response {
+        sent 0 : integer # 服务端已发出的包数
     }
 }

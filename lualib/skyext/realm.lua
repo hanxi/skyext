@@ -114,7 +114,25 @@ function M.scope_values(scope)
     return M.zones()
 end
 
--- 目录变化（开服、调战区）时回调 fn(dir)
+-- 当前在线的网关列表，每项 { node, tcp_addr, ws_url, weight }，按节点名排序。
+-- 客户端的接入地址从这里下发：网关键挂在节点租约上，节点挂掉或开始停服就会从列表里消失，
+-- 所以不需要前面再挂一层会话保持的负载均衡（续接能落到任意一台网关，见会话续接设计）
+function M.gates()
+    local gates = dir().gates
+    local list = {}
+    for _, node in ipairs(sorted_keys(gates)) do
+        local info = gates[node]
+        list[#list + 1] = {
+            node = node,
+            tcp_addr = info.tcp_addr,
+            ws_url = info.ws_url,
+            weight = info.weight or 1,
+        }
+    end
+    return list
+end
+
+-- 目录变化（开服、调战区、网关上下线）时回调 fn(dir)
 function M.subscribe(fn)
     dir()
     g_listeners[#g_listeners + 1] = fn

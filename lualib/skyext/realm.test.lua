@@ -14,6 +14,10 @@ local DIR = {
     },
     games = { game1 = { zone = "zone1" }, game2 = { zone = "zone2" } },
     zones = { zone1 = {}, zone2 = {} },
+    gates = {
+        gate2 = { tcp_addr = "10.0.0.2:7012" },
+        gate1 = { tcp_addr = "10.0.0.1:7012", ws_url = "wss://gw.example.com", weight = 3 },
+    },
 }
 
 local function harness()
@@ -97,6 +101,14 @@ t.describe("realm lookups", function()
         })
         t.expect(h.realm.game_of("s1")).to.equal("game2")
         t.expect(seen).to.equal({ 6 })
+    end)
+
+    t.it("lists online gates sorted by node, defaulting the weight", function()
+        local h = harness()
+        t.expect(h.realm.gates()).to.equal({
+            { node = "gate1", tcp_addr = "10.0.0.1:7012", ws_url = "wss://gw.example.com", weight = 3 },
+            { node = "gate2", tcp_addr = "10.0.0.2:7012", weight = 1 },
+        })
     end)
 
     t.it("ignores a broadcast older than what it already has", function()

@@ -52,14 +52,27 @@ function M.poke_reliable(type_name, entity_id)
     return (pcall(cluster.send, node, service_name, "__deliver_reliable", entity_id))
 end
 
--- 把 gate 上的会话（gate_node, fd）绑到实体上，登录服务调用。实体加载在哪个节点由实体
--- 系统决定，gate 和实体不必在同一个节点。返回错误码
-function M.bind_session(type_name, entity_id, gate_node, fd)
+-- 把网关上的会话（gate_node, gate_service, fd）绑到实体上，登录服务调用。实体加载在
+-- 哪个节点由实体系统决定，网关和实体不必在同一个节点。
+-- 返回错误码和下发给客户端的续接凭据
+function M.bind_session(type_name, entity_id, gate_node, gate_service, fd)
     local node, service_name = get_target(type_name, entity_id)
     if node == self_node() then
-        return skynet.call(service_name, "lua", "bind_session", entity_id, gate_node, fd)
+        return skynet.call(service_name, "lua", "bind_session", entity_id, gate_node, gate_service, fd)
     end
-    return cluster.call(node, service_name, "bind_session", entity_id, gate_node, fd)
+    return cluster.call(node, service_name, "bind_session", entity_id, gate_node, gate_service, fd)
+end
+
+-- 断线后把一条新连接接回原来的会话。**只作用于已经在内存里的实体**：续接不验 token、
+-- 不查库，要是它能触发实体加载，拿一串 rid 就能让集群把任意玩家的实体从库里捞起来、
+-- 抢锁、甚至触发 handoff，是现成的放大攻击面。
+-- 返回错误码、轮换后的新凭据、服务端已发出的包数
+function M.resume_session(type_name, entity_id, gate_node, gate_service, fd, nonce, recv)
+    local node, service_name = get_target(type_name, entity_id)
+    if node == self_node() then
+        return skynet.call(service_name, "lua", "resume_session", entity_id, gate_node, gate_service, fd, nonce, recv)
+    end
+    return cluster.call(node, service_name, "resume_session", entity_id, gate_node, gate_service, fd, nonce, recv)
 end
 
 -- 作用域实体的便捷入口：value 是作用域取值（game 名、zone 名、"global"），

@@ -1,4 +1,5 @@
--- 会话网关：客户端连接的落点，只管连接，不持有玩法状态。
+-- 裸 TCP 网关：原生客户端连接的落点，只管连接，不持有玩法状态。
+-- 浏览器和小程序走 service/gate_ws.lua，两者对外接口一致，差别只在传输层。
 --
 -- 每条连接是一个会话 fd -> { owner_node, owner_service }：
 --   * 还没绑定：包交给登录服务（conf.login），由它完成鉴权并把会话绑到实体上；
@@ -14,6 +15,10 @@ local socketdriver = require "skynet.socketdriver"
 local config = require "skyext.config"
 local node_shutdown_api = require "skyext.node_shutdown_api"
 local log = require "skyext.log"
+
+-- 注册名。登录服务同时服务于两个网关，必须知道一条未绑定连接是从哪个网关来的，
+-- 否则踢人会踢错进程。
+local GATE_NAME = ".gate_tcp"
 
 local g_login
 local g_sessions = {}
@@ -42,14 +47,14 @@ end
 local handler = { embed = true }
 
 function handler.open(_, conf)
-    g_login = assert(conf.login, "session_gate needs conf.login")
-    log.info("session gate listening", "address", conf.address, "port", conf.port)
+    g_login = assert(conf.login, "gate_tcp needs conf.login")
+    log.info("tcp gate listening", "address", conf.address, "port", conf.port)
 end
 
 function handler.connect(fd, addr)
     g_sessions[fd] = { fd = fd, addr = addr }
     gateserver.openclient(fd)
-    skynet.send(g_login, "lua", "open", fd, addr)
+    skynet.send(g_login, "lua", "open", fd, addr, GATE_NAME)
 end
 
 function handler.message(fd, msg, sz)
@@ -131,15 +136,15 @@ end
 function handler.command(cmd, _, ...)
     local f = CMD[cmd]
     if not f then
-        error(string.format("unknown session_gate command: %s", tostring(cmd)))
+        error(string.format("unknown gate_tcp command: %s", tostring(cmd)))
     end
     return f(...)
 end
 
 skynet.start(function()
     gateserver.start(handler)
-    -- 实体侧按这个名字找本节点的网关（跨节点时 cluster.send(node, ".session_gate", ...)）
-    skynet.register(".session_gate")
+    -- 实体侧按这个名字找本节点的网关（跨节点时 cluster.send(node, ".gate_tcp", ...)）
+    skynet.register(GATE_NAME)
     -- 停服第一步：关掉监听端口，不再接新连接（gateserver 内置的 close）
     skynet.fork(function()
         node_shutdown_api.add_hook("stop_accepting", "close")

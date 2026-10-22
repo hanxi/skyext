@@ -152,6 +152,49 @@ entity_types = {
     },
 }
 
+-- WebSocket 网关。端口在各节点配置里（ws_port），不配就只开裸 TCP 网关。
+-- 原生 APP 走裸 TCP（长度前缀由 C 层解，省一个 Lua 协程），浏览器和小程序走这里，
+-- 两者对外行为完全一致。
+--
+-- 小程序平台要求已备案、证书合法的域名，端口基本只能 443，所以线上这一侧大概率仍要
+-- 前置一层做 TLS 终止，ws_protocol 留 "ws" 即可——那一层只做 TLS 和转发，不做会话保持。
+-- 直连 wss 是给小规模自建部署用的，在节点配置里写：
+--   ws_protocol = "wss"
+--   ws_certfile = "etc/keys/server-cert.pem"
+--   ws_keyfile = "etc/keys/server-key.pem"
+-- 再在该节点的 .conf.lua 里加 enablessl = true。
+-- 这几项故意不在这里给默认值：节点配置的最后一行是 include "common.app.lua"，
+-- 在这里赋值会把节点自己写的那份盖掉。不配时代码里按 "ws" 处理。
+
+-- 网关接入地址下发。网关节点启动时把自己上报进区服目录（/skyext/realm/gate/<node>，
+-- 挂在节点租约上，进程没了就从列表里消失），客户端请求 account 的 /gates 拿到列表后
+-- 自己挑一台直连——不需要前面再挂一层会话保持的负载均衡，续接能落到任意一台网关。
+-- 下发给客户端的是公网可达地址，和监听地址（gate_host，通常 0.0.0.0）不是一回事：
+--   gate_public_host  默认取 cluster_host
+--   ws_public_url     整条 URL，前面挂了 TLS 终止、客户端连的是域名 443 时配它
+--   gate_weight       客户端分流权重，默认 1
+-- 同样不在这里给默认值，原因见上。
+
+-- 客户端会话。会话（计数、重放缓冲、上行幂等缓存）活在实体进程里，跨连接存活，
+-- 断线重连时客户端用 login.resume 把它接回新连接上。
+-- 续接窗口不在这里配：它等于实体的 unload_delay，实体一卸载会话就没了。
+--
+-- 下面两个上限按"单个角色在断线窗口里能攒多少未确认下行"取，不是性能参数，是内存保护：
+-- 撑爆了只是退化成重新登录，取大了则是每个在线角色都多占这么多常驻内存。
+session_replay_bytes = 32 * 1024 -- 未确认下行的字节上限
+session_replay_packets = 256 -- 未确认下行的包数上限
+
+-- 上行幂等缓存：续接后客户端会按原 request id 重发在途请求，服务端回缓存的响应而不是
+-- 重新执行一遍（扣费、抽卡重放一次比丢个回包危险得多）。只要能覆盖一次断线窗口里的
+-- 在途请求就够，客户端并发的请求数本来就有限。
+session_respcache_count = 64
+session_respcache_bytes = 16 * 1024
+
+-- 空闲判死：最后一个上行包超过 session_idle_timeout 秒就断开连接。客户端心跳 15s 一发，
+-- 60s 即连续 4 次未达。断的只是连接，会话照常留到实体卸载，客户端可以续接回来。
+session_idle_timeout = 60
+session_idle_interval = 10 -- 扫描间隔秒
+
 res_path = "example/res"
 res_lazy_path = "example/res/lazy"
 

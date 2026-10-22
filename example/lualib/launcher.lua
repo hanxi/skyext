@@ -24,22 +24,55 @@ function M.launcher_node()
     log.info("auto create indexes success")
 end
 
--- 客户端接入：session_gate 管连接，login 处理还没绑定的会话。
+-- 客户端接入：网关管连接，login 处理还没绑定的会话。
+-- 原生客户端走 gate_tcp，浏览器和小程序走 gate_ws，两个网关共用同一个 login
+-- （它持有 realm 订阅和 JWT 状态，复制一份不划算）。
 -- role 节点（同进程部署）和独立的 gate 节点都调这个；必须在本节点的实体就绪之后再调，
 -- 端口一打开就会有玩家进来
 function M.launcher_gate()
-    local port = assert(config.get_number("gate_port"), "gate_port is not configured")
+    local host = config.get("gate_host") or "0.0.0.0"
+    local maxclient = config.get_number("maxclient") or 1024
     local login = skynet.newservice("login")
-    local gate = skynet.newservice("session_gate")
-    skynet.call(login, "lua", "start", { gate = gate })
+    -- 下发给客户端的地址。监听地址通常是 0.0.0.0，对客户端没有意义
+    local public_host = config.get("gate_public_host")
+        or assert(config.get("cluster_host"), "cluster_host is not configured")
+    local gate_info = {}
+
+    local port = assert(config.get_number("gate_port"), "gate_port is not configured")
+    local gate = skynet.newservice("gate_tcp")
     skynet.call(gate, "lua", "open", {
-        address = config.get("gate_host") or "0.0.0.0",
+        address = host,
         port = port,
-        maxclient = config.get_number("maxclient") or 1024,
+        maxclient = maxclient,
         nodelay = true,
         login = login,
     })
-    log.info("gate listening", "port", port)
+    gate_info.tcp_addr = public_host .. ":" .. port
+    log.info("tcp gate listening", "port", port)
+
+    -- WS 网关是可选的：不配 ws_port 就只开裸 TCP
+    local ws_port = config.get_number("ws_port")
+    if ws_port then
+        local protocol = config.get("ws_protocol") or "ws"
+        local ws_gate = skynet.newservice("gate_ws")
+        skynet.call(ws_gate, "lua", "open", {
+            address = host,
+            port = ws_port,
+            maxclient = maxclient,
+            protocol = protocol,
+            certfile = config.get("ws_certfile"),
+            keyfile = config.get("ws_keyfile"),
+            login = login,
+        })
+        -- 前面挂了 TLS 终止时客户端连的是域名和 443，和本节点的监听口没有关系，
+        -- 这时整条 URL 由 ws_public_url 给
+        gate_info.ws_url = config.get("ws_public_url") or (protocol .. "://" .. public_host .. ":" .. ws_port)
+        log.info("ws gate listening", "port", ws_port)
+    end
+
+    -- 上报接入地址，客户端通过 realm 的网关列表找到这里
+    gate_info.weight = config.get_number("gate_weight") or 1
+    skynet.call(skynet.uniqueservice("realm"), "lua", "register_gate", gate_info)
 end
 
 return M

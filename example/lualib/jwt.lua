@@ -9,6 +9,7 @@ local cjson_decode = cjson.decode
 local cjson_encode = cjson.encode
 local base64urldecode = crypto.base64urldecode
 local base64urlencode = crypto.base64urlencode
+local const_equals = crypto.const_equals
 
 local M = {}
 
@@ -77,18 +78,6 @@ local function resolve_public_pem(key, kid)
     return pem
 end
 
--- 定长比较：逐字节比完再判等，不让对方从"第几个字节开始不一样"里试出签名
-local function secure_equal(a, b)
-    if #a ~= #b then
-        return false
-    end
-    local diff = 0
-    for i = 1, #a do
-        diff = diff | (string.byte(a, i) ~ string.byte(b, i))
-    end
-    return diff == 0
-end
-
 local function decode_segment(segment)
     local ok, raw = pcall(base64urldecode, segment)
     if not ok or not raw then
@@ -123,7 +112,7 @@ end
 --   kind 为 "config" 表示密钥本身有问题（服务端配置错了），不是 token 的错
 local function check_signature(spec, alg, key, header, signing_input, signature)
     if spec.family == "hmac" then
-        return secure_equal(signature, spec.hmac(key, signing_input))
+        return const_equals(signature, spec.hmac(key, signing_input))
     end
     local pem, pem_err = resolve_public_pem(key, header.kid)
     if not pem then

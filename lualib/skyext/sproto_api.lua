@@ -2,6 +2,7 @@ local skynet = require "skynet"
 local socket = require "skynet.socket"
 local netpack = require "skynet.netpack"
 local event_channel_api = require "skyext.event_channel_api"
+local sproto_host = require "skyext.sproto_host"
 local config = require "skyext.config"
 local log = require "skyext.log"
 local errcode = require "skyext.errcode"
@@ -39,8 +40,9 @@ end
 -- 一个连接管理模块需要提供 get_obj 接口用于获取连接对象
 -- 同时也可以提供 middleware_cbs 表，用于注册中间件，主要用于做协议拦截
 -- obj 就是一个连接对象，由连接管理模块的 get_obj 接口提供
--- 可选的 with_request(fd, f) 用于把协议处理放进连接自己的串行队列，
--- 约定返回 true, ...（f 已执行）或 false, reason（请求被拒绝，f 未执行）
+-- 可选的 with_request(fd, f, req_id) 用于把协议处理放进连接自己的串行队列，
+-- 约定返回 true, ...（f 已执行）或 false, reason, code（请求被拒绝，f 未执行）。
+-- req_id 是客户端带的 request id，连接模块可以拿它做上行幂等缓存
 -- 可选的 reject_client(fd, reason) 在错误码无法回给客户端时断开连接
 function M.register_module(mod_name, module, cmds)
     for k, v in pairs(cmds or {}) do
@@ -162,27 +164,31 @@ local function dispatch_request_unlocked(fd, request_name, request, response_cb)
 end
 
 -- 返回 pack 或者 nil, reason, code
-local function dispatch_request(fd, request_name, request, response_cb)
+local function dispatch_request(fd, request_name, request, response_cb, req_id)
     local with_request = WITH_REQUEST_CB[request_name]
     if not with_request then
         return dispatch_request_unlocked(fd, request_name, request, response_cb)
     end
-    local ok, result, reason, code = with_request(fd, function()
+    local ok, a, b, c = with_request(fd, function()
         return dispatch_request_unlocked(fd, request_name, request, response_cb)
-    end)
+    end, req_id)
     if ok == true then
-        return result, reason, code
+        -- f 已执行：a, b, c 就是它的 pack, reason, code
+        return a, b, c
     end
     if ok ~= false then
         -- 兼容只返回单个回包的旧版连接模块
         return ok
     end
-    return nil, tostring(result or "request rejected"), M.errcode_rejected
+    -- 被拒绝：a 是原因，b 是连接模块指定的错误码（可选）
+    return nil, tostring(a or "request rejected"), b or M.errcode_rejected
 end
 
 -- 回包、推送怎么送到客户端。默认直接写本进程的 socket：登录服务、robot 这类直接持有
 -- 连接的服务就是这样。实体 agent 里的连接在 gate 上，由 skyext.entity.session 换成
--- "发给会话所在的 gate"，conn 也从 fd 变成会话键
+-- "发给会话所在的 gate"，conn 也从 fd 变成会话键。
+-- 第三个参数是回包对应的协议名（主动推送时为 nil），会话层靠它把传输层握手的回包
+-- 排除在下行计数之外
 local function socket_sender(fd, pack)
     local data, sz = netpack.pack(pack)
     socket.write(fd, data, sz)
@@ -194,8 +200,8 @@ function M.set_sender(sender)
     g_sender = sender or socket_sender
 end
 
-local function send_package(conn, pack)
-    g_sender(conn, pack)
+local function send_package(conn, pack, request_name)
+    g_sender(conn, pack, request_name)
 end
 
 local function wakeup_call(pending, response)
@@ -209,11 +215,11 @@ local function wakeup_call(pending, response)
     return true
 end
 
-function M.raw_dispatch(fd, type, request_name, request, response_cb)
+function M.raw_dispatch(fd, type, request_name, request, response_cb, req_id)
     log.debug("raw_dispatch", "fd", fd, "type", type, "request_name", request_name)
     if type == "REQUEST" then
         local ok, result, reason, code =
-            xpcall(dispatch_request, debug.traceback, fd, request_name, request, response_cb)
+            xpcall(dispatch_request, debug.traceback, fd, request_name, request, response_cb, req_id)
         if not ok then
             log.error("dispatch request error", "request_name", request_name, "result", result)
             result, reason, code = nil, "internal error", M.errcode_internal
@@ -229,7 +235,7 @@ function M.raw_dispatch(fd, type, request_name, request, response_cb)
             )
         end
         if result then
-            send_package(fd, result)
+            send_package(fd, result, request_name)
             log.debug("request dispatched successfully", "request_name", request_name, "fd", fd)
         end
     else
@@ -243,13 +249,19 @@ end
 
 -- 处理一个上行包（gate 转发过来的原始字节）。conn 是连接标识：fd 或会话键
 function M.dispatch_message(conn, data)
-    local type, request_name, request, response_cb = g_host:dispatch(data)
-    return M.raw_dispatch(conn, type, request_name, request, response_cb)
+    local type, request_name, request, response_cb, req_id = g_host:dispatch(data)
+    return M.raw_dispatch(conn, type, request_name, request, response_cb, req_id)
 end
 
 -- 下行推送：服务端主动发给客户端的协议，没有回包
 function M.notify(conn, name, param)
     send_package(conn, g_send_request(name, param))
+end
+
+-- 只编码不发送。会话层要先计数、入重放缓冲，再决定写不写网关——离线时它手上根本没有
+-- 连接标识，走不了 notify
+function M.encode_notify(name, param)
+    return g_send_request(name, param)
 end
 
 function M.call(fd, name, param, session, timeout)
@@ -301,8 +313,8 @@ end
 local function reload_sproto()
     g_schema, g_sproto_info = get_sproto_schema()
     g_reject_field = {}
-    g_host = g_schema:host("base.package")
-    g_send_request = g_host:attach(g_schema)
+    g_host = sproto_host.new(g_schema, "base.package")
+    g_send_request = g_host:attach()
 end
 
 skynet.init(function()

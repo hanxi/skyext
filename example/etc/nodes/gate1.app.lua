@@ -6,6 +6,7 @@ gm_http_port = 9094 -- GM HTTP 服务端口
 metrics_http_port = 9194 -- 指标抓取端口
 
 gate_port = "7052" -- 客户端连接端口
+ws_port = "7053" -- WebSocket 端口（浏览器、小程序）。不配就只开裸 TCP
 
 maxclient = 1024
 

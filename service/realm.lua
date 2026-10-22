@@ -7,21 +7,44 @@
 --   /skyext/realm/server/<server>  { game, name, tag, status, open_time }
 --   /skyext/realm/game/<game>      { zone }
 --   /skyext/realm/zone/<zone>      {}
+--   /skyext/realm/gate/<node>      { tcp_addr, ws_url, weight }
+--
+-- 前三类是运营数据，改了就一直在。网关那一类不是：它由网关节点自己上报，挂在节点租约上，
+-- 进程没了键跟着没。放进同一个目录是因为消费方式完全一样（watch + 整表广播），
+-- 而客户端拿到的「连哪个服、连哪台网关」本来就该是一次查询的事。
 local skynet = require "skynet"
 local etcd = require "skyext.etcd"
 local cmd_api = require "skyext.cmd_api"
 local gm_api = require "skyext.gm_api"
 local event_channel_api = require "skyext.event_channel_api"
+local node_lease = require "skyext.node_lease"
+local node_shutdown_api = require "skyext.node_shutdown_api"
+local timer = require "skyext.timer"
 local config = require "skyext.config"
 local time = require "skyext.time"
 local log = require "skyext.log"
 
 local PREFIX = "/skyext/realm/"
-local KINDS = { server = "servers", game = "games", zone = "zones" }
+local KINDS = { server = "servers", game = "games", zone = "zones", gate = "gates" }
+-- 网关记录是节点启动时自己上报的运行态，不是配置，所以不参与 realm_seed
+local SEEDABLE = { server = true, game = true, zone = true }
 local WATCH_RETRY = 50 -- 1/100 秒
+local GATE_SYNC_INTERVAL = 10 -- 秒
+
+local function empty_dir()
+    local dir = { revision = 0 }
+    for _, field in pairs(KINDS) do
+        dir[field] = {}
+    end
+    return dir
+end
 
 local g_etcd_client
-local g_dir = { servers = {}, games = {}, zones = {}, revision = 0 }
+local g_dir = empty_dir()
+-- 本节点的网关信息。nil 表示本节点不是网关
+local g_self_gate
+local g_gate_synced = false
+local g_gate_timer
 
 local function parse_key(key)
     local kind, name = key:match("^" .. PREFIX .. "(%a+)/(.+)$")
@@ -42,7 +65,8 @@ local function load_all()
         log.error("realm load failed", "err", err, "ret", ret)
         return false
     end
-    local dir = { servers = {}, games = {}, zones = {}, revision = tonumber(ret.body.header.revision) }
+    local dir = empty_dir()
+    dir.revision = tonumber(ret.body.header.revision)
     for _, kv in ipairs(ret.body.kvs or {}) do
         local field, name = parse_key(kv.key)
         if field and type(kv.value) == "table" then
@@ -67,7 +91,7 @@ local function apply_seed()
         return
     end
     for kind, field in pairs(KINDS) do
-        for name, value in pairs(seed[field] or {}) do
+        for name, value in pairs(SEEDABLE[kind] and seed[field] or {}) do
             if kind == "server" then
                 value.status = value.status or "open"
                 value.open_time = value.open_time or time.now()
@@ -130,6 +154,68 @@ function CMD.snapshot()
     return g_dir
 end
 
+local function gate_key()
+    return PREFIX .. "gate/" .. assert(config.get("cluster_node_name"), "cluster_node_name is not configured")
+end
+
+-- 网关键挂在节点租约上，进程没了键跟着没，客户端不会被引导到一台已经死掉的网关。
+-- 代价是租约换代之后键也没了，所以这里是「没同步上就重试」的定时任务，而不是写一次了事
+local function sync_gate()
+    if g_gate_synced or not g_self_gate or not node_lease.valid() then
+        return
+    end
+    local key = gate_key()
+    local ret, err = g_etcd_client:set(key, g_self_gate, { lease = node_lease.id() })
+    if not ret then
+        log.error("realm gate register failed", "key", key, "err", err)
+        return
+    end
+    g_gate_synced = true
+    log.info("realm gate registered", "key", key, "tcp_addr", g_self_gate.tcp_addr, "ws_url", g_self_gate.ws_url)
+end
+
+-- 租约没了，挂在它上面的网关键已经被 etcd 删掉，下一拍重新注册
+local function on_lease_lost(_, reason)
+    g_gate_synced = false
+    log.error("realm lost the node lease, the gate entry will be re-registered", "reason", reason)
+end
+
+-- 网关节点启动时上报自己的客户端接入地址。gate_tcp 和 gate_ws 合成一条节点级记录，
+-- 所以这里是增量合并而不是整体覆盖
+function CMD.register_gate(info)
+    g_self_gate = g_self_gate or {}
+    for k, v in pairs(info) do
+        g_self_gate[k] = v
+    end
+    g_gate_synced = false
+    if g_gate_timer then
+        g_gate_timer:wakeup()
+        return true
+    end
+    node_lease.on_lost("realm_gate", on_lease_lost)
+    -- 停止接入时就把自己从列表里摘掉：已连上的客户端照常走完停服流程，新客户端不再被引导过来
+    node_shutdown_api.add_hook("stop_accepting", "unregister_gate")
+    g_gate_timer = timer.repeat_immediately("realm_gate_sync", GATE_SYNC_INTERVAL, sync_gate)
+    return true
+end
+
+function CMD.unregister_gate()
+    if g_gate_timer then
+        g_gate_timer:cancel()
+        g_gate_timer = nil
+    end
+    if not g_self_gate then
+        return true
+    end
+    g_self_gate, g_gate_synced = nil, false
+    local ret, err = g_etcd_client:delete(gate_key())
+    if not ret then
+        log.error("realm gate unregister failed", "err", err)
+        return false
+    end
+    return true
+end
+
 local function put(kind, name, value)
     local ret, err = g_etcd_client:set(PREFIX .. kind .. "/" .. name, value)
     if not ret or ret.status ~= 200 then
@@ -148,6 +234,13 @@ GM_CMD.realm_list = {
     desc = "查看区服目录",
     handler = function()
         return true, g_dir
+    end,
+}
+
+GM_CMD.realm_gates = {
+    desc = "查看当前在线的网关接入地址",
+    handler = function()
+        return true, g_dir.gates
     end,
 }
 

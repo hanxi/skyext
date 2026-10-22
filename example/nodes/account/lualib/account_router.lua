@@ -124,6 +124,15 @@ M.GET["/servers"] = function(_, res)
     return res.write_json({ code = errcode.OK, servers = servers })
 end
 
+-- 网关接入地址。客户端拿到列表后自己挑一台直连，数据路径上没有代理，真实 IP 天然保留。
+-- 不需要登录：这里只有地址，没有任何账号相关的东西。
+--
+-- 不在这里做「挑一台」：挑选策略（按区域、按版本、重试下一台）是客户端的事，
+-- 服务端一旦代为选择，客户端就失去了换一台重试的能力——而这恰恰是断线续接最需要的
+M.GET["/gates"] = function(_, res)
+    return res.write_json({ code = errcode.OK, gates = realm.gates() })
+end
+
 local function get_roles(account, query)
     return role_db_api.get_roles(account, query, { _id = false, rid = 1, server = 1, name = 1 })
 end
