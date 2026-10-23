@@ -7,6 +7,7 @@
   - [登录流程](guide/login.md)
   - [登录流程图](guide/login_diagram.md)
   - [客户端接入规范](guide/client_protocol.md)
+  - [客户端 SDK](guide/client_sdk.md)
   - [完整客户端联调](guide/fullstack_client.md)
   - [热更新操作](guide/hotfix.md)
   - [HTTP 服务端](guide/http_server.md)

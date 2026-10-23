@@ -49,6 +49,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 | 路径 | 职责 |
 | --- | --- |
 | `lualib/skyext/`、`lualib/orm/`、`lualib/skytest/` | 引擎库、ORM、测试框架 |
+| `sdk/lua/`、`sdk/ts/` | 客户端 SDK（Lua / TypeScript），实现[客户端接入规范](docs/guide/client_protocol.md) |
 | `service/`、`public/` | 通用 skynet 服务和静态资源 |
 | `lualib-src/`、`service-src/`、`build.mk` | C 扩展、服务与构建规则 |
 | `example/nodes/`、`example/service/`、`example/lualib/` | 示例游戏的节点入口、共享服务（login/admin）与业务代码 |
@@ -82,8 +83,9 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 
 - [架构概览](docs/overview.md)：节点、引擎/游戏分层与配置流向。
 - [快速上手](docs/getting-started.md)：依赖、构建、运行、测试及常见问题。
-- [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md) · [客户端接入规范](docs/guide/client_protocol.md)：写客户端 SDK 看最后一篇。
-- [完整客户端联调](docs/guide/fullstack_client.md)：gamepass OAuth + phaser-game 浏览器客户端，跑通正式客户端链路（该示例客户端用 SCP，仍需 goscon；新客户端直连 `gate_ws`）。
+- [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md) · [客户端接入规范](docs/guide/client_protocol.md)：自己写客户端 SDK 看规范。
+- [客户端 SDK](docs/guide/client_sdk.md)：官方 Lua / TypeScript 双实现的安装、快速上手、小程序 transport 适配、错误码与验收方法。
+- [完整客户端联调](docs/guide/fullstack_client.md)：gamepass OAuth + phaser-game 浏览器客户端（已迁移到官方 TS SDK，直连 `gate_ws`，不再需要 goscon），跑通正式客户端链路。
 - [热更新操作](docs/guide/hotfix.md) · [GM HTTP API](docs/guide/gm_api.md)。
 - [HTTP 服务端](docs/guide/http_server.md)：命名实例、连接与超时上限、路由注册。
 - [指标采集与导出](docs/guide/metrics.md)：指标原语、Prometheus 端点与内置指标。
@@ -96,7 +98,7 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 
 - [phaser-game](https://github.com/hanxi/phaser-game)：示例 Phaser 客户端（submodule：`example/tools/phaser-game`）。
 - [gamepass](https://github.com/hanxi/gamepass)：第三方登录鉴权服务（submodule：`example/tools/gamepass`）。
-- [goscon](https://github.com/hanxi/goscon)：WebSocket 到 TCP 网关（submodule：`example/tools/goscon`）。**可选，默认不启用**：WebSocket 接入由 `service/gate_ws.lua` 原生支持，断线续接由会话层原生支持（见[登录流程](docs/guide/login.md)），默认部署里 goscon 已经没有职责。只有真的需要字节级连接续接时才接它，并且**不能打开它的 `-sproto` 开关**——那个开关会往游戏服注入 `login.report_remote_addr`，该协议已经删除（真要在代理后面拿客户端真实 IP，用 PROXY protocol，而不是带内消息）。
+- [goscon](https://github.com/hanxi/goscon)：WebSocket 到 TCP 网关（submodule：`example/tools/goscon`）。**已从示例链路退役**：phaser-game 迁移到官方 [客户端 SDK](docs/guide/client_sdk.md) 后直连 `gate_ws`，WebSocket 接入由 `service/gate_ws.lua` 原生支持，断线续接由会话层原生支持（见[登录流程](docs/guide/login.md)）。只有真的需要字节级连接续接时才接它，并且**不能打开它的 `-sproto` 开关**——那个开关会往游戏服注入 `login.report_remote_addr`，该协议已经删除（真要在代理后面拿客户端真实 IP，用 PROXY protocol，而不是带内消息）。
 
 前两者的启动与联调步骤见[完整客户端联调](docs/guide/fullstack_client.md)。
 
