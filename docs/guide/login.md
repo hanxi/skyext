@@ -56,50 +56,22 @@ login_jwt_public_key = { ["login-2025"] = old_pem, ["login-2026"] = new_pem }
 
 ## Robot 登录创角示例
 
-以下代码来自 `example/nodes/robot/robotagent/main.lua`：
+机器人使用 Lua 客户端 SDK（`sdk/lua/`）：Account HTTP 走 `skyext.client.account`，会话走 `skyext.client.session`。以下代码来自 `example/nodes/robot/robotagent/main.lua`：
 
 ```lua
--- 拿登录 token。示例走 Account 的开发登录接口；正式客户端从 SDK/平台登录服务拿
-local function fetch_token(account_host, account)
-    local status, res = httpc.post_json(account_host, "/dev_login", { account = account })
-    if status ~= 200 or type(res) ~= "table" or res.code ~= errcode.OK then
-        log.error("dev_login failed", "status", status, "res", res)
-        return nil
-    end
-    return res.token
-end
-
--- 网关地址来自 account 的 /gates，不写死在配置里。列表里只会有真的在线的网关
--- （网关键挂在节点租约上），所以也不用自己判断某个端口通不通
-local function fetch_gates(account_host)
-    local status, body = httpc.get(account_host, "/gates")
-    local res = status == 200 and cjson.decode(body)
-    if type(res) ~= "table" or res.code ~= errcode.OK or not res.gates[1] then
-        log.error("no gate is online", "status", status, "res", res)
-        return nil
-    end
-    return res.gates
-end
-
--- 登录 token 走 Authorization 头，不进 URL
-local function authed(method, account_host, url, token, body)
-    local header = { authorization = "Bearer " .. token }
-    local data
-    if body then
-        header["content-type"] = "application/json"
-        data = cjson.encode(body)
-    end
-    local status, res = httpc.request(method, account_host, url, nil, header, data)
-    return status, cjson.decode(res) or res
-end
+local client_account = require "skyext.client.account"
+local client_session = require "skyext.client.session"
 
 function CMD.start(conf)
-    local account_host = config.get("account_host")
-    local account = "robot" .. conf.id
-    local token = fetch_token(account_host, account)
-    -- ……GET /servers 挑推荐服；GET /roles，没有角色时 POST /create_role……
-    local role = ensure_role(account_host, token, account, pick_server(account_host))
-    local gates = fetch_gates(account_host)
+    local account = client_account.new({ hosts = { config.get("account_host") } })
+    local name = "robot" .. conf.id
+    -- 拿登录 token。示例走 Account 的开发登录接口；正式客户端从平台登录服务拿
+    local token = account:dev_login(name)
+    -- GET /servers 挑推荐服；GET /roles，没有角色时 POST /create_role
+    local role = account:ensure_role(token, name, account:pick_recommended_server() or "s1")
+    -- 网关地址来自 account 的 /gates，不写死在配置里。列表里只会有真的在线的网关
+    -- （网关键挂在节点租约上），所以也不用自己判断某个端口通不通
+    local gates = account:gates()
 
     -- 按编号错开起点，依次试到第一个跑通的网关；网关不必和角色实体在同一个节点
     local start = conf.gate or (conf.id % #gates + 1)
@@ -113,7 +85,9 @@ function CMD.start(conf)
 end
 ```
 
-连接、登录、计数、心跳、续接这些都在 `example/lualib/client_session.lua` 里，机器人只负责编排业务流程。`run()` 建一个会话，跑一遍业务，中间主动断一次连接验证续接，再跑一遍：
+Account 接口把登录 token 放在 Authorization 头（不进 URL），传输失败自动换下一台 host，实现见 `sdk/lua/skyext/client/account.lua`。
+
+连接、登录、计数、心跳、续接这些都在 `skyext.client.session`（`sdk/lua/skyext/client/session.lua`）里，机器人只负责编排业务流程。`run()` 建一个会话，跑一遍业务，中间主动断一次连接验证续接，再跑一遍：
 
 ```lua
 local s = client_session.new({

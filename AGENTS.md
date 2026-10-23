@@ -11,6 +11,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 | 路径 | 归属与用途 |
 | --- | --- |
 | `lualib/skyext/` | 引擎 Lua 模块，统一使用 `skyext.*` 命名空间 |
+| `sdk/lua/`、`sdk/ts/` | 客户端 SDK 双实现（Lua `skyext.client.*` / TypeScript），规范见 `docs/guide/client_protocol.md` |
 | `lualib/orm/`、`lualib/skytest/`、`lualib/loader.lua` | ORM 运行时、测试框架与服务加载器 |
 | `scripts/tools/sproto_orm/`、`example/build/lualib/game/orm/` | 主工程内生成工具、Git 忽略的游戏层 schema 生成物 |
 | `service/`、`public/` | 引擎服务与静态资源 |
@@ -27,7 +28,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 - 引擎 Lua 模块使用 `require "skyext.config"`、`require "skyext.log"`、`require "skyext.gm_api"` 等完整命名空间，不要在引擎代码中使用 `require "config"` 一类裸模块名。
 - 例外：skynet 自带模块（如 `skynet`、`skynet.db.mongo`）、`orm.*`、服务局部库和游戏层自有模块。`service/logger/` 的局部裸 `require` 会通过 `SERVICE_PATH` 解析，不必机械地加 `skyext.` 前缀。
 - Lua 风格遵循现有代码：`local M = {} ... return M`、`require "skyext.config"`；记录日志用 `skyext.log`，错误码放在 `skyext.errcode` 或游戏层对应模块中。
-- `lualib/loader.lua` 的 `package.path` 从高到低依次为：服务独有库 → 节点根目录 → 节点独有库 → `example/lualib/` → 游戏生成物 `example/build/lualib/` → 引擎 `lualib/` → `skynet/lualib/`。新模块先确认所属层级，避免同名遮蔽。
+- `lualib/loader.lua` 的 `package.path` 从高到低依次为：服务独有库 → 节点根目录 → 节点独有库 → `example/lualib/` → 游戏生成物 `example/build/lualib/` → 客户端 SDK `sdk/lua/` → 引擎 `lualib/` → `skynet/lualib/`。新模块先确认所属层级，避免同名遮蔽。
 - 每个服务的启动链是 `lualib/loader.lua` → `require "skyext"`（解析至 `lualib/skyext/init.lua`）→ 服务自身的 `main.lua`。初始化回调加载应用配置与日志。
 - Lua C 子模块遵循其导出符号：例如 `require "traceback.c"` 从 `traceback.so` 查找 `luaopen_traceback_c`。
 

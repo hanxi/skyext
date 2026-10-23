@@ -1,4 +1,4 @@
--- client_session 是客户端接入规范的可执行版本，这里钉住的是**协议语义**：
+-- skyext.client.session 是客户端接入规范的可执行版本，这里钉住的是**协议语义**：
 -- 下行怎么计数、续接怎么重发在途请求、对账对不上怎么办。每个客户端平台都要重写一遍
 -- 这套逻辑，写错了不会报错，只会在断线重连之后悄悄错位。
 --
@@ -10,7 +10,7 @@ local errcode = require "errcode"
 local fs = require "skyext.util.fs"
 local lfs = require "lfs"
 
-local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "example/lualib/client_session.lua")
+local source = fs.join(fs.absolute(os.getenv("SKYTEST_ROOT") or lfs.currentdir()), "sdk/lua/skyext/client/session.lua")
 
 local URL = "ws://127.0.0.1:7013"
 
@@ -166,7 +166,7 @@ local function harness()
     return h
 end
 
-t.describe("client_session 登录", function()
+t.describe("client.session 登录", function()
     t.it("登录成功后记下凭据，下行计数从 0 开始", function()
         local h = harness()
         local s = h.login("nonce-a")
@@ -193,7 +193,7 @@ t.describe("client_session 登录", function()
     end)
 end)
 
-t.describe("client_session 下行计数", function()
+t.describe("client.session 下行计数", function()
     t.it("业务回包和服务端推送都计数", function()
         local h = harness()
         local s = h.login()
@@ -219,7 +219,7 @@ t.describe("client_session 下行计数", function()
     end)
 end)
 
-t.describe("client_session 续接", function()
+t.describe("client.session 续接", function()
     t.it("带上 nonce 和已收计数续接，成功后轮换凭据", function()
         local h = harness()
         local s = h.login("nonce-a")
@@ -314,7 +314,7 @@ t.describe("client_session 续接", function()
     end)
 end)
 
-t.describe("client_session 连接管理", function()
+t.describe("client.session 连接管理", function()
     t.it("迟到的断开通知不影响已经建好的新连接", function()
         local h = harness()
         local s = h.login()

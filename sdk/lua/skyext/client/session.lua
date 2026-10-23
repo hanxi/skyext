@@ -1,6 +1,7 @@
--- 客户端会话的参考实现。robot 用它跑连通性测试，但它真正的用途是**规范**：
--- 每个客户端平台都得写一份等价的东西，这里是那份东西的可执行版本。
--- 协议与状态机见 docs/design/session_resume.md。
+-- Lua 客户端 SDK：会话层。规范与五条义务的完整细节见 docs/guide/client_protocol.md，
+-- 服务端设计背景见 docs/design/session_resume.md。TypeScript 对等实现在 sdk/ts/，
+-- 两者共享同一套协议语义测试基线（session.test.lua / session.test.ts）。
+-- robot（example/nodes/robot）用它跑连通性测试，同时充当本模块的端到端验收用例。
 --
 -- 客户端必须承担的义务，一条都不能省：
 --   1. 每个请求带一个自增的 request id，续接之后**用原 id 重发**在途请求。
@@ -18,7 +19,7 @@ local socket = require "skynet.socket"
 local netpack = require "skynet.netpack"
 local websocket = require "http.websocket"
 local sproto_api = require "skyext.sproto_api"
-local errcode = require "errcode"
+local errcode = require "skyext.errcode"
 local log = require "skyext.log"
 
 local M = {}
@@ -215,6 +216,9 @@ function Session:handle(bytes)
     local host = packer()
     local ok, msg_type, a, b = pcall(host.dispatch, host, bytes)
     if not ok then
+        -- 解不开码的包也要计数：服务端发出时计了数，这里漏数一个，recv 就
+        -- 永久落后 sent 一位，ping 对账必然错位（义务 2）
+        self.recv = self.recv + 1
         log.error("client dispatch failed", "err", msg_type)
         return
     end

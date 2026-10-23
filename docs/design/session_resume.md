@@ -87,12 +87,12 @@ Tier 1 必做，收益明确。Tier 2 看推送有多重要——如果客户端
 resume 101 {
     request {
         rid 0 : integer      # 仅用于路由
-        nonce 1 : string     # 16 字节续接凭据
+        nonce 1 : binary     # 16 字节续接凭据（原始随机字节）
         recv 2 : integer     # 客户端已收到的包数（Tier 2）
     }
     response {
         code 0 : integer
-        nonce 1 : string     # 轮换后的新凭据
+        nonce 1 : binary     # 轮换后的新凭据（原始随机字节）
         sent 2 : integer     # 服务端已发出的包数，供客户端自检（Tier 2）
     }
 }
@@ -289,7 +289,7 @@ WiFi 切 4G 时旧连接通常**不会**收到 FIN 或 RST，它直接变成黑�
 
 | | 范围 | 结论 |
 |---|---|---|
-| **Lua 参考实现** | `example/lualib/client_session.lua` | **做**，零额外成本 |
+| **Lua SDK** | `sdk/lua/skyext/client/session.lua`（初版即 robot 内联逻辑抽出的参考实现） | **做**，零额外成本 |
 | **TypeScript SDK** | 小程序 + H5 + phaser-game | **做** |
 | **C# / Unity** | 原生 APP（`gate_tcp` 的消费方） | **不做**，等真有 APP 客户端再说 |
 

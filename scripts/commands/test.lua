@@ -7,7 +7,7 @@ local function usage()
   --cov-c          收集 C 覆盖率（需 Linux/GCC 插桩构建及 lcov）
   --timeout SECS   每个文件的超时秒数（默认 120）
   --conf FILE      自定义 skynet 配置
-默认扫描 lualib/、service/、example/、test/。]])
+默认扫描 lualib/、service/、example/、sdk/、test/。]])
 end
 
 local function parse(args)
@@ -43,7 +43,7 @@ local function discover(ctx, options)
     local fs = ctx.fs
     local targets = options.targets
     if #targets == 0 then
-        targets = { "lualib", "service", "example", "test" }
+        targets = { "lualib", "service", "example", "sdk", "test" }
     end
     local found = {}
     for _, target in ipairs(targets) do

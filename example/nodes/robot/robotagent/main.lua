@@ -1,89 +1,17 @@
--- 压测/连通性机器人。它同时是 example/lualib/client_session.lua 的验收用例：
+-- 压测/连通性机器人。它同时是 sdk/lua（Lua 客户端 SDK）的验收用例：
 -- 同一套业务流程在 tcp 和 ws 两种传输上各跑一遍，行为必须完全一致；
 -- 中间主动断一次连接，验证续接之后业务能接着做、且不用重新登录。
+-- Account HTTP（dev_login/选服/建角/网关发现）走 skyext.client.account，
+-- 连接、登录、计数、心跳、续接走 skyext.client.session，这里只剩业务编排。
 local skynet = require "skynet"
 local cmd_api = require "skyext.cmd_api"
 local config = require "skyext.config"
 local log = require "skyext.log"
-local httpc = require "skyext.httpc"
-local cjson = require "cjson.safe"
-local errcode = require "errcode"
 local sproto_api = require "skyext.sproto_api"
-local client_session = require "client_session"
+local client_account = require "skyext.client.account"
+local client_session = require "skyext.client.session"
 
 local CMD = {}
-
--- 拿登录 token。示例走 Account 的开发登录接口；正式客户端从 SDK/平台登录服务拿
-local function fetch_token(account_host, account)
-    local status, res = httpc.post_json(account_host, "/dev_login", { account = account })
-    if status ~= 200 or type(res) ~= "table" or res.code ~= errcode.OK then
-        log.error("dev_login failed", "status", status, "res", res)
-        return nil
-    end
-    -- token 是登录凭据，只能记录长度这类非敏感信息
-    log.info("got login token", "len", #res.token)
-    return res.token
-end
-
--- 服务器列表不需要登录。没有角色时在推荐服建角
-local function pick_server(account_host)
-    local status, body = httpc.get(account_host, "/servers")
-    local servers = status == 200 and cjson.decode(body)
-    local pick = "s1"
-    for _, entry in ipairs(servers and servers.servers or {}) do
-        if entry.recommended then
-            pick = entry.server
-        end
-    end
-    log.info("server list", "servers", servers and servers.servers, "pick", pick)
-    return pick
-end
-
--- 网关地址来自 account 的 /gates，不写死在配置里。正式客户端走的就是这条路径：
--- 先查列表再直连其中一台，数据路径上没有代理。列表里只会有真的在线的网关
--- （网关键挂在节点租约上），所以也不用自己判断某个端口通不通
-local function fetch_gates(account_host)
-    local status, body = httpc.get(account_host, "/gates")
-    local res = status == 200 and cjson.decode(body)
-    if type(res) ~= "table" or res.code ~= errcode.OK or not res.gates[1] then
-        log.error("no gate is online", "status", status, "res", res)
-        return nil
-    end
-    log.info("gate list", "gates", res.gates)
-    return res.gates
-end
-
--- 登录 token 走 Authorization 头。放进 URL query 会被访问日志、代理日志、
--- Referer 和浏览器历史一路抄送
-local function authed(method, account_host, url, token, body)
-    local header = { authorization = "Bearer " .. token }
-    local data
-    if body then
-        header["content-type"] = "application/json"
-        data = cjson.encode(body)
-    end
-    local status, res = httpc.request(method, account_host, url, nil, header, data)
-    return status, cjson.decode(res) or res
-end
-
-local function ensure_role(account_host, token, account, server)
-    local status, res = authed("GET", account_host, "/roles", token)
-    if status ~= 200 or res.code ~= errcode.OK then
-        log.error("failed to get roles", "status", status, "res", res)
-        return nil
-    end
-    if res.roles[1] then
-        return res.roles[1]
-    end
-
-    local create_status, created =
-        authed("POST", account_host, "/create_role", token, { server = server, name = account })
-    if create_status ~= 200 or created.code ~= errcode.OK then
-        log.error("failed to create role", "status", create_status, "res", created)
-        return nil
-    end
-    return created.role
-end
 
 -- 走一遍背包和邮件：给自己发一封信，等可靠消息投递完再看邮箱
 local function play(s, rid)
@@ -171,20 +99,25 @@ end
 function CMD.start(conf)
     -- 配置是在 skyext 的 skynet.init 回调里注入的，服务 chunk 加载期读到的是 nil，
     -- 所以 account_host 要在这里取
-    local account_host = config.get("account_host")
-    local account = "robot" .. conf.id
-    local token = fetch_token(account_host, account)
+    local account = client_account.new({ hosts = { config.get("account_host") } })
+    local name = "robot" .. conf.id
+    local token = account:dev_login(name)
     if not token then
         return
     end
 
-    local role = ensure_role(account_host, token, account, pick_server(account_host))
+    -- 服务器列表不需要登录。没有角色时在推荐服建角；接口不可用时回退示例服 s1
+    local role = account:ensure_role(token, name, account:pick_recommended_server() or "s1")
     if not role then
         return
     end
 
-    local gates = fetch_gates(account_host)
-    if not gates then
+    -- 网关地址来自 account 的 /gates，不写死在配置里。正式客户端走的就是这条路径：
+    -- 先查列表再直连其中一台，数据路径上没有代理。列表里只会有真的在线的网关
+    -- （网关键挂在节点租约上），所以也不用自己判断某个端口通不通
+    local gates = account:gates()
+    if not gates or not gates[1] then
+        log.error("no gate is online", "gates", gates)
         return
     end
 
