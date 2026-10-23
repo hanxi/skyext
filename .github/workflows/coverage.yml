@@ -133,28 +133,28 @@ jobs:
         ./bin/skyext cov summary coverage/c_coverage.info >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload coverage artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-report
         path: coverage/html/
         retention-days: 30
 
     - name: Upload lcov
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-lcov
         path: coverage/lua_coverage_clean.info
         retention-days: 30
 
     - name: Upload C coverage report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-c-report
         path: coverage/html-c/
         retention-days: 30
 
     - name: Upload C lcov
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-c-lcov
         path: coverage/c_coverage.info
@@ -264,14 +264,14 @@ jobs:
 
     - name: Download coverage report
       if: steps.pages.outputs.enabled == 'true'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: coverage-report
         path: _site/coverage
 
     - name: Download C coverage report
       if: steps.pages.outputs.enabled == 'true'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: coverage-c-report
         path: _site/coverage-c
@@ -289,15 +289,15 @@ jobs:
 
     - name: Setup Pages
       if: steps.pages.outputs.enabled == 'true'
-      uses: actions/configure-pages@v5
+      uses: actions/configure-pages@v6
 
     - name: Upload to Pages
       if: steps.pages.outputs.enabled == 'true'
-      uses: actions/upload-pages-artifact@v3
+      uses: actions/upload-pages-artifact@v5
       with:
         path: _site
 
     - name: Deploy
       if: steps.pages.outputs.enabled == 'true'
       id: deploy
-      uses: actions/deploy-pages@v4
+      uses: actions/deploy-pages@v5

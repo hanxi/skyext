@@ -192,7 +192,7 @@ jobs:
         }
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: skyext-${{ matrix.platform }}
         path: release-assets/skyext-${{ matrix.platform }}.zip
@@ -242,7 +242,7 @@ jobs:
           unzip -Z1 release-assets/skyext-freebsd.zip | grep -Fx 'bin/skyext.bat'
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: skyext-freebsd
         path: release-assets/skyext-freebsd.zip
@@ -258,7 +258,7 @@ jobs:
       contents: write
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         pattern: skyext-*
         path: release-assets
