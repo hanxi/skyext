@@ -108,13 +108,11 @@ return {
     reload_sproto = false,
     reload_orm_schema = false,
 
-    update_files = {    -- 相对于工程根目录，引擎文件和游戏文件写在同一套路径下
-        "service/gm.lua",
-        "example/lualib/errcode.lua",
+    update_files = {    -- 修好的源码，相对于工程根目录；引擎文件和游戏文件写在同一套路径下
+        "example/nodes/role/modules/bag/init.lua",
     },
-    code_files = {
+    code_files = {      -- 给正在运行的服务打的补丁，只能是热更包目录下的文件
         "code1.lua",
-        "code2.lua",
     },
 }
 ```
@@ -151,6 +149,15 @@ end
 ---
 
 ## 5. 操作 SOP
+
+### 示例热更包
+
+`example/hotfix/20260120-patch1` 是可以直接跑的示例，只用专门为它准备的文件，产品代码改动不会影响它的 checksum：
+
+- `update_files` 是示例配表 `example/res/lazy/hotfix_demo.lua`（懒加载目录，只有被访问时才加载），配合 `reload_res = true`；
+- `code1.lua` 的 `targets` 是 `.entity_agent:role:*`，在每个 role 实体 agent 里读 `res.hotfix_demo.version` 并返回。
+
+起一个 role 节点（GM 需配 `gm_auth_token`）后按 5.3、5.4 执行，`inject_code` 的每条结果是当前 `version`。把配表里的 `version` 改掉、`hotfix refresh` 后再执行一次，结果随之变化。
 
 ### 5.1 开发机准备热更包
 

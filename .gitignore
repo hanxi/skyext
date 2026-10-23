@@ -17,6 +17,8 @@ example/luaclib/
 example/cservice/
 
 logs/
+# 节点执行热更后在工程根目录追加的历史记录
+/hotfix_history.jsonl
 dist/
 /release-assets/
 
