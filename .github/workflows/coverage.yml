@@ -160,6 +160,62 @@ jobs:
         path: coverage/c_coverage.info
         retention-days: 30
 
+    - name: Install Bun (TypeScript SDK)
+      run: |
+        curl -fsSL https://bun.sh/install | bash
+        echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+    - name: TypeScript SDK typecheck & unit tests
+      run: |
+        cd sdk/ts
+        bun install --frozen-lockfile
+        bunx tsc --noEmit
+        bun test
+
+    - name: Start example servers for TypeScript SDK E2E
+      env:
+        MONGO_HOST: mongo
+        ETCD_ENDPOINTS: http://etcd:2379
+      run: |
+        nohup ./bin/skyext serve account1 > /tmp/account1.out 2>&1 &
+        echo $! > /tmp/account1.pid
+        nohup ./bin/skyext serve role1 > /tmp/role1.out 2>&1 &
+        echo $! > /tmp/role1.pid
+        account_ready=false
+        for i in $(seq 1 60); do
+          if curl -fsS http://127.0.0.1:8080/servers > /dev/null 2>&1; then
+            account_ready=true
+            break
+          fi
+          sleep 1
+        done
+        gate_ready=false
+        for i in $(seq 1 60); do
+          if (echo > /dev/tcp/127.0.0.1/7013) 2>/dev/null; then
+            gate_ready=true
+            break
+          fi
+          sleep 1
+        done
+        if [ "$account_ready" != true ] || [ "$gate_ready" != true ]; then
+          echo 'example servers failed to start' >&2
+          tail -n 100 /tmp/account1.out /tmp/role1.out >&2 || true
+          exit 1
+        fi
+
+    - name: TypeScript SDK E2E (real servers)
+      env:
+        SKYEXT_E2E: '1'
+      run: |
+        cd sdk/ts
+        bun test test/e2e
+
+    - name: Stop example servers
+      if: always()
+      run: |
+        kill $(cat /tmp/account1.pid /tmp/role1.pid) 2>/dev/null || true
+        pkill -f 'skyext.lua serve' 2>/dev/null || true
+
   deploy-pages:
     name: Deploy Pages (when configured)
     needs: test

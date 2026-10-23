@@ -38,6 +38,7 @@ local function package_framework(ctx, args)
             or name == ".aone_copilot"
             or name == ".vscode"
             or name == ".DS_Store"
+            or name == "node_modules" -- sdk/ts 的依赖树：体积大、.bin 里有跨目录符号链接
             or name:match("^%._")
             or name:match("^%.env")
             or name:match("^%.skytest_.*%.conf%.lua$")
@@ -124,6 +125,11 @@ local function package_game(ctx, args)
         for _, item in
             ipairs(fs.walk(root, function(relative)
                 local first = relative:match("^[^/]+")
+                local name = relative:match("[^/]+$")
+                if name == "node_modules" then
+                    -- sdk/ts 的依赖树：部署包不需要，且 .bin 里有跨目录符号链接
+                    return false
+                end
                 return first ~= "3rd"
                     and first ~= "example"
                     and first ~= "skynet"
@@ -209,6 +215,11 @@ local function package_game(ctx, args)
         }) do
             add_tree(fs.join(root, directory), directory, function(relative)
                 local path = directory .. "/" .. relative
+                if relative:match("[^/]+$") == "node_modules" then
+                    -- 配套工具仓库的依赖树：不进部署包，且 .bin 里有跨目录符号链接，
+                    -- fs.walk 遇到会直接断言失败
+                    return false
+                end
                 if path:match("%.test%.lua$") or path:match("^example/etc/%.skytest_.*%.conf%.lua$") then
                     return false
                 end
