@@ -1,5 +1,8 @@
 local lcov = require "scripts.lib.lcov"
 
+-- 子进程被信号杀死时（退出码 128+N）翻译常见信号，方便直接看出是段错误还是 OOM
+local SIGNAL_NAMES = { [6] = "SIGABRT", [9] = "SIGKILL", [11] = "SIGSEGV" }
+
 local function usage()
     print([[用法: ./bin/skyext test [options] [file|directory...]
   --match TEXT     按路径子串过滤测试文件
@@ -369,6 +372,15 @@ return function(ctx, _, args)
             else
                 if timed_out then
                     print(string.format("TIMEOUT after %g s", options.timeout))
+                end
+                -- tool_process 对被信号杀死的子进程返回 128+信号值。硬崩溃必须
+                -- 留下痕迹：否则 CI 里只有半行截断日志，连信号类型都无从得知。
+                if code > 128 then
+                    local sig = code - 128
+                    local name = SIGNAL_NAMES[sig]
+                    print(string.format("CRASHED with signal %d%s", sig, name and " (" .. name .. ")" or ""))
+                elseif code > 2 then
+                    print(string.format("EXIT with code %d", code))
                 end
                 if code == 2 then
                     errors = errors + 1
