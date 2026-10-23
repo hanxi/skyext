@@ -281,6 +281,51 @@ t.describe("res 重载", function()
         t.expect(names_loaded(h)).to.equal({ skill = true })
     end)
 
+    t.it("filepaths 是逗号分隔的字符串时拆开处理（GET 查询参数只能传字符串）", function()
+        local h = harness({
+            files = files({ ["item.lua"] = "return {1}", ["skill.lua"] = "return {2}", ["hero.lua"] = "return {3}" }),
+        })
+        h.loads = {}
+        h.files.res["item.lua"] = "return {11}"
+        h.files.res["skill.lua"] = "return {22}"
+        h.files.res["hero.lua"] = "return {33}"
+        local ok, msg = h.reload({ filepaths = "res" .. SEP .. "item.lua, res" .. SEP .. "skill.lua" })
+        t.expect(ok).to.equal(true)
+        t.expect(msg).to.contain("success")
+        t.expect(names_loaded(h)).to.equal({ item = true, skill = true })
+    end)
+
+    t.it("filepaths 里有非 .lua 路径时报错，不做任何重载", function()
+        local h = harness({ files = files({ ["item.lua"] = "return {1}" }) })
+        h.loads = {}
+        h.files.res["item.lua"] = "return {11}"
+        local ok, msg = h.reload({ filepaths = { "res" .. SEP .. "item.lua", "res" .. SEP .. "readme.txt" } })
+        t.expect(ok).to.equal(false)
+        t.expect(msg).to.contain("readme.txt")
+        t.expect(h.loads).to.have_length(0)
+        t.expect(h.published).to.have_length(0)
+    end)
+
+    t.it("filepaths 为空或类型不对时报错，不退化成全量重载", function()
+        local h = harness({ files = files({ ["item.lua"] = "return {1}" }) })
+        h.loads = {}
+        h.files.res["item.lua"] = "return {11}"
+        for _, bad in ipairs({ "", {}, 42 }) do
+            local ok, msg = h.reload({ filepaths = bad })
+            t.expect(ok).to.equal(false)
+            t.expect(msg).to.contain("non-empty list")
+        end
+        t.expect(h.loads).to.have_length(0)
+    end)
+
+    t.it("指定的文件不存在时返回失败而不是抛错", function()
+        local h = harness({ files = files({ ["item.lua"] = "return {1}" }) })
+        local ok, msg = h.reload({ filepaths = { "res" .. SEP .. "ghost.lua" } })
+        t.expect(ok).to.equal(false)
+        t.expect(msg).to.contain("ghost.lua")
+        t.expect(h.published).to.have_length(0)
+    end)
+
     t.it("重载后再改一次还能继续重载：哈希跟着更新", function()
         local h = harness({ files = files({ ["item.lua"] = "return {1}" }) })
         h.files.res["item.lua"] = "return {11}"

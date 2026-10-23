@@ -260,7 +260,7 @@ curl -X POST http://localhost:9092/gm/execute \
 
 | 命令 | 注册于 | 参数 | 说明 |
 |------|--------|------|------|
-| `reload_res` | `lualib/skyext/res.lua`（res 服务） | `filepaths` | 重载策划配置表：只换内容真的变了的文件，再广播 `res_reload` 事件；不传 `filepaths` 则扫 `res_path`、`res_lazy_path` 下全部文件。`filepaths` 是数组，只能用 POST JSON 传 |
+| `reload_res` | `lualib/skyext/res.lua`（res 服务） | `filepaths` | 重载策划配置表：只换内容真的变了的文件，再广播 `res_reload` 事件；不传 `filepaths` 则扫 `res_path`、`res_lazy_path` 下全部文件。`filepaths` 用 POST JSON 传数组，或用 GET 传逗号分隔的字符串；路径必须以 `.lua` 结尾，有一个不合法或文件不存在就整体失败、不做任何重载 |
 | `reload_sproto_schema` | `service/sproto_loader.lua` | — | 重新加载已载入的全部 sproto schema |
 | `reload_orm_schema` | `lualib/skyext/dbmgr.lua`（dbmgr 服务） | — | 重新 require `game.orm.schema` 并就地替换，见[热更新](hotfix.md#orm-schema-热更) |
 

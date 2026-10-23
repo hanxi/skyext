@@ -79,7 +79,9 @@ local function res_service()
         local name2info = {}
         for name, filepath in pairs(res_files) do
             local content = util_io.readfile(filepath)
-            assert(content, "invalid path")
+            if not content then
+                return false, "res file not found: " .. filepath
+            end
             local hash = md5.sumhexa(content)
             -- 有差异或者新增才加载
             if hash_map[name] ~= hash then
@@ -107,13 +109,28 @@ local function res_service()
     local GM_CMD = {}
     GM_CMD.reload_res = {
         desc = "重载 res",
-        params = { filepaths = "文件路径列表" },
+        params = { filepaths = "文件路径列表：JSON 数组，或逗号分隔的字符串（GET 查询参数）" },
         handler = function(params)
             local filepaths = params.filepaths
             local res_files = {}
-            if filepaths then
+            if filepaths ~= nil then
+                -- GET 查询参数只能是字符串，按逗号拆开；不拆的话 ipairs 一个都遍历不到，
+                -- 命令照样返回成功，实际什么都没重载
+                if type(filepaths) == "string" then
+                    local list = {}
+                    for filepath in filepaths:gmatch("[^,]+") do
+                        list[#list + 1] = filepath:match("^%s*(.-)%s*$")
+                    end
+                    filepaths = list
+                end
+                if type(filepaths) ~= "table" or #filepaths == 0 then
+                    return false, "filepaths must be a non-empty list of .lua paths"
+                end
                 for _, filepath in ipairs(filepaths) do
-                    local name = filepath:match("([^/\\]+)%.lua$")
+                    local name = type(filepath) == "string" and filepath:match("([^/\\]+)%.lua$")
+                    if not name then
+                        return false, "not a .lua res file: " .. tostring(filepath)
+                    end
                     res_files[name] = filepath
                 end
             else
