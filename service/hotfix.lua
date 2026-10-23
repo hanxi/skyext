@@ -337,6 +337,10 @@ end
 
 local ok, result = pcall(patcher.run)
 if ok then
+    -- debug RUN 只带回 print 的输出、丢掉返回值，把返回值打印出来才能出现在热更结果里
+    if result ~= nil then
+        print(tostring(result))
+    end
     return result
 else
     error("hotfix patcher.run failed: " .. tostring(result))
@@ -348,11 +352,12 @@ local INJECT_TIMEOUT = tonumber(skynet.getenv("hotfix_inject_timeout")) or 30
 local function call_with_timeout(addr, protocol, cmd, timeout_sec, ...)
     local co = coroutine.running()
     local done = false
-    local call_ok, call_result
+    local call_ret
 
     local args = table.pack(...)
     skynet.fork(function()
-        call_ok, call_result = pcall(skynet.call, addr, protocol, cmd, table.unpack(args, 1, args.n))
+        -- 保留全部返回值：debug RUN 回的是 (ok, output) 两个值，只取第一个就分不出补丁有没有报错
+        call_ret = table.pack(pcall(skynet.call, addr, protocol, cmd, table.unpack(args, 1, args.n)))
         done = true
         skynet.wakeup(co)
     end)
@@ -366,14 +371,14 @@ local function call_with_timeout(addr, protocol, cmd, timeout_sec, ...)
                 while not done do
                     skynet.sleep(100)
                 end
-                log.warn("late call result after timeout", "addr", addr, "cmd", cmd, "ok", call_ok)
+                log.warn("late call result after timeout", "addr", addr, "cmd", cmd, "ok", call_ret[1])
             end)
             return false, string.format("inject timeout after %ds", timeout_sec)
         end
         skynet.sleep(math.min(remaining, 100))
     end
 
-    return call_ok, call_result
+    return table.unpack(call_ret, 1, call_ret.n)
 end
 
 local function inject_to_service(service_addr, hotfix_code, filename)
@@ -381,12 +386,18 @@ local function inject_to_service(service_addr, hotfix_code, filename)
 
     local inject_source = string.format(g_hotfix_code_template, hotfix_code)
 
-    local ok, result = call_with_timeout(service_addr, "debug", "RUN", INJECT_TIMEOUT, inject_source, filename)
-    if not ok then
-        return false, string.format("Failed to inject code: %s", result)
+    -- debug RUN 的回包是 (ok, output)：调用本身成功不代表补丁成功，补丁抛错时 ok 为 false、
+    -- 报错和 traceback 在 output 里。output 是补丁 print 的内容（含 run 的返回值）
+    local call_ok, run_ok, output =
+        call_with_timeout(service_addr, "debug", "RUN", INJECT_TIMEOUT, inject_source, filename)
+    if not call_ok then
+        return false, string.format("Failed to inject code: %s", run_ok)
+    end
+    if not run_ok then
+        return false, string.format("Patcher failed: %s", output)
     end
 
-    return true, result
+    return true, output
 end
 
 local function inject_code_files(code_files, hotfix_dir, fail_fast)

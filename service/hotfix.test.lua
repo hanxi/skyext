@@ -91,7 +91,11 @@ local function harness(opts)
             if h.inject_error then
                 error(h.inject_error)
             end
-            return h.inject_result or "patched"
+            -- 与 skynet debug RUN 一致：回 (ok, output)，补丁抛错时 ok 为 false、错误在 output 里
+            if h.inject_failed then
+                return false, h.inject_failed
+            end
+            return true, h.inject_output or "patched"
         end,
     }, { __index = skynet })
 
@@ -620,7 +624,7 @@ t.describe("hotfix 代码注入", function()
     t.it("注入成功时记录服务地址与返回值", function()
         with(function(h)
             h.names = { [".agent"] = 0x70 }
-            h.inject_result = "patched 3 funcs"
+            h.inject_output = "patched 3 funcs"
             h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
             h.write("pkg/p.lua", patcher({ ".agent" }))
             local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
@@ -656,6 +660,43 @@ t.describe("hotfix 代码注入", function()
             local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
             t.expect(ok).to.equal(false)
             t.expect(step_named(result, "inject_code").result[1].error).to.match("Failed to inject code")
+        end)
+    end)
+
+    t.it(
+        "补丁在目标服务里抛错时记为失败并带回报错，不能因为调用本身成功就算成功",
+        function()
+            with(function(h)
+                h.names = { [".agent"] = 0x75 }
+                h.inject_failed = "hotfix patcher.run failed: boom"
+                h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
+                h.write("pkg/p.lua", patcher({ ".agent" }))
+                local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
+                t.expect(ok).to.equal(false)
+                local entry = step_named(result, "inject_code").result[1]
+                t.expect(entry.success).to.equal(false)
+                t.expect(entry.error).to.equal("Patcher failed: hotfix patcher.run failed: boom")
+                t.expect(result.guidance).to.match("禁止直接重跑整包")
+            end)
+        end
+    )
+
+    t.it("注入模板把 run 的返回值打印出来，带回到热更结果", function()
+        with(function(h)
+            h.names = { [".agent"] = 0x76 }
+            h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
+            h.write("pkg/p.lua", patcher({ ".agent" }))
+            h.run({ hotfix_dir = "pkg", confirm = true })
+            -- 在本进程里按 skynet.inject 的方式执行模板：print 被收集成 output
+            local output = {}
+            local env = setmetatable({
+                print = function(...)
+                    output[#output + 1] = table.concat({ ... }, "\t")
+                end,
+            }, { __index = _G })
+            local chunk = assert(load(h.injects[1].source, "@inject", "t", env))
+            t.expect(chunk()).to.equal("ok")
+            t.expect(output).to.equal({ "ok" })
         end)
     end)
 

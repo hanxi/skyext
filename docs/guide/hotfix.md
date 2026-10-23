@@ -203,6 +203,8 @@ curl -X POST http://localhost:9092/gm/execute \
 
 执行后除检查外层 `code`，还须逐项检查 `results[].success`，成功时再核对 `results[].data.steps`；`code = 0` 只表示命令已被 GM 服务找到，不代表各节点的热更均成功。
 
+`inject_code` 步骤的 `result` 是每个目标服务一条：成功时 `result` 是补丁在目标服务里 `print` 的内容，`run` 有非 nil 返回值时也会被打印进来；补丁抛错时该条 `success = false`，`error` 里是 `Patcher failed:` 加报错与 traceback。
+
 ### 5.5 逐节点核对 history
 
 ```bash
