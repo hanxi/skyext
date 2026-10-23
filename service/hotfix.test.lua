@@ -62,7 +62,11 @@ local function harness(opts)
         getenv = function(name)
             return h.env[name]
         end,
+        -- 与 skynet 的 QUERY 一致：只有带前导点的本地名才查得到
         localname = function(name)
+            if name:sub(1, 1) ~= "." then
+                return nil
+            end
             return h.names and h.names[name]
         end,
         now = function()
@@ -82,13 +86,6 @@ local function harness(opts)
             end
         end,
         call = function(addr, protocol, cmd, ...)
-            if protocol == "lua" and cmd == "LIST" then
-                h.launcher_queried = true
-                if h.launcher_error then
-                    error(h.launcher_error)
-                end
-                return h.launcher_list or {}
-            end
             local src, filename = ...
             h.injects[#h.injects + 1] = { addr = addr, cmd = cmd, filename = filename, source = src }
             if h.inject_error then
@@ -132,6 +129,16 @@ local function harness(opts)
                 end
                 return h.gm_results[cmd] or {}
             end,
+        },
+        ["skyext.entity.types"] = {
+            get = function(type_name)
+                local cfg = h.entity_types and h.entity_types[type_name]
+                if not cfg then
+                    error("unknown entity type: " .. tostring(type_name))
+                end
+                return cfg
+            end,
+            format_agent_service_name = require("skyext.entity.types").format_agent_service_name,
         },
         ["skyext.cmd_api"] = {
             dispatch = function(cmds)
@@ -485,11 +492,11 @@ t.describe("hotfix patcher 解析", function()
 end)
 
 t.describe("hotfix 目标服务定位", function()
-    t.it("本地名字找不到时自动去掉前导点再试一次", function()
+    t.it("省略前导点的本地名补上点再查", function()
         with(function(h)
-            h.names = { agent = 0x20 }
+            h.names = { [".agent"] = 0x20 }
             h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
-            h.write("pkg/p.lua", patcher({ ".agent" }))
+            h.write("pkg/p.lua", patcher({ "agent" }))
             local ok = h.run({ hotfix_dir = "pkg", confirm = true })
             t.expect(ok).to.equal(true)
             t.expect(h.injects[1].addr).to.equal(0x20)
@@ -518,68 +525,93 @@ t.describe("hotfix 目标服务定位", function()
             local results = step_named(result, "inject_code").result
             t.expect(results[1].error).to.equal("Wildcard (*) only allowed at end of service name")
             t.expect(results[2].error).to.equal("Wildcard (*) only allowed at end of service name")
-            -- 不该因为解析不了就去问 launcher
-            t.expect(h.launcher_queried).to.be_falsy()
+            t.expect(h.injects).to.have_length(0)
         end)
     end)
 
-    t.it("通配符展开 launcher 列表，跳过黑名单服务", function()
+    t.it("通配符展开成该实体类型配置的全部 agent", function()
         with(function(h)
-            h.launcher_list = { [".lobby"] = 0x31, [".launcher"] = 0x32, [".logger"] = 0x33 }
+            h.entity_types = { role = { agent_count = 3 } }
+            h.names = {
+                [".entity_agent:role:1"] = 0x31,
+                [".entity_agent:role:2"] = 0x32,
+                [".entity_agent:role:3"] = 0x33,
+                -- 别的类型、超出 agent_count 的同前缀名字都不该被打上补丁
+                [".entity_agent:rank:1"] = 0x41,
+                [".entity_agent:role:4"] = 0x34,
+            }
             h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
-            h.write("pkg/p.lua", patcher({ ".l*" }))
+            h.write("pkg/p.lua", patcher({ ".entity_agent:role:*" }))
             local ok = h.run({ hotfix_dir = "pkg", confirm = true })
             t.expect(ok).to.equal(true)
-            -- 把补丁打进 .launcher/.logger 会让整个节点失控
-            t.expect(h.injects).to.have_length(1)
+            t.expect(h.injects).to.have_length(3)
             t.expect(h.injects[1].addr).to.equal(0x31)
+            t.expect(h.injects[2].addr).to.equal(0x32)
+            t.expect(h.injects[3].addr).to.equal(0x33)
         end)
     end)
 
-    t.it("同一地址挂多个名字时只注入一次", function()
+    t.it("实体类型没配 agent_count 时按 1 个展开，与 entity_agentmgr 的缺省一致", function()
         with(function(h)
-            h.launcher_list = { ["agent1"] = 0x41, ["agent1alias"] = 0x41, ["agent2"] = 0x42 }
+            h.entity_types = { rank = {} }
+            h.names = { [".entity_agent:rank:1"] = 0x41, [".entity_agent:rank:2"] = 0x42 }
             h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
-            h.write("pkg/p.lua", patcher({ "agent*" }))
-            local ok = h.run({ hotfix_dir = "pkg", confirm = true })
-            t.expect(ok).to.equal(true)
-            -- 重复注入同一个服务会把补丁叠加两次
-            t.expect(h.injects).to.have_length(2)
+            h.write("pkg/p.lua", patcher({ ".entity_agent:rank:*" }))
+            t.expect(h.run({ hotfix_dir = "pkg", confirm = true })).to.equal(true)
+            t.expect(h.injects).to.have_length(1)
+            t.expect(h.injects[1].addr).to.equal(0x41)
         end)
     end)
 
-    t.it("通配符一个都没匹配上时算服务找不到", function()
+    t.it("缺了任何一个 agent 就整条失败，一个都不注入", function()
         with(function(h)
-            h.launcher_list = { ["other"] = 0x51 }
+            h.entity_types = { role = { agent_count = 3 } }
+            h.names = { [".entity_agent:role:1"] = 0x31, [".entity_agent:role:3"] = 0x33 }
             h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
-            h.write("pkg/p.lua", patcher({ "agent*" }))
+            h.write("pkg/p.lua", patcher({ ".entity_agent:role:*" }))
+            local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
+            t.expect(ok).to.equal(false)
+            -- 只打一部分 agent 会让同类型实体跑着两套代码，比不打更糟
+            t.expect(h.injects).to.have_length(0)
+            local entry = step_named(result, "inject_code").result[1]
+            t.expect(entry.error).to.equal("Entity agents not found: .entity_agent:role:2")
+        end)
+    end)
+
+    t.it("本节点不承载该类型（一个 agent 都没有）时算服务找不到", function()
+        with(function(h)
+            h.entity_types = { role = { agent_count = 2 } }
+            h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
+            h.write("pkg/p.lua", patcher({ ".entity_agent:role:*" }))
             local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
             t.expect(ok).to.equal(false)
             t.expect(step_named(result, "inject_code").result[1].error).to.equal("Service not found")
         end)
     end)
 
-    t.it("launcher 查询失败时带上原因", function()
+    t.it("实体 agent 以外的通配一律拒绝", function()
         with(function(h)
-            h.launcher_error = "launcher dead"
-            h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
-            h.write("pkg/p.lua", patcher({ "agent*" }))
+            h.names = { [".agent1"] = 0x51, [".launcher"] = 0x52 }
+            h.write("pkg/hotfix.conf.lua", conf("fail_fast = false, code_files = { 'p.lua' },"))
+            h.write("pkg/p.lua", patcher({ ".agent*", ".entity_agent:*", ".l*" }))
             local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
             t.expect(ok).to.equal(false)
-            t.expect(step_named(result, "inject_code").result[1].error).to.match("Failed to query .launcher LIST")
+            local results = step_named(result, "inject_code").result
+            for i = 1, 3 do
+                t.expect(results[i].error).to.equal("Wildcard (*) only supported as .entity_agent:<type>:*")
+            end
+            t.expect(h.injects).to.have_length(0)
         end)
     end)
 
-    t.it("服务名里的正则元字符按字面量匹配", function()
+    t.it("未知实体类型的通配报类型错误", function()
         with(function(h)
-            -- 前缀没转义的话 "a.b" 里的点会匹配上 "axb"，补丁会打到不相干的服务上
-            h.launcher_list = { ["a.b1"] = 0x61, ["axb1"] = 0x62 }
+            h.entity_types = { role = { agent_count = 1 } }
             h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
-            h.write("pkg/p.lua", patcher({ "a.b*" }))
-            local ok = h.run({ hotfix_dir = "pkg", confirm = true })
-            t.expect(ok).to.equal(true)
-            t.expect(h.injects).to.have_length(1)
-            t.expect(h.injects[1].addr).to.equal(0x61)
+            h.write("pkg/p.lua", patcher({ ".entity_agent:guild:*" }))
+            local ok, result = h.run({ hotfix_dir = "pkg", confirm = true })
+            t.expect(ok).to.equal(false)
+            t.expect(step_named(result, "inject_code").result[1].error).to.equal("Unknown entity type: guild")
         end)
     end)
 end)
@@ -950,6 +982,20 @@ t.describe("hotfix dry_run", function()
             t.expect(plan.patchers[1].file).to.equal("p.lua")
             t.expect(plan.patchers[1].targets[1].found).to.equal(true)
             t.expect(plan.patchers[1].targets[1].address).to.equal("00000091")
+        end)
+    end)
+
+    t.it("通配目标展开成每个 agent 的地址", function()
+        with(function(h)
+            h.entity_types = { role = { agent_count = 2 } }
+            h.names = { [".entity_agent:role:1"] = 0x31, [".entity_agent:role:2"] = 0x32 }
+            h.write("pkg/hotfix.conf.lua", conf("code_files = { 'p.lua' },"))
+            h.write("pkg/p.lua", patcher({ ".entity_agent:role:*" }))
+            local _, plan = h.run({ hotfix_dir = "pkg", mode = "dry_run" })
+            local targets = plan.patchers[1].targets
+            t.expect(targets).to.have_length(2)
+            t.expect(targets[1].address).to.equal("00000031")
+            t.expect(targets[2].address).to.equal("00000032")
         end)
     end)
 

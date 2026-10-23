@@ -6,6 +6,7 @@ local util_path = require "skyext.util.path"
 local hotfix_checksum = require "skyext.hotfix_checksum"
 local gm_api = require "skyext.gm_api"
 local cmd_api = require "skyext.cmd_api"
+local entity_types = require "skyext.entity.types"
 
 local g_hotfix_history = {}
 local g_hotfix_lock = nil
@@ -96,30 +97,22 @@ local function get_root_dir()
     return skynet.getenv("root")
 end
 
-local SERVICE_BLACKLIST = {
-    [".launcher"] = true,
-    [".service_mgr"] = true,
-    [".gm"] = true,
-    [".hotfix"] = true,
-    [".logger"] = true,
-}
-
+-- skynet 的 QUERY 只认带前导点的本地名；省略了点的写法（"agent"）补上再查
 local function find_service_address(service_name)
+    if service_name:sub(1, 1) ~= "." then
+        service_name = "." .. service_name
+    end
     local addr = skynet.localname(service_name)
     if addr then
         return { addr }
     end
-
-    if service_name:sub(1, 1) == "." then
-        addr = skynet.localname(service_name:sub(2))
-        if addr then
-            return { addr }
-        end
-    end
-
     return nil
 end
 
+-- 通配符只用于实体 agent：`.entity_agent:<类型>:*` 按该类型配置的 agent_count
+-- 展开成 :1 … :N。skynet 只能按名字查地址、没有枚举注册名的接口（.launcher
+-- 的 LIST 返回的是 {地址 = 启动命令}，里面没有注册名），所以做不了任意前缀匹配。
+-- 有任何一个 agent 查不到就整条失败，不能只给一部分 agent 打上补丁
 local function find_service_addresses(service_name)
     if not service_name:find("%*") then
         return find_service_address(service_name)
@@ -129,28 +122,34 @@ local function find_service_addresses(service_name)
         return nil, "Wildcard (*) only allowed at end of service name"
     end
 
-    local prefix = service_name:sub(1, -2)
-    local escaped = prefix:gsub("([%(%)%.%%%+%-%?%[%]%^%$])", "%%%1")
-    local pattern = "^" .. escaped
+    local type_name = service_name:match("^%.entity_agent:([%w_]+):%*$")
+    if not type_name then
+        return nil, "Wildcard (*) only supported as .entity_agent:<type>:*"
+    end
 
-    local ok, service_list = pcall(skynet.call, ".launcher", "lua", "LIST")
+    local ok, type_config = pcall(entity_types.get, type_name)
     if not ok then
-        return nil, "Failed to query .launcher LIST: " .. tostring(service_list)
+        return nil, "Unknown entity type: " .. type_name
     end
 
     local addrs = {}
-    local seen = {}
-    for sname, saddr in pairs(service_list) do
-        if sname:match(pattern) and not SERVICE_BLACKLIST[sname] and not seen[saddr] then
-            seen[saddr] = true
-            table.insert(addrs, saddr)
+    local missing = {}
+    for index = 1, type_config.agent_count or 1 do
+        local name = entity_types.format_agent_service_name(type_name, index)
+        local addr = skynet.localname(name)
+        if addr then
+            addrs[#addrs + 1] = addr
+        else
+            missing[#missing + 1] = name
         end
     end
 
     if #addrs == 0 then
         return nil
     end
-
+    if #missing > 0 then
+        return nil, "Entity agents not found: " .. table.concat(missing, ", ")
+    end
     return addrs
 end
 

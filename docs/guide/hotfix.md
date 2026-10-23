@@ -60,7 +60,7 @@ return {
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `targets` | `string[]` | 是 | 目标服务名数组；当前应使用精确注册名（如 `.entity_agent:role:1`），不要依赖尾通配 |
+| `targets` | `string[]` | 是 | 目标服务名数组：精确注册名（如 `.entity_agent:role:1`），或某类实体的全部 agent（`.entity_agent:role:*`） |
 | `run` | `function` | 是 | 注入函数，在每个目标服务进程内执行 |
 
 ### 顶层代码约束
@@ -75,11 +75,14 @@ Patcher 文件的**顶层代码**在沙箱中解析，仅允许：
 
 `run` 函数不受此限制——它在目标服务进程中通过注入模板执行，拥有完整的运行时环境。
 
-### targets 解析与当前限制
+### targets 解析
 
 - 精确名（如 `".entity_agent:role:1"`）通过 `skynet.localname` 查找，只能命中当前节点已注册的服务；多节点需分别执行 hotfix 命令。
-- 实体 agent 的注册名由 `skyext.entity.types.format_agent_service_name` 生成，形如 `.entity_agent:<类型>:<序号>`，每个 agent 都要单独列进 `targets`。
-- 尾通配（`".entity_agent:role:*"`）依赖 `.launcher` 的 `LIST`，当前实现把返回表的 key 当服务名用，**不可靠，不要用于实际热更**。
+- 实体 agent 的注册名形如 `.entity_agent:<类型>:<序号>`（`skyext.entity.types.format_agent_service_name`）。写成 `.entity_agent:<类型>:*` 时，按该类型在 `entity_types` 里配置的 `agent_count`（缺省 1）展开成 `:1` … `:N`：
+  - 有任何一个 agent 在本节点查不到，整条目标失败，**一个都不注入**——同类型实体跑两套代码比不打补丁更糟；
+  - 一个都查不到（本节点不承载该类型）记为 `Service not found`；
+  - 类型未配置报 `Unknown entity type`。
+- 通配只支持上面这一种形式，其他写法（`.agent*`、`.entity_agent:*` 等）直接拒绝：skynet 只能按名字查地址，没有枚举注册名的接口，做不了任意前缀匹配。
 - 精确名可以指向 `.gm`、`.hotfix` 等系统服务，但对它们注入代码需额外评估风险。
 
 ### 执行顺序
