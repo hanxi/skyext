@@ -173,10 +173,19 @@ jobs:
         bun test
 
     - name: Start example servers for TypeScript SDK E2E
-      env:
-        MONGO_HOST: mongo
-        ETCD_ENDPOINTS: http://etcd:2379
       run: |
+        # 示例配置写死 127.0.0.1；容器 job 里 mongo/etcd 服务容器只能按服务名访问
+        sed -i -e 's/^\( *\)host = "127.0.0.1",/\1host = "mongo",/' \
+               -e 's|"http://127.0.0.1:2379"|"http://etcd:2379"|' \
+               -e '/"http:\/\/127.0.0.1:237[78]",/d' \
+               example/etc/nodes/common.app.lua
+        # 三条断言守住上面的 sed：示例配置改了导致 sed 落空时，在这里立刻失败，
+        # 而不是等下面的就绪探测超时后再猜原因
+        test "$(grep -c 'host = "mongo",' example/etc/nodes/common.app.lua)" = 3
+        grep -q '"http://etcd:2379",' example/etc/nodes/common.app.lua
+        grep -q 'metrics_http_host = "127.0.0.1"' example/etc/nodes/common.app.lua
+        # 文件日志桶启动即 assert(io.open("logs/*.log"))，全新检出没有 logs/
+        mkdir -p logs
         nohup ./bin/skyext serve account1 > /tmp/account1.out 2>&1 &
         echo $! > /tmp/account1.pid
         nohup ./bin/skyext serve role1 > /tmp/role1.out 2>&1 &
@@ -213,8 +222,10 @@ jobs:
     - name: Stop example servers
       if: always()
       run: |
+        # pid 文件里是 bin/skyext 包装进程；skynet 是它的子进程，kill 包装不会带走子进程
         kill $(cat /tmp/account1.pid /tmp/role1.pid) 2>/dev/null || true
         pkill -f 'skyext.lua serve' 2>/dev/null || true
+        pkill -f 'bin/skynet ' 2>/dev/null || true
 
   deploy-pages:
     name: Deploy Pages (when configured)
