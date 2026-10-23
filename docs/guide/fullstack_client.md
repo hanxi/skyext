@@ -45,9 +45,7 @@ go build -o gamepass .
 | `JWT_ACCESS_SECRET` | `login_jwt_secret` | `your_access_secret` | HS256 签名密钥，两边必须一致 |
 | `JWT_ISSUER` | `login_jwt_issuer` | `skyext` | 不配置则 JWT 不带 `iss`，skyext 会拒绝 |
 | `JWT_AUDIENCE` | `login_jwt_audience` | `skyext-game` | 同上，对应 `aud` |
-| `CALLBACK_WHITELIST` | — | `^http://localhost:[0-9]+/.*$` | 回调地址白名单，逗号分隔的正则列表，必须能匹配客户端页面地址 |
-
-`.env.example` 里 `CALLBACK_WHITELIST` 的默认值要求回调路径是 `/callback`，匹配不上 phaser-game 的回调地址 `http://localhost:3000/`，**必须改成上表那样的值**，否则登录第一步就被拒。
+| `CALLBACK_WHITELIST` | — | `.env.example` 的默认值 | 回调地址白名单，逗号分隔的正则列表，必须能匹配客户端页面地址；默认值已包含 phaser-game 的回调 `http://localhost:3000/` |
 
 本地联调用**本地账号**（local provider）即可，不需要 GitHub OAuth：
 
@@ -142,7 +140,7 @@ client.close();
 | 登录返回 `code=103`（PROTO_CHECKSUM） | `sproto.spb` 没同步，重做第 3 步的 `cp` + build |
 | 登录返回 `code=24`（RESUME_UNAVAILABLE） | 续接不了（重放缓冲溢出/计数越界），SDK 会自动清凭据走完整登录，无需处理；频繁出现才需要查服务端会话配置 |
 | gamepass 启动即退出，日志有 `dial tcp 127.0.0.1:3181 ... refused` | `OPENID_CONNECT_KEY` 没留空，启动时在连 OIDC discovery 地址 |
-| gamepass 返回 `Provided client_callback_url is not allowed`（走 `/auth/local` 入口）或 `Provided callback_url is not allowed`（直接 POST `/auth/local/login`、`/auth/local/register`） | `CALLBACK_WHITELIST` 正则没匹配上客户端页面地址（phaser-game 的回调是 `http://localhost:3000/`） |
+| gamepass 返回 `Provided callback_url is not allowed` | `CALLBACK_WHITELIST` 正则没匹配上客户端页面地址（phaser-game 的回调是 `http://localhost:3000/`） |
 | skyext 侧日志 `invalid issuer` / `invalid audience` | gamepass 的 `JWT_ISSUER`/`JWT_AUDIENCE` 与 `login_jwt_issuer`/`login_jwt_audience` 不一致（或没配） |
 | 客户端连 `ws_url` 收到乱码或直接断开 | 连错端口了：`ws_port` 上是裸 WebSocket 二进制帧，`gate_port` 上是 2 字节大端长度前缀的 TCP 流，两者不能混 |
 | `/gates` 返回空 | 没有在线的游戏节点（网关键挂在节点租约上），先起 role1/role2 |
