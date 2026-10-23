@@ -173,6 +173,9 @@ jobs:
         bun test
 
     - name: Start example servers for TypeScript SDK E2E
+      # 容器 job 不声明 shell 时用 sh（dash）：/dev/tcp 探测永远失败、
+      # ${var//x/y} 直接 Bad substitution。必须显式 bash
+      shell: bash
       run: |
         # 示例配置写死 127.0.0.1；容器 job 里 mongo/etcd 服务容器只能按服务名访问
         sed -i -e 's/^\( *\)host = "127.0.0.1",/\1host = "mongo",/' \
@@ -213,15 +216,17 @@ jobs:
           echo 'example servers failed to start' >&2
           tail -n 100 /tmp/account1.out /tmp/role1.out >&2 || true
           # 网页日志需要登录才能看；把关键错误发成 annotation，公开 API 即可读到。
-          # 去掉 ANSI 色码，% 直接删除（annotation 转义太繁琐，诊断信息足够）
+          # 去掉 ANSI 色码和 %（annotation 转义太繁琐，删掉足够）。
+          # shell: bash 自带 -eo pipefail：grep 无匹配退出 1 会中止脚本，|| true 兜底
           echo "::error title=readiness::account_ready=$account_ready gate_ready=$gate_ready"
           for f in /tmp/account1.out /tmp/role1.out; do
-            sed -e 's/\x1b\[[0-9;]*m//g' "$f" \
+            sed -e 's/\x1b\[[0-9;]*m//g' "$f" 2>/dev/null \
               | grep -E ' E\]| F\]|assert|traceback|bootfail' \
               | tail -n 12 \
+              | tr -d '%' \
               | while IFS= read -r line; do
-                  printf '::error title=%s::%s\n' "$(basename "$f")" "${line//%/}"
-                done
+                  printf '::error title=%s::%s\n' "$(basename "$f")" "$line"
+                done || true
           done
           exit 1
         fi
