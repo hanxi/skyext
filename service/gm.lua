@@ -252,13 +252,11 @@ local function parse_service_address(service)
             local addr = tonumber(service:sub(2), 16)
             return addr
         elseif service:sub(1, 1) == "." then
-            -- 本地命名服务，如 ".gm"
-            local addr = skynet.localname(service:sub(2))
-            return addr
+            -- 本地命名服务，如 ".gm"。skynet 的 QUERY 只认带前导点的名字，要原样传
+            return skynet.localname(service)
         else
-            -- 尝试作为服务名字查找
-            local addr = skynet.localname(service)
-            return addr
+            -- 省略了前导点的本地名，如 "gm"
+            return skynet.localname("." .. service)
         end
     end
 

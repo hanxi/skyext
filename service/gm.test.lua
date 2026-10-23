@@ -22,7 +22,7 @@ end
 
 -- token 为 nil 表示没配，走"GM 接口整体禁用"那条路
 local function harness(token)
-    local h = { calls = {}, replies = {}, logs = {} }
+    local h = { calls = {}, replies = {}, logs = {}, names = {} }
     local noop = function() end
     local function record(msg, ...)
         h.logs[#h.logs + 1] = flatten(msg, ...)
@@ -35,8 +35,12 @@ local function harness(token)
             end,
             register = noop,
             uniqueservice = noop,
-            localname = function()
-                return nil
+            -- 与 skynet 的 QUERY 一致：只有带前导点的本地名才查得到
+            localname = function(name)
+                if name:sub(1, 1) ~= "." then
+                    return nil
+                end
+                return h.names[name]
             end,
             address = function(addr)
                 return string.format(":%08x", addr)
@@ -275,5 +279,49 @@ t.describe("gm service execution outcome", function()
         t.expect(result.results[1].success).to.equal(false)
         t.expect(h.executed().result).to.equal("failed")
         t.expect(h.executed().error).to.equal("handler exploded")
+    end)
+end)
+
+t.describe("gm service target services", function()
+    local function targets(h, services)
+        h.calls = {}
+        h.CMD.execute_command(cred(TOKEN), "gc", nil, services)
+        local addrs = {}
+        for _, call in ipairs(h.calls) do
+            addrs[#addrs + 1] = call.addr
+        end
+        return addrs
+    end
+
+    t.it("resolves a dotted local name", function()
+        local h = harness(TOKEN)
+        h.names[".agent"] = SERVICE_A
+        h.register(SERVICE_A, "gc")
+        h.register(SERVICE_B, "gc")
+        t.expect(targets(h, { ".agent" })).to.equal({ SERVICE_A })
+    end)
+
+    t.it("resolves a local name given without the leading dot", function()
+        local h = harness(TOKEN)
+        h.names[".agent"] = SERVICE_A
+        h.register(SERVICE_A, "gc")
+        h.register(SERVICE_B, "gc")
+        t.expect(targets(h, { "agent" })).to.equal({ SERVICE_A })
+    end)
+
+    t.it("accepts hex address strings and raw addresses", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
+        h.register(SERVICE_B, "gc")
+        t.expect(targets(h, { string.format(":%08x", SERVICE_B) })).to.equal({ SERVICE_B })
+        t.expect(targets(h, { SERVICE_A })).to.equal({ SERVICE_A })
+    end)
+
+    t.it("reports an unknown name as not found instead of running everywhere", function()
+        local h = harness(TOKEN)
+        h.register(SERVICE_A, "gc")
+        local result = h.CMD.execute_command(cred(TOKEN), "gc", nil, { ".ghost" })
+        t.expect(h.calls[1]).to.be_nil()
+        t.expect(result.results[1].success).to.equal(false)
     end)
 end)
