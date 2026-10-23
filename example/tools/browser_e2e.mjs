@@ -6,6 +6,8 @@
 //     「规范义务4：心跳自检发现黑洞」两条真实断网路径。
 // 用法：全链已起（account1/role1/gamepass(CALLBACK_WHITELIST=^http://localhost:3000/)/phaser-game :3000）
 //       npm i playwright-core && node browser_e2e.mjs [服序号 0=s1 1=s2 2=s3，默认 s3]
+//       环境变量：CHROME_PATH（默认 /usr/bin/google-chrome-stable）、
+//       E2E_EMAIL / E2E_PASSWORD（gamepass 本地账号，默认 e2e@test.local / pass1234，需先注册）
 //       截图与控制台日志写到当前目录 browser_e2e_shots/。
 import { chromium } from 'playwright-core';
 import { mkdirSync } from 'fs';
@@ -22,7 +24,7 @@ const check = (name, ok, detail = '') => {
 const jstr = (v) => JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? String(x) : x));
 
 const browser = await chromium.launch({
-  executablePath: '/usr/bin/google-chrome-stable',
+  executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome-stable',
   headless: true,
   args: ['--no-sandbox', '--disable-dev-shm-usage'],
 });
@@ -72,8 +74,8 @@ try {
   // ===== 1. gamepass OAuth 登录（真实表单 + 回调链）=====
   await page.goto('http://localhost:3180/auth/local?callback_url=http%3A%2F%2Flocalhost%3A3000%2F');
   await page.waitForSelector('#loginForm', { timeout: 10000 });
-  await page.fill('#email', 'e2e@test.local');
-  await page.fill('#password', 'pass1234');
+  await page.fill('#email', process.env.E2E_EMAIL ?? 'e2e@test.local');
+  await page.fill('#password', process.env.E2E_PASSWORD ?? 'pass1234');
   await page.click('button[type="submit"]');
   await page.waitForURL('http://localhost:3000/**', { timeout: 15000 });
   check(

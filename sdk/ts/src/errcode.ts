@@ -1,4 +1,5 @@
-// 错误码常量，与 lualib/skyext/errcode.lua 逐项对应（那份是唯一权威，改这里前先改那里）。
+// 错误码常量，取自 lualib/skyext/errcode.lua（那份是唯一权威，改这里前先改那里）。
+// 只收客户端可能收到的码；MONGO_DUPLICATE_KEY 等服务端内部用的不收。
 // 注意：游戏业务自己的错误码（example/lualib/errcode.lua，如 TOKEN_ERROR、NAME_TAKEN）
 // 是示例项目扩展，不属于引擎 SDK 的一部分，接入方按自己项目的定义补充。
 

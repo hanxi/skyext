@@ -7,7 +7,7 @@ local function usage()
   --cov-c          收集 C 覆盖率（需 Linux/GCC 插桩构建及 lcov）
   --timeout SECS   每个文件的超时秒数（默认 120）
   --conf FILE      自定义 skynet 配置
-默认扫描 lualib/、service/、example/、sdk/、test/。]])
+默认扫描 lualib/、service/、example/、sdk/。]])
 end
 
 local function parse(args)
@@ -43,7 +43,7 @@ local function discover(ctx, options)
     local fs = ctx.fs
     local targets = options.targets
     if #targets == 0 then
-        targets = { "lualib", "service", "example", "sdk", "test" }
+        targets = { "lualib", "service", "example", "sdk" }
     end
     local found = {}
     for _, target in ipairs(targets) do
@@ -54,7 +54,7 @@ local function discover(ctx, options)
         elseif mode == "directory" then
             for _, item in
                 ipairs(fs.walk(path, function(relative)
-                    -- example/tools/ 下有配套子模块（gamepass/goscon/phaser-game），里面的
+                    -- example/tools/ 下有配套子模块（gamepass/phaser-game），里面的
                     -- node_modules、.git 等目录不属于 Lua 测试发现范围，且含跨目录符号链接
                     local name = relative:match("[^/]+$")
                     if name == "node_modules" or name:match("^%.") then

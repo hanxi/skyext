@@ -80,7 +80,7 @@ GM_CMD.list = {
 GM_CMD.stat = {
     desc = "Dump all stats",
     params = {
-        timeout = "timeout in seconds (optional)",
+        timeout = "timeout in 1/100 seconds (optional, default 300 = 3s)",
     },
     handler = function(params)
         return true, skynet.call(".launcher", "lua", "STAT", timeout(params.timeout))
@@ -90,7 +90,7 @@ GM_CMD.stat = {
 GM_CMD.mem = {
     desc = "Show memory status",
     params = {
-        timeout = "timeout in seconds (optional)",
+        timeout = "timeout in 1/100 seconds (optional, default 300 = 3s)",
     },
     handler = function(params)
         return true, skynet.call(".launcher", "lua", "MEM", timeout(params.timeout))
@@ -110,7 +110,7 @@ GM_CMD.kill = {
 GM_CMD.gc = {
     desc = "Force every lua service do garbage collect",
     params = {
-        timeout = "timeout in seconds (optional)",
+        timeout = "timeout in 1/100 seconds (optional, default 300 = 3s)",
     },
     handler = function(params)
         return true, skynet.call(".launcher", "lua", "GC", timeout(params.timeout))

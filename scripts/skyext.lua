@@ -41,7 +41,7 @@ local function usage()
   generate <proto|schema>              生成协议或 ORM schema（schema 需要 stylua）
   package game                         打包示例游戏部署包 example/skyext.zip
   package framework <platform>         打包平台框架发布包 release-assets/skyext-<platform>.zip
-  hotfix refresh <dir>                 刷新 example/ 下的热更包
+  hotfix refresh <dir>                 刷新热更包（<dir> 相对工程根目录，如 example/hotfix/xxx）
   cov <merge|check|summary|html> ...   覆盖率工具
   schema <check|accept|retired>        对比 ORM schema 与基线，拦下不兼容改动]])
 end

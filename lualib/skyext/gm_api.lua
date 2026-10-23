@@ -39,7 +39,7 @@ end
 -- @usage GM_CMD = {
 --     cmd_name = {
 --         desc = "指令描述",
---         handler = "处理器名称",
+--         handler = function(params) ... end, -- 返回 ok, result
 --         params = { param_name = "参数描述", ... },
 --     },
 --     ...
