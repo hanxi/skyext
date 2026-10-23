@@ -25,7 +25,7 @@
 
 ### ORM Schema 热更
 
-ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文件，再重载 schema，再热更代码。**ORM Schema 热更只允许新增字段，不允许删除和修改字段。** `reload_orm_schema` 为 `true` 时，`clearcache` 必须为 `true`，因为 ORM Schema 是游戏构建目录下的 Lua 文件 `example/build/lualib/game/orm/schema.lua`（模块名 `game.orm.schema`）。需在 `hotfix.conf.lua` 中手动设置 `reload_orm_schema = true`。
+ORM Schema 热更一般会伴随着代码热更，流程是先替换 schema 文件，再重载 schema，再热更代码。**只适用于加字段、删字段**；改名和改类型是不兼容改动，见 [改 ORM schema](orm_schema_change.md)。`reload_orm_schema` 为 `true` 时，`clearcache` 必须为 `true`，因为 ORM Schema 是游戏构建目录下的 Lua 文件 `example/build/lualib/game/orm/schema.lua`（模块名 `game.orm.schema`，由 dbmgr 持有）。需在 `hotfix.conf.lua` 中手动设置 `reload_orm_schema = true`。
 
 `reload_orm_schema` 是**就地重载**：dbmgr 持有的那张 schema 表、以及表里每个 schema 对象的引用都保持不变，只把字段定义换成新的，新增的类型补进来、删除的类型移除。必须保持引用不变——生成代码里 `role.new(init)` 这类闭包、以及已加载 doc 的类型判定都直接持有这些对象，换一张新表等于让老 doc 全部失效。重载结束后 `package.loaded["game.orm.schema"]` 会被还原成同一张表，所以之后 `require` 拿到的就是已生效的那份；若重新 `require` 得到的还是同一张表（例如 `clearcache` 没生效），重载会被直接拒绝而不是静默清空 schema。
 
@@ -78,7 +78,8 @@ Patcher 文件的**顶层代码**在沙箱中解析，仅允许：
 ### targets 解析与当前限制
 
 - 精确名（如 `".entity_agent:role:1"`）通过 `skynet.localname` 查找，只能命中当前节点已注册的服务；多节点需分别执行 hotfix 命令。
-- 代码预留了尾通配：查询 `.launcher` 的 `LIST` 结果，按名称前缀筛选，并排除系统服务黑名单。但 skynet 的 `LIST` 实际返回 `{[服务地址] = 启动命令}`，现有热更实现却把 key 当服务名、value 当服务地址，因此**尾通配在当前版本不可靠，不要用于实际热更**。历史 `roleagent*` 目标也不再适用，role 已迁移到 entity agent。
+- 实体 agent 的注册名由 `skyext.entity.types.format_agent_service_name` 生成，形如 `.entity_agent:<类型>:<序号>`，每个 agent 都要单独列进 `targets`。
+- 尾通配（`".entity_agent:role:*"`）依赖 `.launcher` 的 `LIST`，当前实现把返回表的 key 当服务名用，**不可靠，不要用于实际热更**。
 - 精确名可以指向 `.gm`、`.hotfix` 等系统服务，但对它们注入代码需额外评估风险。
 
 ### 执行顺序
@@ -143,8 +144,6 @@ end
 ./bin/skyext hotfix refresh example/hotfix/20260120-patch1
 # GM: {"cmd":"hotfix","hotfix_dir":"example/hotfix/20260120-patch1"}
 ```
-
-> 早期版本中 CLI 以 `example/` 为基准、服务端以仓库根为基准，两边靠 `hotfix_dir` 写法不同相互抵消，`code_files` 侥幸能对上，但 `update_files` 的同一条目会指向两个不同文件——只要 `update_files` 非空，服务端校验必失败。现已统一，带 `update_files` 的热更包可以正常发布。
 
 ---
 
@@ -216,15 +215,20 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ## 6. 失败处置手册
 
+执行失败时，响应的 `guidance` 字段给出第一个失败步骤对应的处置建议，内容即下表。
+
 | 失败步骤 | 处置建议 |
 |----------|---------|
 | `load_config` | 检查 hotfix.conf.lua 必填字段(desc/checksum/gitsha_base/gitsha_update/time)，修正后重新执行 |
-| `verify_checksum` | 先核对发布文件与预期版本，确认 `update_files` 在目标节点的落位与第 4 节的路径基准一致；确认内容正确后再执行 `./bin/skyext hotfix refresh <dir>`，不要仅通过刷新 checksum 掩盖文件差异 |
+| `verify_checksum` | 先在开发机执行 `./bin/skyext hotfix refresh <dir>` 重新生成 checksum；确认磁盘文件与热更包未被改动 |
 | `clear_cache` | GM 通道异常，检查 `.gm` 服务是否正常运行；本包尚未注入任何代码，可安全重试 |
 | `reload_res` | res 未重载，配表与代码可能不一致；排查 sharetable 后重试或回退 update_files |
 | `reload_sproto` | sproto schema 重载失败，检查 sproto 文件格式；可安全重试 |
 | `reload_orm_schema` | ORM schema 重载失败，检查 schema 定义；可安全重试 |
-| `inject_code` | **部分服务可能已打补丁**，禁止直接重跑整包；按 results 中逐服务确认状态后决定重注或回滚 |
+| `inject_code` | 部分服务可能已打补丁，禁止直接重跑整包；按 results 中逐服务确认状态后决定重注或回滚 |
+| `internal_error` | 热更执行过程中出现未预期的内部错误，请检查日志排查原因 |
+
+checksum 不过时，先核对发布文件与预期版本，确认 `update_files` 在目标节点的落位与第 4 节的路径基准一致，内容正确后再 refresh——不要用刷新 checksum 掩盖文件差异。
 
 ### 关于回滚
 
@@ -264,46 +268,21 @@ token 在 `example/etc/nodes/common.app.lua` 的 `gm_auth_token` 里配置。**�
 
 ### 热更历史
 
-- 内存中保留最近 100 条记录
+- 内存中保留最近 100 条记录，`hotfix_history` 按时间倒序返回
 - 持久化到 `<root>/hotfix_history.jsonl`（JSON Lines 格式追加写）
 - 每条记录包含：`time`、`node`（节点名）、`hotfix_dir`、`steps`、`success`
-- 服务启动时从文件恢复历史
+- 服务启动时读文件末尾 32KB 恢复历史，解析不出来的行跳过
+
+### 版本基线检查
+
+节点启动参数 `build_version` 与热更包 `gitsha_base` 不一致时，不阻止执行，但会打 WARN 日志，并在响应的 `version_warning` 字段给出提示，需人工确认补丁是否适用于当前部署版本。
 
 ### 超时保护
 
-- 注入操作默认 30 秒超时（环境变量 `hotfix_inject_timeout` 可配）
+- 注入操作默认 30 秒超时（节点配置 `hotfix_inject_timeout` 可改，单位秒）
 - 超时后返回失败，但目标服务内的协程无法取消（skynet 限制），完成后仅写日志
 
 ### 锁机制
 
 - 同一时间只允许一次热更操作
 - 锁定超过 300 秒自动释放（防止超时导致的死锁）
-
----
-
-## 9. 变更日志
-
-### v3 (2026-10-14)
-
-- **Breaking**: 统一热更路径基准到工程根目录（skynet 的 `root`）。`./bin/skyext hotfix refresh` 的参数由相对 `example/` 改为相对工程根目录，与 GM `hotfix_dir` 取值一致：原 `hotfix/20260120-patch1` 现写作 `example/hotfix/20260120-patch1`。现有热更包需改写该参数并重新 `refresh`
-- 修复 `update_files` 非空时服务端 checksum 必然校验失败的问题（CLI 与服务端此前按不同基准解析同一条目）
-- CLI 不再硬编码要求热更目录位于 `example/hotfix/` 下，改为校验相对路径合法性
-- 新增 `lualib/skyext/hotfix_checksum.test.lua`，回归锁定两侧路径基准一致
-
-### v2 (2026-08-31)
-
-- **Breaking**: 注入模板不再静默吞错，load/xpcall 失败改为 `error()` 传播
-- **Breaking**: `fail_fast` 默认为 `true`（旧配置隐式为 false）。如需旧行为请显式设置 `fail_fast = false`
-- **Breaking**: `/gm/execute` 新增鉴权，未配置可用 GM 账号时接口禁用
-- **Breaking**: `hotfix` 命令执行模式需传 `confirm=true`
-- 新增 `dry_run` 预演模式
-- 新增注入超时保护（默认 30s）
-- 新增锁泄漏保护（超时自动释放）
-- 新增 `fail_fast` 配置，步骤失败可中止后续操作
-- 新增失败处置指引（`guidance` 字段）
-- 新增历史持久化到 `hotfix_history.jsonl`
-- 当时新增 targets 尾通配接口（`roleagent*`）；当前 role 已迁移，且现有 `.launcher LIST` 结果与匹配逻辑不一致，实际操作不要使用该尾通配
-- 新增 patcher 顶层沙箱（禁止顶层访问全局变量）
-- 新增 `build_version` 与 `gitsha_base` 不一致警告
-- 统一 checksum 计算模块（`lualib/skyext/hotfix_checksum.lua`）
-- 工具端配置回写增加替换次数校验和回写验证

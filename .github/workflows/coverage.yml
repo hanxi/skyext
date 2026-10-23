@@ -274,7 +274,7 @@ jobs:
 
         # Docsify doc site at /docs/
         mkdir -p _site/docs
-        rsync -a --exclude='plan/' --exclude='design/' --exclude='internal/' docs/ _site/docs/
+        rsync -a --exclude='plan/' --exclude='design/' --exclude='archive/' --exclude='internal/' docs/ _site/docs/
 
     - name: Setup Pages
       if: steps.pages.outputs.enabled == 'true'

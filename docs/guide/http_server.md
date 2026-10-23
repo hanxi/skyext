@@ -10,6 +10,8 @@ s:start({ host = "0.0.0.0", port = 8080, agent_count = 8 })
 s:register_router("account_router")
 ```
 
+实例名必须是 `[%a_][%w_]*`；同一个 Lua 虚拟机里 `new` 同一个名字拿到的是同一个实例。`start` 的 `host` 默认 `0.0.0.0`、`port` 默认 `8080`、`agent_count` 默认 8，`port` 传 `0` 时由系统分配，返回的 `{ host, port, agent_count, limits }` 里是实际监听信息。`register_router` 必须在 `start` 之后调用，返回时所有 agent 都已注册完；可以调多次，同 `method + path` 由后注册的覆盖。
+
 ## 资源上限
 
 HTTP 端口直接暴露给不受信任的客户端，默认配置要回答的问题是「单个客户端能不能让节点不可用」，而不是「吞吐能跑多高」。各项上限按下面的顺序取值：
@@ -37,7 +39,7 @@ HTTP 端口直接暴露给不受信任的客户端，默认配置要回答的问
 local stats = s:stats() -- { active = 12, rejected = 0, max_connections = 1024 }
 ```
 
-`rejected` 是累计被上限挡掉的连接数，持续增长说明该调大 `max_connections` 或排查慢请求。被打满时的拒绝日志按秒限流，不会把日志通道一起压垮。
+`rejected` 是累计被上限挡掉的连接数，持续增长说明该调大 `max_connections` 或排查慢请求。被打满时的拒绝日志按秒限流，不会把日志通道一起压垮。这两个数同时按实例名导出成指标，见[指标采集与导出](metrics.md#内置指标)。
 
 ## keep-alive 行为
 
@@ -50,10 +52,13 @@ local stats = s:stats() -- { active = 12, rejected = 0, max_connections = 1024 }
 
 路由模块是一张 `method -> path -> handler` 的表，`handler(req, res)`：
 
-- `req`：`id` / `addr` / `method` / `url` / `path` / `query` / `header` / `body`，以及 `parse_query()` 与 `read_json()`。
-- `res`：`write(status, body, header)` / `write_json(data, header)` / `write_file(path, header)`，另有可供填充的 `res.header`。
+- `req`：`id` / `addr` / `method` / `url` / `path` / `query` / `header` / `body`，以及 `parse_query()` 与 `read_json()`。`read_json()` 只在 body 是 JSON 对象或数组时返回表，空 body、坏 JSON、JSON 标量一律返回 `nil, reason`。
+- `res`：`write(status, body, header)` / `write_json(data, header)`（固定 200 + `application/json`）/ `write_file(path, header)`（文件读不到回 404），另有可供填充的 `res.header`。响应一律带上 `X-Powered-By` 与一组 `Access-Control-Allow-*`（允许任意来源、`GET, POST, OPTIONS`）。
+
+路由未命中时由 agent 兜底：method 没有任何路由回 405，path 没有 handler 回 404，`OPTIONS` 直接回 204 不进路由。
 
 handler 必须写且只写一次响应：
 
 - 一个字都不写时，agent 会补一个 500 并关闭连接（keep-alive 下客户端否则会一直等到自己超时）；
+- handler 抛错同样补 500 并关闭连接，异常信息记 ERROR 日志；
 - 写第二次会被挡掉并记 ERROR 日志，因为那会把 keep-alive 的字节流写乱，导致后续请求全部解析错位。

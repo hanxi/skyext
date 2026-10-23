@@ -1,6 +1,6 @@
 # 客户端 SDK
 
-skyext 提供两个官方客户端 SDK，都完整实现[客户端接入规范](client_protocol.md)（含五条义务），并共享同一套语义测试基线（`session.test.lua` / `session.test.ts`，12 个用例逐条对应）：
+skyext 提供两个官方客户端 SDK，都完整实现[客户端接入规范](client_protocol.md)（含五条义务），并共享同一套语义测试基线（`sdk/lua/skyext/client/session.test.lua` 11 个用例、`sdk/ts/src/session.test.ts` 12 个用例，逐条对应；TS 多的那条是「解不开码的下行包也计数」）：
 
 | SDK | 位置 | 运行环境 | 传输 | 典型用途 |
 | --- | --- | --- | --- | --- |
@@ -65,11 +65,13 @@ client.close();
 
 | 成员 | 说明 |
 | --- | --- |
-| `enterGame({ rid, server })` | 建连进游戏，只能调一次；`server` 必须是角色的出生服 |
+| `enterGame({ rid, server })` | 建连进游戏，只能调一次（再调抛错）；`server` 必须是角色的出生服 |
 | `request<T>(name, param?)` | 业务请求，无超时；未 `enterGame` 时返回 `null` |
 | `reconnect()` / `close()` | 主动续接 / 关闭（关闭后 pending 全部失败） |
 | `account` / `codec` | 内部两层的实例，可单独使用 |
 | `online` / `nonce` / `recv` | 可观测性：在线状态、续接凭据（成功后必轮换）、下行计数 |
+
+构造参数除 `accountHosts` / `spb` / `tokenProvider`（必填）与 `onPush` / `onState` 外，还有 `fetchImpl`、`transport`，以及心跳/超时调参 `session: { pingIntervalMs, pingTolerance, reconnectDelayMs, handshakeTimeoutMs }`（透传给会话层，缺省值见下）。
 
 **`AccountClient`**（`account.ts`）：`new AccountClient({ hosts, fetchImpl? })`。hosts 随机起点轮换，**只在传输失败/非 200 时换下一台**；业务错误（200 + `code ≠ 0`）是有效应答，原样返回。所有方法失败返回 `null`。token 只进 `Authorization: Bearer` 头，绝不进 URL。
 
@@ -80,9 +82,9 @@ client.close();
 | `roles(token, server?)` / `createRole(token, server, name)` / `ensureRole(token, name, server)` | `GET /roles`、`POST /create_role` |
 | `gates()` | `GET /gates`（在线网关列表） |
 
-**`SessionClient`**（`session.ts`）：不走门面时直接用它——`resolveEndpoints`（每轮重连调用，返回 `Endpoint[]`）、`codec`、`loginParam`（返回 `login.login` 请求体）三个必填项，加 `transport`（默认 `wsTransport()`）与心跳/超时调参（`pingIntervalMs=15000`、`pingTolerance=2`、`reconnectDelayMs=1000`、`handshakeTimeoutMs=5000`）。五条义务全部在这一层实现。
+**`SessionClient`**（`session.ts`）：不走门面时直接用它——`resolveEndpoints`（每轮重连调用，返回 `Endpoint[]`）、`codec`、`loginParam`（返回 `login.login` 请求体）三个必填项，加 `transport`（默认 `wsTransport()`）、`onPush` / `onState` 与心跳/超时调参（`pingIntervalMs=15000`、`pingTolerance=2`、`reconnectDelayMs=1000`、`handshakeTimeoutMs=5000`）。方法 `start()` / `request(name, param?, timeoutMs?)` / `call(name, param?)` / `reconnect()` / `invalidateNonce()` / `close()`，可读字段 `online`、`nonce`、`recv`、`rid`。五条义务全部在这一层实现。
 
-**`loadCodec(spb)`**（`codec.ts`）：`{ pack, dispatch, checksum, recoverDispatch }`，sproto 编解码 + md5。
+**`loadCodec(spb)`**（`codec.ts`）：`{ pack, dispatch, checksum }`，sproto 编解码 + spb 的 md5。
 
 ### int64 约定
 
@@ -145,6 +147,7 @@ new SkyextClient({ /* … */ transport: wxTransport() });
 `skyext` 节点的 `lua_path` 已包含 `sdk/lua/`（`example/etc/paths.conf.lua`），直接 require：
 
 ```lua
+local sproto_api = require "skyext.sproto_api"
 local client_account = require "skyext.client.account"
 local client_session = require "skyext.client.session"
 ```
@@ -161,11 +164,13 @@ local account = client_account.new({ hosts = { "http://127.0.0.1:8080" } })
 local token = account:dev_login("robot1")
 local role = account:ensure_role(token, "robot1", account:pick_recommended_server() or "s1")
 local gates = account:gates()          -- 只含真的在线的网关，自己挑，连不上换下一台
+local gate = gates[1]
+local host, port = gate.tcp_addr:match("^(.+):(%d+)$")
 
 -- 会话层：连接、登录、计数、心跳、续接全在里面
 local s = client_session.new({
-    transport = "tcp",                  -- 或 "ws"
-    host = host, port = port,           -- tcp 用
+    transport = "tcp",                  -- 或 "ws"；不配默认 "tcp"
+    host = host, port = tonumber(port),  -- tcp 用
     url = gate.ws_url,                  -- ws 用
     login_param = function()            -- 每次完整登录调用；续接不调用
         return {
@@ -209,7 +214,7 @@ s:close()                               -- 关闭，pending 全部失败
 ## 测试与验收
 
 ```bash
-# Lua：语义单测（fake 传输，12 用例）
+# Lua：语义单测（fake 传输/fake httpc；session 11 + account 12 用例）
 ./bin/skyext test sdk/
 
 # Lua：真链路。先起 account1/role1，双传输各跑一遍完整业务 + 断线续接
@@ -226,4 +231,4 @@ robot 与 TS E2E 验收的是同一条链路：登录 → 业务请求 → 主�
 
 ## 自实现检查清单
 
-给新平台写 SDK 时，照[客户端接入规范](client_protocol.md)实现，**不要逐行翻译现有实现**（Lua 版混了 skynet 协程细节，TS 版混了浏览器事件模型）。完成后用规范第 3 节的五条义务逐条自检，并把 `sdk/lua/skyext/client/session.test.lua` 的 12 个语义用例移植过去——两个官方 SDK 都是这么验收的。
+给新平台写 SDK 时，照[客户端接入规范](client_protocol.md)实现，**不要逐行翻译现有实现**（Lua 版混了 skynet 协程细节，TS 版混了浏览器事件模型）。完成后过一遍规范第 7 节的自检清单，并把 `sdk/lua/skyext/client/session.test.lua` 的 11 个语义用例移植过去——两个官方 SDK 都是这么验收的。

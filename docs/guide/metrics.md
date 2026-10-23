@@ -11,7 +11,7 @@ skyext 内置 counter / gauge / histogram 三种指标原语，节点上的 `met
 - 单个服务没在 `metrics_scrape_timeout` 内回包，这次抓取就不等它；
 - 连续 3 次没回就把它摘掉。服务退出时不会（也不该指望它）来注销。
 
-服务用 `skyext.cmd_api` 接管消息分发时就自动挂到 `.metrics` 上，业务代码不需要写初始化。队列积压、内存、CPU 这些运行时数据因此默认就可见，不用等业务先声明一个指标。
+服务用 `skyext.cmd_api` 接管消息分发时就自动挂到 `.metrics` 上，业务代码不需要写初始化。队列积压、内存、CPU 这些运行时数据因此默认就可见，不用等业务先声明一个指标。`.metrics` 比业务服务起得晚时按每秒一次重试，10 次都找不到就打一条 WARN 并放弃，这个服务的指标不会被导出。
 
 自己接管 `skynet.dispatch` 的服务挂不上去——它应答不了 `collect_metrics`，所以连运行时数据也没有。
 
@@ -56,7 +56,7 @@ metrics_scrape_timeout = 300 -- 单次抓取等回包的时限，单位 1/100 �
 
 默认只听回环。这个端点**不鉴权**，暴露出去等于把内部拓扑和业务量公开，线上让 Prometheus 从同机或内网侧抓。
 
-示例里 account1 / account2 / role1 / role2 分别用 9190 / 9191 / 9192 / 9193：
+示例里 account1 / account2 / role1 / role2 / gate1 分别用 9190 / 9191 / 9192 / 9193 / 9194：
 
 ```sh
 curl http://127.0.0.1:9190/metrics

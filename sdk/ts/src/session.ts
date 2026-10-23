@@ -1,7 +1,7 @@
 // 会话层：sdk/lua/skyext/client/session.lua 的 TypeScript 等价实现，两者共享
 // 同一套协议语义测试基线（session.test.lua / session.test.ts 用例一一对应）。
 // 规范与五条义务的完整细节见 docs/guide/client_protocol.md，服务端设计背景见
-// docs/design/session_resume.md。
+// docs/archive/session_resume.md。
 //
 // 客户端必须承担的义务，一条都不能省：
 //   1. 每个请求带一个自增的 request id，续接之后**用原 id 重发**在途请求。

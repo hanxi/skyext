@@ -10,10 +10,11 @@
 
 ## 能做什么
 
-- **分层与分布式部署**：引擎模块采用 `skyext.*` 命名空间；Account、Role、Gateway、Robot 节点可分别部署（Role 自带 gate，Gateway 为可选的独立网关节点），基于 etcd 提供服务发现与分布式锁。
+- **分层与分布式部署**：引擎模块采用 `skyext.*` 命名空间；Account、Role、Gateway、Robot 节点可分别部署（Role 自带 gate，Gateway 为可选的独立网关节点），基于 etcd 提供节点租约、服务发现、分布式锁与区服目录。
 - **游戏数据与协议**：MongoDB 持久化、ORM/schema、sproto 协议，以及可扩展的通用实体系统。
-- **接入与运维**：HTTP 接口、JWT 登录、skynet TLS 模块、日志、GM 命令与代码/配置热更新。
-- **开发工具**：跨平台统一 CLI、伴随源码的 `.test.lua` 测试及 CI 检查。
+- **客户端接入**：TCP 与 WebSocket 网关（`service/gate_tcp.lua`、`service/gate_ws.lua`，wss 走 skynet 的 ltls 模块）、JWT 登录、跨连接存活的会话与断线续接，并提供 Lua / TypeScript 客户端 SDK。
+- **运维**：HTTP 服务端、日志、Prometheus 指标端点、GM 命令、代码与配表热更新、GM `shutdown` 停服编排。
+- **开发工具**：跨平台统一 CLI、伴随源码的 `.test.lua` 测试、ORM schema 兼容性门禁及 CI 检查。
 
 运行时依赖 MongoDB、etcd；构建还需要 C 工具链、OpenSSL 和项目子模块。具体准备方式见[快速上手](docs/getting-started.md)。
 
@@ -42,7 +43,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 
 可另开终端运行 `./bin/skyext serve robot` 测试示例客户端。`serve` 会将工作目录设为仓库根目录；直接调用 skynet 时也必须在根目录执行，例如 `./bin/skynet example/etc/account1.conf.lua`，因为示例的 `root = "./"`。
 
-> `example/etc/nodes/common.app.lua` 包含演示用 JWT 密钥，GM token 默认不配（接口关闭）。连接真实网络或部署前必须替换密钥、配置 GM token，并按环境配置数据库、etcd 与接口访问控制。
+> `example/etc/nodes/common.app.lua` 里的 `login_jwt_secret` 是公开的演示值，并打开了两个仅供本地开发的开关：`allow_insecure_secret`（放行弱登录密钥）和 `dev_login_enable`（`POST /dev_login` 不校验身份直接签 token，机器人靠它登录）；GM token 默认不配，GM 接口整体关闭。连接真实网络或部署前必须换掉密钥、去掉这两个开关，并按环境配置数据库、etcd 与接口访问控制。
 
 ## 项目结构
 
@@ -53,7 +54,7 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 | `service/`、`public/` | 通用 skynet 服务和静态资源 |
 | `lualib-src/`、`service-src/`、`build.mk` | C 扩展、服务与构建规则 |
 | `example/nodes/`、`example/service/`、`example/lualib/` | 示例游戏的节点入口、共享服务（login/admin）与业务代码 |
-| `example/etc/`、`example/proto/`、`example/schema/` | 示例配置、协议与数据模式 |
+| `example/etc/`、`example/proto/`、`example/schema/`、`example/hotfix/` | 示例配置、协议、数据模式与热更包 |
 | `scripts/tools/sproto_orm/`、`scripts/`、`bin/skyext`、`bin/skyext.bat` | 内化的 ORM 生成工具、跨平台 CLI 及其 Lua 实现 |
 | `skynet/`、`3rd/` | Git submodule 依赖 |
 | `docs/` | 使用指南、设计记录与规划 |
@@ -66,16 +67,17 @@ docker compose -f example/tools/etcd/docker-compose.yml up -d
 
 ```bash
 ./bin/skyext --help
-./bin/skyext test                      # 运行所有 .test.lua 测试
+./bin/skyext test                      # 扫描 lualib/、service/、example/、sdk/ 下的 *.test.lua
 ./bin/skyext test lualib/skyext/       # 只运行指定目录
 SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 MongoDB/etcd 集成测试
 ./bin/skyext generate proto            # 编译 sproto
 ./bin/skyext generate schema           # 生成 ORM schema（需要 stylua）
+./bin/skyext schema check              # 改过 schema 后必跑：对比基线，拦下不兼容改动
 ./bin/skyext package game              # 示例游戏包：example/skyext.zip
 ./bin/skyext package framework linux   # 框架包：release-assets/skyext-linux.zip
 ```
 
-测试文件与被测模块放在一起，使用 `*.test.lua` 命名；真实 MongoDB/etcd 集成测试仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。集成测试验证两个独立锁实例的竞争、租约撤销、Mongo fencing、旧持有者写入拒绝，以及真实 MongoDB 上的可靠消息序号、分页和重复确认；完整的多进程节点交接仍需部署环境验证。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会运行构建、测试、格式检查和多平台打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`；运行时 ORM 位于主工程 `lualib/orm/`。生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。
+测试文件与被测模块放在一起，使用 `*.test.lua` 命名，每个文件在独立的 skynet 进程中运行；`*.integration.test.lua` 连真实 MongoDB/etcd，仅在 `SKYTEST_INTEGRATION=1` 时运行，可用 `MONGO_HOST`、`MONGO_PORT`、`ETCD_ENDPOINTS` 覆盖地址（默认本机）。`make -C example format` 和 `make -C example lint` 分别调用 StyLua、Luacheck；CI 还会跑搜索路径检查、schema 兼容性检查、Lua/C 覆盖率门槛、TypeScript SDK 的类型检查与端到端测试，以及多平台构建和打包。ORM schema 生成到 Git 忽略的 `example/build/lualib/game/orm/`，运行时 ORM 位于 `lualib/orm/`；生成协议/schema 需要源码检出初始化的 `3rd/sprotodump` 子模块（框架发布包未包含该解析器）。命令与排查步骤详见[快速上手](docs/getting-started.md)。
 
 ## 文档导航
 
@@ -85,22 +87,21 @@ SKYTEST_INTEGRATION=1 ./bin/skyext test lualib/skyext/entity/  # 含真实 Mongo
 - [快速上手](docs/getting-started.md)：依赖、构建、运行、测试及常见问题。
 - [登录流程](docs/guide/login.md) · [登录流程图](docs/guide/login_diagram.md) · [客户端接入规范](docs/guide/client_protocol.md)：自己写客户端 SDK 看规范。
 - [客户端 SDK](docs/guide/client_sdk.md)：官方 Lua / TypeScript 双实现的安装、快速上手、小程序 transport 适配、错误码与验收方法。
-- [完整客户端联调](docs/guide/fullstack_client.md)：gamepass OAuth + phaser-game 浏览器客户端（已迁移到官方 TS SDK，直连 `gate_ws`，不再需要 goscon），跑通正式客户端链路。
+- [完整客户端联调](docs/guide/fullstack_client.md)：gamepass OAuth + phaser-game 浏览器客户端（官方 TS SDK，直连 `gate_ws`），跑通正式客户端链路。
 - [热更新操作](docs/guide/hotfix.md) · [GM HTTP API](docs/guide/gm_api.md)。
 - [HTTP 服务端](docs/guide/http_server.md)：命名实例、连接与超时上限、路由注册。
 - [指标采集与导出](docs/guide/metrics.md)：指标原语、Prometheus 端点与内置指标。
 - [改 ORM schema](docs/guide/orm_schema_change.md)：加删字段为什么不用写迁移，改名、改类型和重用旧字段名怎么拦。
 - [不做的事](docs/non-goals.md)：做过又删掉的设计，以及删它们的理由。
 
-**仅保存在仓库的设计与规划文档**（未发布到在线文档站）：[实体系统](docs/design/entity_system.md)、[skytest](docs/design/skytest.md)、[性能采样设计](docs/design/profiler.md)、[管理后台规划](docs/plan/admin_panel.md)。规划文档描述目标，不代表功能已经可用。
+**仅保存在仓库的设计与规划文档**（未发布到在线文档站）：[实体系统](docs/design/entity_system.md)、[skytest](docs/design/skytest.md)、[性能采样设计](docs/design/profiler.md)、[管理后台规划](docs/plan/admin_panel.md)、[架构重构规划](docs/plan/architecture_refactor.md)；已落地的规划与设计记录见[归档](docs/archive/README.md)。规划文档描述目标，不代表功能已经可用。
 
 ## 相关项目与参与
 
 - [phaser-game](https://github.com/hanxi/phaser-game)：示例 Phaser 客户端（submodule：`example/tools/phaser-game`）。
 - [gamepass](https://github.com/hanxi/gamepass)：第三方登录鉴权服务（submodule：`example/tools/gamepass`）。
-- [goscon](https://github.com/hanxi/goscon)：WebSocket 到 TCP 网关（submodule：`example/tools/goscon`）。**已从示例链路退役**：phaser-game 迁移到官方 [客户端 SDK](docs/guide/client_sdk.md) 后直连 `gate_ws`，WebSocket 接入由 `service/gate_ws.lua` 原生支持，断线续接由会话层原生支持（见[登录流程](docs/guide/login.md)）。只有真的需要字节级连接续接时才接它，并且**不能打开它的 `-sproto` 开关**——那个开关会往游戏服注入 `login.report_remote_addr`，该协议已经删除（真要在代理后面拿客户端真实 IP，用 PROXY protocol，而不是带内消息）。
 
-前两者的启动与联调步骤见[完整客户端联调](docs/guide/fullstack_client.md)。
+两者的启动与联调步骤见[完整客户端联调](docs/guide/fullstack_client.md)。
 
 问题与建议可提交 [GitHub Issues](https://github.com/hanxi/skyext/issues)。修改前请阅读 [AGENTS.md](AGENTS.md) 中的项目约定，并运行相关测试和代码检查。
 

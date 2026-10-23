@@ -50,12 +50,16 @@ Lua 的 `require` 把 `.` 当路径分隔符。`require "skyext.jwt.test"` 查�
 
 约定：需要辅助资源时，创建与 `.test.lua` 同名的 `.test/` 目录：
 
-当前仓库中唯一使用此约定的真实用例：
+当前仓库中使用此约定的真实用例：
 
 ```
 lualib/skytest/process.test.lua             ← 测试入口（验证子进程启动与清理）
 lualib/skytest/process.test/                ← 测试资源目录
     fixture.lua                             ← fixture 服务（监听端口，验证可连接）
+
+lualib/skytest/cov/source_lines.test.lua    ← 测试入口（源码行扫描）
+lualib/skytest/cov/source_lines.test/       ← 测试资源目录
+    nested.lua                              ← 被扫描的样本源文件
 ```
 
 `.test/` 目录同样对 `require` 不可见（原理同 `.test.lua`，见"为什么用 `.test.lua` 而不是 `_test.lua`？"）。
@@ -98,8 +102,9 @@ process.test/              ← fixture（紧挨测试）
 | `SKYTEST_COV=1` | 启用覆盖率的环境变量 |
 | `SKYTEST_COV_OUTPUT_DIR` | 覆盖率输出目录 |
 | `SKYTEST_COV_SOURCE_DIRS` | 覆盖率源码目录，默认 `lualib/,service/,example/lualib/` |
-| `SKYTEST_COV_EXCLUDE` | 覆盖率排除模式，默认排除 `skynet/`、`*.test.lua`、`example/build/` |
-| `SKYTEST_COV_FLUSH_INTERVAL` | 覆盖率 flush 间隔 |
+| `SKYTEST_COV_EXCLUDE` | 覆盖率排除模式，默认 `skynet/,.test.lua,.test/,example/build/` |
+| `SKYTEST_COV_INCLUDE` | 覆盖率额外包含模式（优先于排除） |
+| `SKYTEST_COV_FLUSH_INTERVAL` | 覆盖率 flush 间隔（秒），默认 10 |
 | `coverage/` | 覆盖率输出目录 |
 | `[skytest.cov]` | 日志前缀 |
 | `pcall(require, "skytest.cov")` | loader.lua 中的覆盖率加载 |
@@ -110,16 +115,14 @@ process.test/              ← fixture（紧挨测试）
 
 当前仓库中的实际示例：
 
-```
-源码                                    测试
-──────────────────────────────────────────────────────────
-lualib/skyext/errcode.lua              lualib/skyext/errcode.test.lua
-lualib/skyext/config.lua               lualib/skyext/config.test.lua
-lualib/skyext/time.lua                 lualib/skyext/time.test.lua
-lualib/skyext/util/string.lua          lualib/skyext/util/string.test.lua
-lualib/skytest/expect.lua              lualib/skytest/expect.test.lua
-example/lualib/jwt.lua                 example/lualib/jwt.test.lua
-```
+| 源码 | 测试 |
+| --- | --- |
+| `lualib/skyext/errcode.lua` | `lualib/skyext/errcode.test.lua` |
+| `lualib/skyext/config.lua` | `lualib/skyext/config.test.lua` |
+| `lualib/skyext/time.lua` | `lualib/skyext/time.test.lua` |
+| `lualib/skyext/util/string.lua` | `lualib/skyext/util/string.test.lua` |
+| `lualib/skytest/expect.lua` | `lualib/skytest/expect.test.lua` |
+| `example/lualib/jwt.lua` | `example/lualib/jwt.test.lua` |
 
 `ls` 输出天然有序：
 ```
@@ -138,23 +141,28 @@ config.test.lua           ← 紧挨源码
 
 ## 模块结构
 
-skytest 已融入主项目结构，不再作为独立子目录：
+skytest 的 Lua 代码与服务直接放在主项目的 `lualib/`、`service/` 下：
 
 ```
 lualib/skytest/                         # 框架与覆盖率 Lua 代码
-├── init.lua                            # 框架入口：导出 describe/it/expect
+├── init.lua                            # 框架入口：导出 describe/it/expect 等
 ├── runner.lua                          # 单文件测试执行引擎
 ├── expect.lua                          # 断言库
 ├── expect.test.lua                     # skytest 自测
 ├── reporter.lua                        # 输出格式化（mocha 风格）
 ├── http.lua                            # HTTP 测试助手
+├── process.test.lua                    # 子进程与 fixture 机制自测
+├── process.test/fixture.lua            # 伴生 fixture 服务
 └── cov/
     ├── init.lua                        # 覆盖率入口
     ├── install.lua                     # hook 安装 + upvalue patching
     ├── collector.lua                   # 数据收集
     ├── config.lua                      # 配置（含 flush_interval 等）
     ├── lcov_reporter.lua               # lcov 报告生成
-    └── source_lines.lua                # 源代码行扫描
+    ├── lcov_reporter.test.lua          # 自测
+    ├── source_lines.lua                # 源代码行扫描
+    ├── source_lines.test.lua           # 自测
+    └── source_lines.test/nested.lua    # 扫描样本
 
 lualib-src/skytest_hook.c               # C 加速 debug hook
 
@@ -174,7 +182,7 @@ scripts/                                # 统一 CLI（纯 Lua）
 ## test CLI
 
 ```bash
-# 运行所有测试（从项目根目录扫描）
+# 运行所有测试（默认扫描 lualib/、service/、example/、sdk/）
 ./bin/skyext test
 
 # 运行指定文件
@@ -188,10 +196,13 @@ scripts/                                # 统一 CLI（纯 Lua）
 # 可用路径前缀缩小范围：--match "skyext/errcode" 不会匹配 example/ 下的同名文件
 # 注：--match 过滤的是文件路径，不是 describe/it 名称（与 mocha --grep 不同）
 
-# 带覆盖率
+# 带 Lua 覆盖率
 ./bin/skyext test --cov
 
-# 单文件超时（秒），默认 120
+# 附带 C 覆盖率（需 Linux/GCC 以 C_COVERAGE=1 插桩构建，且装了 lcov）
+./bin/skyext test --cov --cov-c
+
+# 单文件超时（秒），默认 120，也可用 SKYTEST_TIMEOUT 环境变量
 ./bin/skyext test --timeout 60
 
 # 指定 skynet 配置（极少需要，仅当自动生成的配置不满足时）
@@ -231,7 +242,6 @@ local t = require "skytest"
 local errcode = require "skyext.errcode"
 
 t.describe("errcode", function()
-
     t.it("has standard error codes", function()
         t.expect(errcode.OK).to.equal(0)
         t.expect(errcode.PARAM_ERROR).to.equal(10)
@@ -243,6 +253,10 @@ t.describe("errcode", function()
         t.expect(errcode.ENTITY_NOT_FOUND).to.equal(20)
         t.expect(errcode.ENTITY_LOCK_FAILED).to.equal(21)
         t.expect(errcode.ENTITY_LOAD_FAILED).to.equal(22)
+    end)
+
+    t.it("has MongoDB error codes", function()
+        t.expect(errcode.MONGO_DUPLICATE_KEY).to.equal(11000)
     end)
 
     t.it("throws on invalid error code access", function()
@@ -440,7 +454,7 @@ local status, body = t.http.get_json(host, path)                -- GET + JSON de
 local status, body = t.http.post(host, path, data, ctype)       -- POST 原始
 local status, body = t.http.post_json(host, path, tbl)          -- POST JSON + decode
 local status, body = t.http.request(method, host, path, opts)   -- 通用请求
--- opts: { headers = {}, json = {}, body = "", timeout = 5 }
+-- opts: { headers = {}, json = {}, body = "", timeout = <秒> }
 ```
 
 > 注：`http.lua` 依赖 skynet 内置的 `http.httpc`（非 skyext 自有模块），即测试框架依赖 skynet 的 HTTP 客户端。这是有意的取舍——避免引入外部 HTTP 依赖，代价是 `httpc` 本身有 bug 时 HTTP 测试助手也受影响。如果未来发现 httpc bug 导致测试框架不可信，备选方案是在 `skytest.http` 内置一个最小的 socket + HTTP/1.1 实现（仅支持 GET/POST + Content-Length，几十行 Lua，不走 skynet 异步 HTTP）。
@@ -448,7 +462,7 @@ local status, body = t.http.request(method, host, path, opts)   -- 通用请求
 错误行为：
 - 连接失败（服务未启动、端口未监听）：抛异常（`error()`），测试标记为失败。因此应在 `before_all` 中用 `t.wait_for_port()` 确保服务就绪后再调用 HTTP 助手。
 - HTTP 错误状态码（4xx/5xx）：**不**抛异常，正常返回 `status, body`，由测试用断言检查。这是有意的——很多测试需要验证错误响应。
-- `opts.timeout`：请求级超时（秒），默认 5。超时后抛异常。
+- `opts.timeout`：请求级超时（秒），仅 `t.http.request` 支持。只在传入时生效（临时设置 `httpc.timeout`，请求结束后还原），不传则沿用 `httpc` 自身的行为；`get` / `post` 等快捷函数不接受该选项。
 
 ### 工具函数
 
@@ -506,7 +520,9 @@ end)
   4 passing (1ms)
 ```
 
-`./bin/skyext test` 会流式输出各文件结果并在最后汇总；以下截取两个测试文件示意格式（耗时随环境变化）：
+`✓` / `✗` / `-`（跳过）带 ANSI 颜色；全部跳过或空文件输出 `0 tests`。
+
+`./bin/skyext test` 为每个文件打一行 `▶ <路径>`，流式输出该文件的报告，最后汇总**文件数**（不是用例数）：
 ```
 ▶ lualib/skyext/errcode.test.lua
   errcode
@@ -523,9 +539,11 @@ end)
 
   1 passing (121ms)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-2 files, 5 passing, 0 failing
+2 files, 2 passed, 0 failed, 0 errors
 ```
+
+汇总行的四个数都是文件计数：`passed` 是退出码 0 的文件数，`errors` 是退出码 2（加载失败）的文件数，
+其余计入 `failed`；失败的文件路径随后逐行列出。
 
 ## 执行模型
 
@@ -533,29 +551,17 @@ end)
 
 `./bin/skyext test` 为每个 `.test.lua` 文件启动一个独立的 skynet 进程：
 
-```
-./bin/skyext test lualib/skyext/
-  │
-  ├─ 扫描 *.test.lua → [errcode.test.lua, config.test.lua, time.test.lua, ...]
-  │
-  ├─ 文件 1: SKYTEST_FILE=lualib/skyext/errcode.test.lua  ./bin/skynet $CONF
-  │   └─ skynet 进程（独立）
-  │       └─ skytest_runner
-  │           ├─ local file = os.getenv("SKYTEST_FILE")
-  │           ├─ loadfile(file)  -- 完整相对路径，非 require
-  │           ├─ 执行 describe/it
-  │           ├─ 输出报告
-  │           └─ os.exit(0)  ← 进程结束，一切自动释放
-  │
-  ├─ 文件 2: SKYTEST_FILE=lualib/skyext/config.test.lua  ./bin/skynet $CONF
-  │   └─ skynet 进程（独立）
-  │       └─ skytest_runner
-  │           ├─ loadfile(file)
-  │           ├─ 执行 describe/it
-  │           ├─ 输出报告
-  │           └─ os.exit(0)  ← 进程结束，一切自动释放
-  │
-  └─ 汇总：N files, M passing, 0 failing
+```mermaid
+flowchart TB
+    cli["./bin/skyext test [目标...]"] --> scan["扫描 *.test.lua<br/>收集文件列表"]
+    scan --> spawn["逐个文件串行启动<br/>tool_process.run bin/skynet<br/>env SKYTEST_FILE"]
+    spawn --> runner
+    subgraph proc["独立 skynet 进程（每文件一个）"]
+        runner["skytest_runner"] --> load["loadfile(SKYTEST_FILE)<br/>完整相对路径，非 require"]
+        load --> exec["执行 describe / it<br/>输出 mocha 风格报告"]
+        exec --> quit["os.exit 0 / 1 / 2<br/>端口与服务随进程释放"]
+    end
+    quit --> sum["按退出码累计文件计数<br/>--cov 时在 CLI 进程内合并 lcov"]
 ```
 
 每个进程完全独立：
@@ -625,8 +631,12 @@ test 命令通过 `tool_process` 为每个 skynet 进程设置超时（默认 12
 - `skytest.cov` 的 debug hook 捕获同进程内所有代码的执行（包括 `newservice` 加载的服务代码）
 - `t.start_skynet()` 启动的子进程继承 `SKYTEST_COV=1` 环境变量，子进程也会独立写覆盖率数据
 - 每个进程独立写覆盖率数据到本次运行的临时目录（文件名含 PID，避免冲突）
-- 所有文件跑完后，test 命令通过 `scripts/lib/lcov.lua` 在进程内合并各进程的 lcov 数据，生成 `coverage/lua_coverage_clean.info`（LCOV 格式）；默认统计引擎 Lua 库、服务与示例游戏库，不计生成的 `example/build/` 代码
+- 所有文件跑完后，test 命令通过 `scripts/lib/lcov.lua` 在进程内合并各进程的 lcov 数据，产出两份 LCOV：
+  `coverage/lua_coverage.info` 是未过滤的全量合并结果，`coverage/lua_coverage_clean.info` 只保留项目源码
+  （`lcov.project_source`），是百分比统计和 CI 门禁用的那一份；默认统计引擎 Lua 库、服务与示例游戏库，
+  不计生成的 `example/build/` 代码和 `.test.lua` / `.test/`
 - 若系统安装了 `genhtml`（lcov 包），还会在 `coverage/html/` 下生成 HTML 报告；未安装时仅产出 LCOV 文件，跳过 HTML
+- 终端打印 `覆盖率: XX.X% (hit/total 行, N 文件)` 以及 lcov、HTML 报告路径
 - `SKYTEST_COV_FLUSH_INTERVAL`：覆盖率数据自动 flush 间隔（秒），默认 10。在 `skytest.cov.config` 中读取，传给 collector 定时写盘
 
 Linux/GCC 下可用 `C_COVERAGE=1` 插桩构建主工程 C 模块，再通过 `--cov-c` 调用 gcov/lcov。命令在测试前清零计数并采集初始数据（包含未运行的 C 文件）；测试期间为每个测试进程注入独立的 `GCOV_PREFIX` 数据树（位于仓库之外，避免根目录 capture 递归重复扫描），避免多进程（含 fixture 派生的子 skynet）并发合并同一份 `.gcda` 损坏计数器（负数计数，lcov 2.x 报 negative 错误）；插桩构建同时启用 `-fprofile-update=atomic`——skynet 在多个工作线程上并发执行 Lua 服务，非原子的计数器递增会丢失更新、破坏流守恒，导致 gcov 由分支计数差值反推出负数行计数（热点行尤甚）；测试后逐目录 capture（`--external`），capture 前先把构建树中的 `.gcno` 镜像进数据树（lcov 2.x 的 geninfo 要求 `.gcno` 与 `.gcda` 同目录，1.x 则按 gcda 内记录的绝对路径寻找）；个别目录数据损坏（如进程被 SIGKILL）时告警并跳过该目录。合并由 `scripts/lib/lcov.lua` 完成，负计数按 0 处理（与 lcov 2.x `--ignore-errors negative` 语义一致），过滤出 `lualib-src/`、`service-src/` 写入 `coverage/c_coverage.info`（只保留行数据，规避 lcov 2.x 读取 tracefile 时的函数计数一致性报错，行为在 lcov 1.x/2.x 下一致）；有 `genhtml` 时单独生成 `coverage/html-c/`。C 报告和上述 Lua 报告彼此独立，不计 skynet 和第三方子模块。测试进程非正常退出时，仅丢失该进程隔离目录中的 C 计数，不影响整体报告。
@@ -640,17 +650,24 @@ Linux/GCC 下可用 `C_COVERAGE=1` 插桩构建主工程 C 模块，再通过 `-
 ### `lualib/loader.lua`
 
 ```lua
-pcall(require, "skytest.cov")  -- skytest 覆盖率
+-- 加载 skytest 覆盖率（未部署时静默跳过；模块本身的错误不吞掉）
+local cov_ok, cov_err = pcall(require, "skytest.cov")
+if not cov_ok and not string.find(tostring(cov_err), "module 'skytest.cov' not found", 1, true) then
+    error(cov_err, 0)
+end
 ```
 
 ### `build.mk`
 
 编译 target：
 ```makefile
-$(SKYEXT_LUACLIB_PATH)/skytest/hook.so : $(SKYEXT_ROOT)/lualib-src/skytest_hook.c
+$(SKYEXT_LUACLIB_PATH)/skytest/hook.so : $(SKYEXT_ROOT)/lualib-src/skytest_hook.c | $(SKYEXT_LUACLIB_PATH)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
+	$(CC) $(SKYEXT_CFLAGS) $(SHARED) $^ -o $@ $(LUA_LIBS) $(SKYNET_LIBS)
 ```
+
+`SKYEXT_CFLAGS` 在 `C_COVERAGE=1` 时是 `$(CFLAGS) --coverage -O0 -fprofile-abs-path -fprofile-update=atomic`，
+否则就是 `$(CFLAGS)`——主工程的 C 模块（含本 hook）用同一组开关，插桩构建一次全部覆盖。
 
 ### `example/etc/paths.conf.lua`
 
@@ -664,7 +681,7 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
 
 ### 覆盖率集成
 
-覆盖率功能已集成到 `./bin/skyext test --cov`，不再需要独立脚本。
+覆盖率由 `./bin/skyext test --cov` 一并驱动，报告生成与合并都在 CLI 进程内完成，无需额外脚本。
 
 ### `.github/workflows/coverage.yml`
 
@@ -677,6 +694,13 @@ luaservice = luaservice .. skyext_root .. "service/?.lua;"
         MONGO_HOST: mongo
         ETCD_ENDPOINTS: http://etcd:2379
       run: ./bin/skyext test --cov --cov-c
+```
+
+覆盖率门禁随后由 `cov check` 把关，低于阈值即失败：
+
+```yaml
+        ./bin/skyext cov check coverage/lua_coverage_clean.info --threshold 85
+        ./bin/skyext cov check coverage/c_coverage.info --threshold 60
 ```
 
 `persistence.integration.test.lua` 在同一 Skynet 进程内建立两个互不共享模块状态的锁/DB 实例，使用真实 MongoDB/etcd 检查竞争、租约撤销、fence 递增、CAS 拒绝旧持有者；`reliable_msg.integration.test.lua` 使用真实 MongoDB 检查并发分配、按 `seq` 分页和重复确认。两者都不替代多进程节点交接与故障注入测试。
@@ -695,7 +719,13 @@ coverage/
 
 - `SKYTEST_FILE` 未设置：`[skytest] ERROR: SKYTEST_FILE not set`，`os.exit(2)`
 - 文件不存在 / 语法错误：`[skytest] ERROR: failed to load <path>: <message>`，`os.exit(2)`
-- `before_all` 异常：`[skytest] ERROR: before_all failed: <message>`，该 describe 下所有 it 标记失败
+- 文件顶层执行出错：`[skytest] ERROR: failed to execute <path>: <message>`，`os.exit(2)`
+- 执行用例时框架自身出错：`[skytest] ERROR: failed to run <path>: <message>`，`os.exit(2)`
+- `after_each` / `after_all` 异常：`  [skytest] after_each error: <message>` / `after_all error`，
+  已通过的 it 结果不变，但文件退出码变为 1
+
+`before_all` 异常没有单独的 `[skytest]` 前缀行：该 describe 下的 it 直接以 `✗` 输出并附带
+`before_all` 的 traceback，嵌套 describe 里的 it 以 `- <name> (before_all failed)` 输出，都计为失败。
 
 ### 平台支持
 
@@ -714,7 +744,7 @@ test CLI 用 Lua 编写，通过 `tool_process`（C 模块）管理子进程和�
 3. `./bin/skyext test lualib/skyext/` — 目录级测试应逐文件输出 mocha 风格报告与汇总。
 4. `./bin/skyext test --cov lualib/skyext/` — 应合并生成 LCOV 报告；安装 genhtml 时还应生成 HTML。
 5. `./bin/skyext test lualib/skytest/process.test.lua` — fixture 集成测试应启动子 skynet 并验证可连接。
-6. `./bin/skyext test --cov` — 执行完整 Lua 覆盖率流程；以 `C_COVERAGE=1` 重建后运行 `./bin/skyext test --cov --cov-c`，检查 C 报告含全部 7 个主工程 C 文件。
+6. `./bin/skyext test --cov` — 执行完整 Lua 覆盖率流程；以 `C_COVERAGE=1` 重建后运行 `./bin/skyext test --cov --cov-c`，检查 `coverage/c_coverage.info` 含全部 6 个主工程 C 文件（`lualib-src/` 下 crypto、profiler、skytest_hook、tool_process、traceback，`service-src/` 下 service_profiler）。
 7. 故意写一个失败测试 → test 命令退出码应为 1。
 8. 故意写一个语法错误的测试文件 → 单文件 skynet 进程退出码应为 2，统一 CLI 退出码应为 1，报告指出错误文件。
 9. 故意写一个死循环测试 → `tool_process` 超时应生效，文件计为失败，后续文件正常执行。

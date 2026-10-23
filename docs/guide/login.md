@@ -12,17 +12,33 @@
 ## 登录步骤
 
 1. 客户端获取 JWT Token（正式客户端从 SDK/平台登录服务获得；示例机器人 POST `/dev_login` 获得）
-2. HTTP GET `/servers` 取服务器列表（不需要登录，最新开放的服带 `recommended = true`），选一个服建角
-3. HTTP GET `/roles` 取角色列表；没有角色时 POST `/create_role` 创建（只能选 `status = "open"` 的服）。两个接口都要带 `Authorization: Bearer <token>` 头——**token 不走 URL query**，那会被访问日志、代理日志、Referer 和浏览器历史一路抄送
-4. HTTP GET `/gates` 取在线网关列表（不需要登录），挑一台连上。原生 APP 连 `tcp_addr`（裸 TCP，2 字节大端长度前缀），浏览器和小程序连 `ws_url`（WebSocket binary 帧，不加长度头）。**客户端不需要知道角色实体在哪个节点**——网关只管会话，上行包由它转发到实体真正所在的节点
-5. 发送 sproto `login.login`（携带 token、rid、server、proto_checksum）。服务端校验 token 后，还会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**，否则返回 `ROLE_NOT_EXIST`——token 只证明账号，rid 和 server 是客户端自己报的
-6. 登录服务经 Entity 路由调用 `router.bind_session("role", rid, ...)`：按 HRW 找到实体所在节点，把这条会话绑到角色实体上（实体可能在别的节点，网关会记下 `owner_node`，后续上行包跨节点转发）。**不再有 `NOT_THIS_NODE` 让客户端改连节点**
+2. HTTP GET `/servers` 取服务器列表，选一个服建角
+3. HTTP GET `/roles` 取角色列表；没有角色时 POST `/create_role` 创建。接口细节见[Account HTTP 接口](#account-http-接口)
+4. HTTP GET `/gates` 取在线网关列表，挑一台连上。原生 APP 连 `tcp_addr`（裸 TCP，2 字节大端长度前缀），浏览器和小程序连 `ws_url`（WebSocket binary 帧，不加长度头）。**客户端不需要知道角色实体在哪个节点**——网关只管会话，上行包由它转发到实体真正所在的节点
+5. 发送 sproto `login.login`（携带 token、rid、server、proto_checksum）。服务端按 token → 协议 checksum → rid → 区服是否存在 → 角色归属的顺序校验，分别对应 `TOKEN_ERROR`（102）、`PROTO_CHECKSUM`（103）、`ROLE_NOT_EXIST`（100）、`SERVER_NOT_EXIST`（104）。最后一步会查角色文档确认这个 rid **属于 token 里的账号、且在请求的区服**——token 只证明账号，rid 和 server 是客户端自己报的
+6. 登录服务经 Entity 路由调用 `router.bind_session("role", rid, ...)`：按 HRW 找到实体所在节点，把这条会话绑到角色实体上（实体可能在别的节点，网关会记下 `owner_node`，后续上行包跨节点转发）。**客户端不需要改连节点**
 7. 登录响应里带回一枚 `nonce`（16 字节续接凭据），客户端存下来，断线后用它走 `login.resume` 把会话接回去，见下面的[断线续接](#断线续接)
 8. 登录成功后发送 sproto `role.login_info` 获取角色详细信息
 
 ### 开发用登录接口
 
-`POST /dev_login`，body `{"account": "robot1"}`，返回 `{"code": 0, "token": "..."}`。它按账号名直接签发登录 token，**不校验任何身份**，只供本地开发和机器人使用；由 `dev_login_enable` 控制，不配就返回 404。正式环境必须关掉，token 由 SDK/平台登录服务在验明身份后用同一套 `login_jwt_*` 配置签发。
+`POST /dev_login` 按账号名直接签发登录 token，**不校验任何身份**，只供本地开发和机器人使用；由 `dev_login_enable` 控制，不配就返回 404。正式环境必须关掉，token 由 SDK/平台登录服务在验明身份后用同一套 `login_jwt_*` 配置签发。
+
+### Token 里有什么
+
+`jwt.verify_login`（`example/lualib/jwt.lua`）校验签名、`iss`、`aud` 和时效，业务代码只用 `account` 字段，未知字段忽略：
+
+```json
+{ "account": "user_account_id", "iss": "skyext", "aud": "skyext-game", "iat": 1638360000, "exp": 1638360300 }
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `iss` / `aud` | 必须和 `login_jwt_issuer` / `login_jwt_audience` 一致。签名密钥只保证"是我们签的"，这两项保证"是这套服务签的、签给这套服务的"——同一密钥被别的系统或别的用途复用时不会互相串。`aud` 允许是字符串或字符串数组 |
+| `exp` | **必填**，缺失直接拒绝：没有过期时间的登录 token 等于永久有效，一旦泄漏就收不回来。有效期由 `login_jwt_ttl`（默认 300 秒）决定 |
+| `iat` / `nbf` | 可选。时间比较统一放宽 `login_jwt_leeway`（默认 30）秒，容忍节点间时钟差 |
+
+外部签发方（gamepass 这类 OAuth 服务）必须按同一组 `iss` / `aud` 签，否则服务端拒绝。`jwt.sign_login` 从配置取密钥和 `iss` / `aud` / `ttl`，自动补上 `iss`、`aud`、`iat`、`exp`；签名算法就是 `login_jwt_alg`，四种都支持（公私钥算法需要配 `login_jwt_private_key[_path]`，游戏节点通常只有公钥、签不出 token）。
 
 ### Token 的签名算法
 
@@ -54,9 +70,28 @@ login_jwt_public_key = { ["login-2025"] = old_pem, ["login-2026"] = new_pem }
 
 有一点是写死在实现里的：**算法由密钥决定，不由 token 头里的 `alg` 决定**。配了公钥的节点只会走验签，拿到一个声称 `HS256` 的 token 会直接拒绝，而不是把公钥当成 HMAC 密钥去算——后者是 JWT 最经典的伪造手法，公钥本来就是公开的，谁都能用它签出一个"合法"的 HS256 token。同理，`login_jwt_alg` 配的是 `RS256` 时，连同族的 `ES256` token 也一并拒绝。
 
+## Account HTTP 接口
+
+实现在 `example/nodes/account/lualib/account_router.lua`。登录 token 一律走 `Authorization: Bearer <token>` 请求头——放在 URL query 里会被访问日志、代理日志、Referer 和浏览器历史一路抄送。
+
+| 接口 | 鉴权 | 入参 | 应答 |
+| --- | --- | --- | --- |
+| `GET /servers` | 无 | — | `{ code, servers: [{ server, name, tag, status, open_time, recommended }] }` |
+| `GET /gates` | 无 | — | `{ code, gates: [{ node, tcp_addr, ws_url, weight }] }` |
+| `GET /roles` | Bearer | query `server` 可选 | `{ code, roles: [{ rid, server, name }] }` |
+| `POST /create_role` | Bearer | body `{ server, name }` | `{ code, role: { rid, server, name } }` |
+| `POST /dev_login` | 无（仅开发） | body `{ account }` | `{ code, token }` |
+
+- `/servers` 把 `status = "open"` 中 `open_time` 最大的那个服标上 `recommended = true`；不暴露 game / zone，那是服务端的事。
+- `/roles` 传了 `server` 就只返回该区服的角色；区服不存在返回 `SERVER_NOT_EXIST`（104）。
+- `/create_role` 只能选 `status = "open"` 的服。名字只做基础检查（非空、无控制字符、长度不超过策划表的 `NameLimit`，示例为 32），重名返回 `NAME_TAKEN`（105）；单个区服的角色数超过 `max_role_count`（示例为 5）返回 `ROLE_TOO_MANY`（101）。
+- `/dev_login` 的 `account` 只接受 `[%w_]` 且不超过 64 字符。
+
+> `/servers` 和 `/gates` 不需要登录：里面只有区服信息和接入地址，没有任何账号相关的东西。服务端也不替客户端"挑一台"网关——挑选与重试策略归客户端，理由见[客户端接入规范](client_protocol.md)。
+
 ## Robot 登录创角示例
 
-机器人使用 Lua 客户端 SDK（`sdk/lua/`）：Account HTTP 走 `skyext.client.account`，会话走 `skyext.client.session`。以下代码来自 `example/nodes/robot/robotagent/main.lua`：
+机器人使用 Lua 客户端 SDK（`sdk/lua/`）：Account HTTP 走 `skyext.client.account`，会话走 `skyext.client.session`。以下节选自 `example/nodes/robot/robotagent/main.lua`，省略了错误分支与日志：
 
 ```lua
 local client_account = require "skyext.client.account"
@@ -69,17 +104,25 @@ function CMD.start(conf)
     local token = account:dev_login(name)
     -- GET /servers 挑推荐服；GET /roles，没有角色时 POST /create_role
     local role = account:ensure_role(token, name, account:pick_recommended_server() or "s1")
-    -- 网关地址来自 account 的 /gates，不写死在配置里。列表里只会有真的在线的网关
-    -- （网关键挂在节点租约上），所以也不用自己判断某个端口通不通
+    -- 网关地址来自 /gates，不写死在配置里。列表里只会有真的在线的网关（键挂在节点租约上），
+    -- 所以也不用自己判断某个端口通不通
     local gates = account:gates()
 
-    -- 按编号错开起点，依次试到第一个跑通的网关；网关不必和角色实体在同一个节点
+    -- 按编号错开起点，依次试到第一个全部跑通的网关；网关不必和角色实体在同一个节点
     local start = conf.gate or (conf.id % #gates + 1)
+    local transports = config.get_table("robot_transports") or { "tcp", "ws" }
     for i = 0, #gates - 1 do
         local gate = gates[(start + i - 1) % #gates + 1]
+        local all_ok = true
         -- 同一套用例在 tcp 和 ws 上各跑一遍，行为必须完全一致
-        for _, transport in ipairs(config.get_table("robot_transports") or { "tcp", "ws" }) do
-            run(transport, gate, role, token)
+        for _, transport in ipairs(transports) do
+            if not run(transport, gate, role, token) then
+                all_ok = false
+                break
+            end
+        end
+        if all_ok then
+            return
         end
     end
 end
@@ -92,14 +135,17 @@ Account 接口把登录 token 放在 Authorization 头（不进 URL），传输�
 ```lua
 local s = client_session.new({
     transport = transport, -- "tcp" 或 "ws"
-    host = host,
+    host = host, -- 由 gate.tcp_addr 拆出
     port = port,
     url = gate.ws_url,
     login_param = function()
+        -- 报的 server 是角色的出生服
         return { token = token, rid = role.rid, server = role.server, proto_checksum = ... }
     end,
+    on_push = function(name, msg) end,
+    on_state = function(state) end,
 })
-s:start()
+s:start() -- 返回 false 表示登录失败
 play(s, role.rid)
 check_resume(s) -- 断开、续接、断言凭据轮换且计数没有倒退
 play(s, role.rid)
@@ -129,7 +175,7 @@ s:close()
 
 两个缓冲上限是**内存保护**，不是性能参数：撑爆了只是退化成重新登录，取大了则是每个在线角色都多占这么多常驻内存。
 
-客户端那一侧的义务（计数、心跳、原 id 重发、不假设重放与响应保序）一条都不能省，全部写在[客户端接入规范](client_protocol.md)里。设计取舍见 `docs/design/session_resume.md`。
+客户端那一侧的义务（计数、心跳、原 id 重发、不假设重放与响应保序）一条都不能省，全部写在[客户端接入规范](client_protocol.md)里。设计取舍见 `docs/archive/session_resume.md`。
 
 ## 登录协议定义
 
@@ -149,7 +195,7 @@ login 100 {
     response {
         code 0 : integer
         rid 1 : integer
-        nonce 2 : string # 续接凭据，断线后拿它走 resume
+        nonce 2 : binary # 续接凭据（16 字节原始随机字节），断线后拿它走 resume
     }
 }
 ```
@@ -196,13 +242,7 @@ account_host = "http://127.0.0.1:8080"
 
 ### 网关地址
 
-网关地址**不配在客户端**。每个网关节点启动时把自己的接入地址上报进区服目录（etcd 的 `/skyext/realm/gate/<node>`，挂在节点租约上），客户端请求 `GET /gates` 拿列表：
-
-```json
-{ "code": 0, "gates": [
-  { "node": "gate1", "tcp_addr": "127.0.0.1:7052", "ws_url": "ws://127.0.0.1:7053", "weight": 1 }
-] }
-```
+网关地址**不配在客户端**。每个网关节点启动时把自己的接入地址上报进区服目录（etcd 的 `/skyext/realm/gate/<node>`，挂在节点租约上），客户端请求 [`GET /gates`](#account-http-接口) 拿列表。
 
 节点挂掉时租约过期、键消失；节点优雅停服时在 `stop_accepting` 阶段主动摘掉自己——已连上的客户端照常走完停服流程，新客户端立刻不再被引导过来。
 
@@ -254,6 +294,6 @@ realm_seed = {
 }
 ```
 
-客户端用 `GET /servers` 取服务器列表（不需要登录，最新开放的服带 `recommended = true`）。建角只能选 `status = "open"` 的服；角色只记出生服，登录时报的 `server` 必须是角色的出生服。角色名在出生服内唯一，跨服场景里显示为 `[S3]张三`。
+角色只记出生服，登录时报的 `server` 必须是角色的出生服。角色名在出生服内唯一，跨服场景里显示为 `[S3]张三`。
 
 角色实体落在哪个节点由 Entity 系统按服务发现报告的存活节点（rendezvous hashing）计算，对客户端透明——客户端只连任意一个 gate，由 gate/登录服务把会话绑到实体真正所在的节点。`entity_types.role.nodes`（`common.app.lua`）只在服务发现不可用时兜底。

@@ -1326,7 +1326,10 @@
         renderer: {
           code: function (code, lang) {
             if (lang === 'mermaid') {
-              return '<div class="mermaid">' + code + '</div>';
+              // 必须转义：插件用 textContent 取源码，原样插入的话 <br/> 等标签
+              // 会被浏览器解析成元素而丢掉，节点文字挤成一行
+              var escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              return '<div class="mermaid">' + escaped + '</div>';
             }
             return this.origin.code.apply(this, arguments);
           }

@@ -8,7 +8,7 @@
 --
 -- 续接就是把 session_io 挂到一条新连接上。续接窗口因此天然等于实体的 unload_delay，
 -- 不需要单独的计时器；实体失租或卸载时 session_io 一起消失，续接自然失败并退化成登录。
--- 设计背景见 docs/design/session_resume.md。
+-- 设计背景见 docs/archive/session_resume.md。
 local skynet = require "skynet"
 local cluster = require "skynet.cluster"
 local crypto = require "crypto"

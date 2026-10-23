@@ -2,7 +2,7 @@
 
 这份文档是写给**客户端 SDK 作者**的：按它实现，客户端就能连上 skyext、在断网后把会话接回来，而不丢请求、不重复扣费。
 
-服务端的设计背景不在这里，在 `docs/design/session_resume.md`。官方 SDK 位于 `sdk/lua/`（`skyext.client.session`，robot 在用）和 `sdk/ts/`（TypeScript，浏览器/小程序）；Lua 侧协议语义的回归测试是 `sdk/lua/skyext/client/session.test.lua`。**新平台的 SDK 请照这份文档实现，不要逐行翻译现有实现**——Lua 实现里混了 skynet 协程的细节，那些是 Lua 侧的事。
+服务端这一侧怎么配、怎么跑见[登录流程](login.md)，设计背景在 `docs/archive/session_resume.md`。官方 SDK 位于 `sdk/lua/`（`skyext.client.session`，robot 在用）和 `sdk/ts/`（TypeScript，浏览器/小程序）；协议语义的回归测试是 `sdk/lua/skyext/client/session.test.lua` 和 `sdk/ts/src/session.test.ts`。**新平台的 SDK 请照这份文档实现，不要逐行翻译现有实现**——Lua 实现里混了 skynet 协程的细节，那些是 Lua 侧的事。
 
 ## 1. 传输
 
@@ -54,7 +54,7 @@ sproto。`example/proto/base.sproto` 定义了包头：
 
 服务端对已经执行过的 request id 回放缓存的响应，不会执行第二遍。换一个新 id 重发，服务端认不出来，扣费和抽卡就会执行两次。
 
-缓存容量由 `session_respcache_count` / `session_respcache_bytes` 限制（默认 64 条 / 16 KiB），覆盖一次断线窗口里的在途请求绰绰有余。
+缓存容量由 `session_respcache_count` / `session_respcache_bytes` 限制（默认 64 条 / 16 KiB），覆盖一次断线窗口里的在途请求绰绰有余。真被挤掉了也不会悄悄重放执行：被淘汰过的 request id 再来会拿到 `REQUEST_EXPIRED`（25），客户端照常重走流程。
 
 重发之后可能收到**两份响应**（另一份是重放过来的）。认领先到的那份，后到的丢掉——但要先计数，见义务二。
 
@@ -82,7 +82,7 @@ sproto。`example/proto/base.sproto` 定义了包头：
 - `login.resume` 的响应
 - `login.ping` 的响应
 
-服务端那一侧的同款名单在 `lualib/skyext/entity/session.lua` 的 `UNCOUNTED_RESPONSE`，两边必须一致。
+官方 SDK 的这份名单在 `sdk/lua/skyext/client/session.lua` 和 `sdk/ts/src/session.ts` 的 `UNCOUNTED_RESPONSE`，两个实现必须一致。服务端 `lualib/skyext/entity/session.lua` 里的同名表只有 `login.resume` 和 `login.ping` 两条：`login.login` 的响应由登录服务在会话建立之前发出，根本不经过会话层的计数收口，不需要列进去。
 
 为什么是这三个：`resume` 的响应如果计数，客户端会在收到重放的旧包之前先把计数加一，下一次自校验立刻失配；`ping` 的响应如果计数，「已发出多少包」就得回答「包括我自己吗」，是现成的差一错误；`login` 发生在会话还不存在的时候。
 

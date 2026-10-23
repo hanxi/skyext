@@ -1,8 +1,6 @@
 # 客户端 SDK 规划（Lua + TypeScript）
 
-> 状态：**已交付**（2026-10）。六个实施阶段全部完成并验证：Lua 全量测试 91/91（含 sdk/lua 语义用例）；sdk/ts 单测 59 过 1 门控跳过、`tsc --noEmit` 零错误；E2E 真服务器全链路绿（含断线续接、凭据轮换）；robot tcp/ws 双传输验收通过；`package game/framework` 产物无 node_modules、sdk/lua 编译为字节码；phaser-game 已迁移（构建通过 + headless 冒烟直连真服务全链路 OK；浏览器手测已自动化完成：Chrome headless 走真实 gamepass OAuth 表单 → 选服 → 建角 → 进游戏 → 两种断网模式续接，14/14 断言通过，脚本见 `example/tools/browser_e2e.mjs`）。使用方法见[客户端 SDK](../guide/client_sdk.md)。
->
-> 以下为原规划记录。与实现的已知出入：语义用例从计划的 11 个扩到 12 个（双实现同基线移植）；小程序 wx transport 以适配示例形式写进 client_sdk.md（未随包发布）。
+> **归档：已交付的实施规划（2026-10）。** 保留作为决策记录：为什么是双实现、nonce 为什么改 `binary`、int64 为什么走 `bigint`、vendor sproto-js 打了哪些补丁。文中「现状」「将要」均指规划当时；现行用法以[客户端 SDK](../guide/client_sdk.md)和代码为准。与规划的出入：语义用例实际为 12 个；小程序 wx transport 只以适配示例写在 client_sdk.md，未随包发布。
 
 为 skyext 提供官方客户端 SDK，按[客户端接入规范](../guide/client_protocol.md)实现全部五条义务，覆盖「拿 token → 选服建角 → 连网关 → 登录 → 断线续接」完整链路。两个实现、一份规范、同一套协议语义测试基线：
 

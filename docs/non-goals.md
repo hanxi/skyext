@@ -16,7 +16,7 @@
 
 **为什么删**：游戏服务器的日志在内网，能读到日志的人权限本来就很高，这层挡不住他。而按字段名匹配必然漏（`gm_token`、`jwt_secret`、`pwd` 都不在名单里），给的是假的安心。代价是每条日志多一次遍历，排查问题时还看不到真实值。
 
-**现在怎么做**：不该进日志的东西，在产生它的地方就别传给 `log`。比如 etcd 的认证请求体整个换成 `AUTH_BODY_OMITTED` 占位符（见 `lualib/skyext/etcd/transport.lua`），而不是指望输出层事后擦。
+**现在怎么做**：不该进日志的东西，在产生它的地方就别传给 `log`。比如 etcd 的认证请求体在记日志时整个换成 `[auth body omitted]`（见 `lualib/skyext/etcd/transport.lua`），而不是指望输出层事后擦。
 
 ## ORM 版本化迁移链
 

@@ -1,6 +1,6 @@
 # 火焰图采集服务
 
-> **状态：原型阶段。** 已有 Lua 层采样原型（`lualib/skyext/profiler.lua`），含 GM 命令注册代码，但仓库内没有其他模块 `require "skyext.profiler"`，服务启动时默认不加载。原型的 hook 仅作用于采样协程，尚不能采集目标服务的业务调用栈。C 层跨服务采样方案（`lualib-src/profiler.c`、`service-src/service_profiler.c`）仅有骨架代码。优先级低于 Entity 系统和目录重构。
+> **状态：原型阶段。** 已有 Lua 层采样原型（`lualib/skyext/profiler.lua`），含 GM 命令注册代码，但仓库内没有其他模块 `require "skyext.profiler"`，服务启动时默认不加载。原型的 hook 仅作用于采样协程，尚不能采集目标服务的业务调用栈。C 层跨服务采样方案（`lualib-src/profiler.c`、`service-src/service_profiler.c`）仅有骨架代码。优先级低。
 
 ## 目标
 
@@ -20,7 +20,9 @@
 **未完成部分：**
 - `target_service` 和 `freq` 参数虽然接收但未实际使用——当前 hook 只绑定采样协程，既不能覆盖本服务的其他业务协程，也无法采样其他 skynet 服务
 - 采样频率固定为每 10000 条指令，与传入的 `freq` 参数无关
-- 无处 `require "skyext.profiler"`，模块不会被加载
+- 没有任何业务模块 `require "skyext.profiler"`，服务启动时它不会被加载；唯一的加载方是单元测试
+  `lualib/skyext/profiler.test.lua`，它用 `loadfile` 在桩好的 `debug` / `skynet` 环境里跑，覆盖会话管理、
+  折叠栈格式化和 GM 命令注册，不涉及真实采样效果
 
 **接入方法**（仅用于研究原型）：在已启动 GM 服务的节点中，由要注册命令的 skynet 服务加载 `require "skyext.profiler"`。这会尝试注册 GM 命令，但传入的 `service` 不会控制采样位置；当前 hook 只绑定在采样协程，不能得到该服务其他业务协程或跨服务的有效火焰图。
 
@@ -28,10 +30,10 @@
 
 | 文件 | 类型 | 编译产物 | 当前状态 |
 |------|------|----------|----------|
-| `lualib-src/profiler.c` | Lua C 模块 | `luaclib/profiler_c.so` | `start()` 返回 `false` + 提示未实现 |
-| `service-src/service_profiler.c` | skynet C 服务 | `cservice/profiler.so` | 加载时打印 "skeleton loaded"，不处理消息 |
+| `lualib-src/profiler.c` | Lua C 模块 | `luaclib/profiler_c.so` | `start()` 返回 `false` + "C profiler not yet implemented"；`result()` 返回 `nil` + 同类提示；`stop()` 直接返回 `true` |
+| `service-src/service_profiler.c` | skynet C 服务 | `cservice/profiler.so` | 初始化打印 `skeleton loaded (not yet functional)`，收到消息只打印 `C service not yet implemented` |
 
-两个文件均在 `build.mk` 中有编译目标，`make build` 可正常编译。
+两个文件均在 `build.mk` 中有编译目标（`SKYEXT_LUA_CLIB` 含 `profiler_c`，`SKYEXT_CSERVICE` 含 `profiler`），`make build` 可正常编译。
 
 > 注：两个 C 源文件中的注释引用了 `docs/plans/profiler_design.md`，该路径不存在，实际即本文件 `docs/design/profiler.md`。
 
@@ -48,25 +50,32 @@ Lua 原型搭起了会话管理、hook 及 folded stack 格式化的代码框架
 
 ### 预期使用接口
 
-沿用 Lua 原型已注册的 GM 命令格式：
+沿用 Lua 原型已注册的 GM 命令格式（GM 口统一要求 `gm_auth_token`，见 `docs/guide/gm_api.md`）：
 
 ```
-# 开始采样：对指定服务采样 10 秒，频率 99Hz
+# 开始采样：对指定服务采样 10 秒，频率 99Hz。缺省 duration = 10、freq = 99
 POST /gm/execute  { "cmd": "profiler_start", "service": ".entity_agent:role:1", "duration": 10, "freq": 99 }
+# 返回 { session_id = N }
 
-# 查询采样状态
-GET  /gm/execute?cmd=profiler_status
+# 查询采样状态：带 session_id 返回那一条，不带返回全部会话
+GET  /gm/execute?cmd=profiler_status&session_id=1
 
 # 获取结果：返回 folded stack 文本，可直接喂给 flamegraph.pl 生成 SVG
 GET  /gm/execute?cmd=profiler_result&session_id=1
 ```
 
+会话状态只有 `sampling` / `completed` / `error` 三种；未完成时 `profiler_result` 返回 `false` 和原因。
+
 ### 数据流
 
-```
-GM 命令 → service_profiler → 注入 debug hook 到目标 Lua 状态
-  → C 侧采样 + 哈希表聚合 → 采样结束 → 返回 folded stack 文本
-  → 可选：服务端调用 flamegraph.pl 生成 SVG，或返回原始数据由客户端处理
+```mermaid
+flowchart LR
+    gm["GM 命令<br/>profiler_start"] --> svc["service_profiler<br/>会话管理"]
+    svc --> hook["注入 debug hook<br/>到目标 Lua 状态"]
+    hook --> sample["C 侧采栈<br/>哈希表聚合"]
+    sample --> folded["folded stack 文本"]
+    folded --> svg["flamegraph.pl 生成 SVG"]
+    folded --> raw["原样返回<br/>由调用方处理"]
 ```
 
 ## 参考项目

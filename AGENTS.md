@@ -29,7 +29,7 @@ skyext 是基于 [skynet](https://github.com/cloudwu/skynet) 的分布式游戏�
 - 例外：skynet 自带模块（如 `skynet`、`skynet.db.mongo`）、`orm.*`、服务局部库和游戏层自有模块。`service/logger/` 的局部裸 `require` 会通过 `SERVICE_PATH` 解析，不必机械地加 `skyext.` 前缀。
 - Lua 风格遵循现有代码：`local M = {} ... return M`、`require "skyext.config"`；记录日志用 `skyext.log`，错误码放在 `skyext.errcode` 或游戏层对应模块中。
 - `lualib/loader.lua` 的 `package.path` 从高到低依次为：服务独有库 → 节点根目录 → 节点独有库 → `example/lualib/` → 游戏生成物 `example/build/lualib/` → 客户端 SDK `sdk/lua/` → 引擎 `lualib/` → `skynet/lualib/`。新模块先确认所属层级，避免同名遮蔽。
-- 每个服务的启动链是 `lualib/loader.lua` → `require "skyext"`（解析至 `lualib/skyext/init.lua`）→ 服务自身的 `main.lua`。初始化回调加载应用配置与日志。
+- 每个服务的启动链是 `lualib/loader.lua` → `require "skyext"`（解析至 `lualib/skyext/init.lua`）→ 服务自身的入口文件（节点为 `example/nodes/<start>/main.lua`，引擎服务为 `service/<name>.lua` 或 `service/<name>/main.lua`，按 `paths.conf.lua` 的 `luaservice` 解析）。初始化回调加载应用配置与日志。
 - Lua C 子模块遵循其导出符号：例如 `require "traceback.c"` 从 `traceback.so` 查找 `luaopen_traceback_c`。
 
 ## 配置与工作目录
@@ -55,13 +55,13 @@ make build                                  # 构建引擎与示例
 ./bin/skyext generate proto                 # 生成 sproto
 ./bin/skyext generate schema                # 生成 example/build/lualib/game/orm/，需要 stylua
 ./bin/skyext schema check                   # 改过 schema 后必跑：对比基线，拦下不兼容改动
-./bin/skyext test                           # 运行 *.test.lua 测试
-make -C example lint                       # 示例游戏的 luacheck
+./bin/skyext test                           # 扫描 lualib/、service/、example/、sdk/ 下的 *.test.lua
+make -C example lint                        # 示例游戏的 luacheck
 ```
 
-Unix/macOS 的 CLI 为 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`（先构建本平台二进制）。`make proto` / `make schema` 是 `example/Makefile` 的目标，不是顶层 Makefile 的目标；不要使用不存在的 `make autocode`。CI 在仓库根目录使用 `luacheck .`、`stylua --check .`，还会执行测试和平台构建。生成器使用独立的 `3rd/sprotodump` 子模块（许可证尚未核实，框架包中不包含），勿将游戏 schema 写入引擎的 `lualib/orm/`。
+Unix/macOS 的 CLI 为 `./bin/skyext`，Windows CMD/PowerShell 使用 `bin\skyext.bat`（先构建本平台二进制）。`make proto` / `make schema` 是 `example/Makefile` 的目标，不是顶层 Makefile 的目标；不要使用不存在的 `make autocode`。CI 在仓库根目录运行 `lua scripts/ci/check_paths.lua .`（检查搜索路径与裸 require）、`luacheck .`、`stylua --check .`，还会跑测试与覆盖率门槛、TypeScript SDK 的类型检查和测试，以及多平台构建打包。生成器使用独立的 `3rd/sprotodump` 子模块（许可证尚未核实，框架包中不包含），勿将游戏 schema 写入引擎的 `lualib/orm/`。
 
-测试文件与源码相邻，命名 `*.test.lua`；需要 MongoDB 或 etcd 的测试先启动相应服务。若改变 API、配置或构建规则，更新对应使用指南及测试；可通过 `./bin/skyext --help` 核对命令选项。
+测试文件与源码相邻，命名 `*.test.lua`，每个文件在独立的 skynet 进程中运行；依赖 MongoDB 或 etcd 的用 `*.integration.test.lua` 命名，需要 `SKYTEST_INTEGRATION=1` 才会执行，并先启动相应服务。若改变 API、配置或构建规则，更新对应使用指南及测试；可通过 `./bin/skyext --help` 核对命令选项。
 
 ## Git 与提交约定
 

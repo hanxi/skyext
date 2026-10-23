@@ -1,5 +1,5 @@
 -- Lua 客户端 SDK：会话层。规范与五条义务的完整细节见 docs/guide/client_protocol.md，
--- 服务端设计背景见 docs/design/session_resume.md。TypeScript 对等实现在 sdk/ts/，
+-- 服务端设计背景见 docs/archive/session_resume.md。TypeScript 对等实现在 sdk/ts/，
 -- 两者共享同一套协议语义测试基线（session.test.lua / session.test.ts）。
 -- robot（example/nodes/robot）用它跑连通性测试，同时充当本模块的端到端验收用例。
 --

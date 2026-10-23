@@ -6,7 +6,7 @@ GM（Game Master）命令系统提供了一套 HTTP RESTful API，用于执行�
 
 **基础 URL**: `http://localhost:<gm_http_port>`（代码默认 `9090`，由各节点 `gm_http_port` 配置覆盖；以下示例使用 RoleNode1 的端口 `9092`）
 
-GM HTTP 服务是独立的命名实例，与节点的业务 HTTP 端口（如 Account 的 `account_http_port`）互不共用路由：业务端口不会暴露 `/gm/*`，GM 端口也不会暴露业务接口。监听地址默认只绑定 `127.0.0.1`，需要对外暴露时显式配置 `gm_http_host`（务必同时配好 `gm_auth_token` 并限制来源）。
+GM HTTP 服务是独立的命名实例，与节点的业务 HTTP 端口（如 Account 的 `account_http_port`）互不共用路由：业务端口不会暴露 `/gm/*`，GM 端口也不会暴露业务接口。监听地址默认只绑定 `127.0.0.1`，需要对外暴露时显式配置 `gm_http_host`（务必同时配好 `gm_auth_token` 并限制来源）。HTTP agent 数量默认 2，由 `gm_agent_count` 配置；连接与超时上限见 [HTTP 服务端](http_server.md#资源上限)。
 
 所有接口都要带 token，详见[鉴权](#鉴权)。
 
@@ -216,38 +216,74 @@ curl -X POST http://localhost:9092/gm/execute \
 
 ---
 
-## 常见命令示例
+## 命令清单
 
-### 系统管理命令
+命令由各服务自行注册，所以一个节点上有哪些命令取决于它起了哪些服务，以 `/gm/list` 的返回为准。下表是引擎内置的部分。
+
+### 系统与调试
+
+`service/gm_sys.lua` 注册（由 `.gm` 用 `uniqueservice` 拉起，所有节点都有）。`address` 参数接受 `:01000002`、`.gm` 这类本地名，或不带前缀的十六进制。
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `list` | — | 列出 `.launcher` 拉起的服务，返回 `{地址 = 启动命令}` |
+| `service` | — | 列出 unique service |
+| `stat` | `timeout` | 各服务的消息数、CPU、队列等统计 |
+| `mem` | `timeout` | 各服务的 Lua 堆占用 |
+| `gc` | `timeout` | 让每个 Lua 服务做一次 GC |
+| `cmem` | — | 按服务统计的 C 内存占用 |
+| `jmem` | — | jemalloc 统计 |
+| `dumpheap` | — | jemalloc heap dump |
+| `profactive` | `flag` | 开关 jemalloc heap profiling，`on` / `off`；不传只返回当前状态 |
+| `netstat` | — | 网络连接统计 |
+| `kill` | `address` | 杀掉服务 |
+| `exit` | `address` | 让服务自己退出（debug EXIT） |
+| `start` | `service`、`args` | 启动一个 lua 服务 |
+| `log` | `service`、`args` | 启动 lua 服务并打开消息日志 |
+| `snax` | `service`、`args` | 启动 snax 服务 |
+| `clearcache` | — | 清 Lua 代码缓存 |
+| `inject` | `address`、`filename`、`args` | 把节点上的 lua 文件注入到服务里执行 |
+| `dbgcmd` | `address`、`cmd`、`args` | 执行任意 debug 命令 |
+| `task` / `uniqtask` | `address` | 查看服务的协程 / 唯一任务 |
+| `killtask` | `address`、`threadname` | 杀掉指定协程 |
+| `info` | `address`、`args` | 服务自报的 INFO |
+| `ping` | `address` | 往返耗时（1/100 秒） |
+| `logon` / `logoff` | `address` | 开关该服务的消息日志 |
+| `signal` | `address`、`sig` | 给服务发信号，不带 `sig` 时为默认信号 |
+| `trace` | `address`、`proto`、`flag` | 开关协议 trace |
+| `getenv` | `name` | 读 skynet 配置项 |
+| `setenv` | `name`、`value` | 写 skynet 配置项 |
+
+`stat` / `mem` / `gc` 的 `timeout` 单位是 skynet 的 1/100 秒，不传默认 300（3 秒），传 `0` 或负数表示不限时。
+
+### 重载
+
+| 命令 | 注册于 | 参数 | 说明 |
+|------|--------|------|------|
+| `reload_res` | `lualib/skyext/res.lua`（res 服务） | `filepaths` | 重载策划配置表：只换内容真的变了的文件，再广播 `res_reload` 事件；不传 `filepaths` 则扫 `res_path`、`res_lazy_path` 下全部文件。`filepaths` 是数组，只能用 POST JSON 传 |
+| `reload_sproto_schema` | `service/sproto_loader.lua` | — | 重新加载已载入的全部 sproto schema |
+| `reload_orm_schema` | `lualib/skyext/dbmgr.lua`（dbmgr 服务） | — | 重新 require `game.orm.schema` 并就地替换，见[热更新](hotfix.md#orm-schema-热更) |
+
+这三条都是热更流程里的步骤，单独执行见[热更新](hotfix.md)。
+
+`lualib/skyext/profiler.lua` 里还有 `profiler_start` / `profiler_status` / `profiler_result`，但仓库内没有服务 `require` 它，默认不加载，也还是原型状态。
+
+### 示例命令
 
 ```bash
 # 列出所有服务
 curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=list"
 
-# 查看服务统计信息
-curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=stat"
-
-# 查看内存状态
-curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=mem"
-
-# 强制垃圾回收
-curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=gc"
-
-# 重载资源
-curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=reload_res"
-```
-
-### 服务控制命令
-
-```bash
 # 杀死指定服务
 curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=kill&address=:01000002"
 
-# 退出服务
-curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=exit&address=:01000002"
-
 # 启动新服务
 curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=start&service=test&args=arg1"
+
+# 重载指定的几张配置表
+curl -X POST http://localhost:9092/gm/execute \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"cmd": "reload_res", "filepaths": ["example/res/hero.lua"]}'
 ```
 
 ---
@@ -260,6 +296,8 @@ curl -H "Authorization: Bearer <token>" "http://localhost:9092/gm/execute?cmd=st
 
 - HTTP Header: `Authorization: Bearer <token>`
 - 请求参数（query 或 body）: `token=<token>`
+
+`cmd`、`services`、`token` 三个字段不会作为命令参数下传，其余字段原样进 `params`。
 
 ### 配 token
 
@@ -310,7 +348,7 @@ curl -X POST http://localhost:9092/gm/execute \
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| hotfix_dir | string | 是 | 相对于 skynet `root`（示例为仓库根目录）的热更包路径，如 `example/hotfix/20260831-patch1`；CLI 的 `hotfix refresh` 参数则相对于 `example/` |
+| hotfix_dir | string | 是 | 相对于 skynet `root`（示例为仓库根目录）的热更包路径，如 `example/hotfix/20260831-patch1`；必须是不含 `..` 的相对路径，与 CLI `hotfix refresh <dir>` 的取值完全一致 |
 | mode | string | 否 | `run`（默认）或 `dry_run`（仅预演） |
 | confirm | string | 否 | 执行模式下必须传 `"true"` |
 
@@ -356,9 +394,9 @@ curl -X POST http://localhost:9092/gm/execute \
 |------|------|------|------|
 | target_type | string | 否 | 按实体类型过滤 |
 | target_id | string | 否 | 按实体 ID 过滤；能转成整数就按整数匹配，否则按字符串 key |
-| limit | string | 否 | 最多返回条数，默认 50；必须是 ≥1 的整数 |
+| limit | string | 否 | 最多返回条数，默认 50，上限 500（超过按 500 截断）；必须是 ≥1 的整数 |
 
-返回 `{count, messages}`。每条只含 `msg_id`、`seq`、`target_type`、`target_id`、`cmd`、`attempts`、`create_time`、`dead_time`、`dead_reason`——**不含 `args`**：那是业务负载，可能带玩家数据，不该经 GM 接口整份吐出来。要看负载请直接查库。
+返回 `{count, messages}`，按 `dead_time` 升序（最早进队的在前）。每条只含 `msg_id`、`seq`、`target_type`、`target_id`、`cmd`、`attempts`、`create_time`、`dead_time`、`dead_reason`——**不含 `args`**：那是业务负载，可能带玩家数据，不该经 GM 接口整份吐出来。要看负载请直接查库。
 
 ### dlq_replay — 重放一条死信
 
@@ -425,7 +463,8 @@ node_shutdown_api.add_hook("stop_accepting", "stop_accepting")
 
 | 命令 | 参数 | 说明 |
 |------|------|------|
-| `realm_list` | — | 查看当前目录（servers / games / zones） |
+| `realm_list` | — | 查看当前目录（servers / games / zones / gates） |
+| `realm_gates` | — | 只看当前在线的网关，返回 `{<节点名> = {tcp_addr, ws_url, weight}}` |
 | `realm_open` | `server`、`game`、`name`、`tag`、`zone` | 开服。`game` 不存在时一并创建，此时必须给一个已存在的 `zone`；`tag` 默认是大写的 `server` |
 | `realm_set_zone` | `game`、`zone` | 调战区，`zone` 不存在时自动创建 |
 
@@ -475,7 +514,7 @@ curl -X GET "http://localhost:9092/gm/execute?cmd=metrics" \
 2. **服务地址**：执行命令前请确认服务地址的正确性
 3. **参数验证**：某些命令的参数有特定格式要求，请参考具体命令的文档
 4. **多服务执行**：不指定 `services` 时，GM 服务会逐个调用所有已注册该命令的服务；当前实现是顺序调用，并非并发
-5. **超时设置**：某些命令支持 `timeout` 参数来设置超时时间（单位：秒）
+5. **超时设置**：`timeout` 参数的单位各命令不同——`stat` / `mem` / `gc` 是 skynet 的 1/100 秒，`shutdown` 是秒
 
 ---
 
@@ -486,7 +525,7 @@ curl -X GET "http://localhost:9092/gm/execute?cmd=metrics" \
 - 命令列表浏览和搜索
 - 参数表单填写
 - 命令执行和结果查看
-- 响应式设计，支持移动端访问
+- 页面顶部的 token 输入框存在浏览器 localStorage 里，之后的请求自动带 `Authorization` 头
 
 ---
 
@@ -518,9 +557,13 @@ GM_CMD.my_command = {
 gm_api.register(GM_CMD)
 ```
 
+`desc` 和 `handler` 必填，`params` 可选。注册时把 handler 以 `GM_<大写命令名>` 挂进本服务的命令表（经 `skyext.cmd_api`），所以服务必须用 `cmd_api.dispatch` 接管 lua 消息。
+
+命令名在节点内是全局的：多个服务注册同一个名字会被归并成一条命令，执行时在所有注册过它的服务上各跑一次（`service_count` 就是这个数）；`desc`、`params` 不一致时以最后注册的为准并打 WARN 日志。
+
 ### 命令处理函数规范
 
-- **参数**：接收一个 `params` 表，包含所有传入的参数
+- **参数**：接收一个 `params` 表，包含所有传入的参数（值都是 HTTP 传来的字符串，POST JSON 则保留原类型）
 - **返回值**：返回两个值
   - 第一个值：布尔类型，表示执行是否成功
   - 第二个值：任意类型，成功时为结果数据，失败时为错误信息

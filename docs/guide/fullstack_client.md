@@ -7,18 +7,7 @@
 | [gamepass](https://github.com/hanxi/gamepass) | OAuth2 鉴权服务，签发登录 JWT | Go + Gin + MongoDB | 3180 |
 | [phaser-game](https://github.com/hanxi/phaser-game) | 示例浏览器客户端 | TypeScript + Phaser 3 + Bun | 静态页 3000 |
 
-> **goscon 去哪了？** 早期 phaser-game 用 `sconn-client`（goscon 的 SCP 协议库）接入，需要 goscon 做 WebSocket → TCP 代理。迁移到官方 [客户端 SDK](client_sdk.md)（`skyext-client`）之后，客户端直连 `gate_ws` 的 `ws_url`，断线续接由会话层原生完成（凭据轮换 + 服务端幂等重放，比 SCP 的字节级续接更强——请求不会被执行两次），goscon 已从示例链路退役。它仍是 submodule（`example/tools/goscon`），只有真的需要字节级连接续接的场景才用，见根 README 的说明。
-
-```mermaid
-graph LR
-    B[浏览器 phaser-game :3000] -->|1 OAuth 登录| GP[gamepass :3180]
-    GP -->|2 签发 JWT iss=skyext aud=skyext-game| B
-    B -->|3 HTTP /servers /roles /create_role /gates| A[account :8080/:8081]
-    B -->|4 WebSocket binary 帧（SDK 直连 ws_url）| GW[gate_ws :7013/:7023]
-    GW -->|5 sproto login.login / 业务包| Role[角色实体 rolenode1/2]
-
-    style GW fill:#e8f5e8
-```
+整条链路的拓扑见[架构总览的「示例部署」](../overview.md#示例部署)，OAuth 取 token 到 `login.login` 的时序见[登录流程图](login_diagram.md#登录时序)。本文只讲怎么把这几个进程在本机跑起来并联调。
 
 ## 前置条件
 
@@ -38,7 +27,7 @@ graph LR
 ./bin/skyext serve role2      # gate TCP 7022 / WS 7023
 ```
 
-`phaser-game/public/serverlist.json` 只剩一个字段 `account_hosts`：SDK 随机挑一个发请求、传输失败自动换下一台，只想起单 account 的话把 8081 从列表里去掉即可（该文件在 phaser-game 仓库内，属于客户端侧配置）。服务器列表和网关地址都不在客户端配置里——分别来自 `GET /servers` 和 `GET /gates`。
+`phaser-game/public/serverlist.json` 只有一个字段 `account_hosts`：SDK 随机挑一个发请求、传输失败自动换下一台，只想起单 account 的话把 8081 从列表里去掉即可（该文件在 phaser-game 仓库内，属于客户端侧配置）。服务器列表和网关地址都不在客户端配置里——分别来自 `GET /servers` 和 `GET /gates`。
 
 ## 2. 启动 gamepass
 
@@ -56,12 +45,14 @@ go build -o gamepass .
 | `JWT_ACCESS_SECRET` | `login_jwt_secret` | `your_access_secret` | HS256 签名密钥，两边必须一致 |
 | `JWT_ISSUER` | `login_jwt_issuer` | `skyext` | 不配置则 JWT 不带 `iss`，skyext 会拒绝 |
 | `JWT_AUDIENCE` | `login_jwt_audience` | `skyext-game` | 同上，对应 `aud` |
-| `CALLBACK_WHITELIST` | — | `^http://localhost:[0-9]+/.*$` | 回调地址白名单（正则），必须能匹配客户端页面地址 |
+| `CALLBACK_WHITELIST` | — | `^http://localhost:[0-9]+/.*$` | 回调地址白名单，逗号分隔的正则列表，必须能匹配客户端页面地址 |
+
+`.env.example` 里 `CALLBACK_WHITELIST` 的默认值要求回调路径是 `/callback`，匹配不上 phaser-game 的回调地址 `http://localhost:3000/`，**必须改成上表那样的值**，否则登录第一步就被拒。
 
 本地联调用**本地账号**（local provider）即可，不需要 GitHub OAuth：
 
-- `OPENID_CONNECT_KEY` 留空——否则 gamepass 启动时会去连 `OPENID_CONNECT_DISCOVERY_URL`（默认 3181），连不上直接退出。本地账号密码登录走 gamepass 自己的 `/login` 页面，不经过 OIDC。
-- `GITHUB_KEY`/`GITHUB_SECRET` 保持占位即可，"Login with GitHub" 按钮不可用但不影响其余流程；要试 GitHub 登录需填真实的 OAuth App 凭据。
+- `OPENID_CONNECT_KEY` 留空——非空时 gamepass 启动就去连 `OPENID_CONNECT_DISCOVERY_URL`（`.env.example` 里是 3181），连不上直接退出。本地账号密码登录走 gamepass 自己的 `/login` 页面，不经过 OIDC。
+- `GITHUB_KEY` 留空即不注册 GitHub provider。phaser-game 的登录页固定画两个按钮，"Login with GitHub" 点了会报错，不影响其余流程；要试 GitHub 登录需填真实的 OAuth App 凭据。
 
 首次使用先到 `http://localhost:3180/register` 注册一个本地账号（或让客户端登录页跳转后注册）。
 
@@ -74,13 +65,12 @@ cd example/tools/phaser-game
 bun install
 # 同步协议文件（见下方说明，proto 变更后必须重做）
 cp ../../build/proto/sproto.spb public/resources/protocol/sproto.spb
-bun run build
-bun run serve        # 或任意静态服务器，如 python3 -m http.server 3000 -d dist
+bun run serve        # 构建 + bunx serve dist -p 3000；只要产物用 bun run build
 ```
 
 SDK 依赖是 `file:../../../sdk/ts`（skyext 仓库内的 `sdk/ts`），`bun install` 会把它链接进 `node_modules/skyext-client`，所以 phaser-game 必须在 skyext 检出内构建。
 
-**协议文件必须与服务端一致**：客户端登录时 SDK 自动带上 `sproto.spb` 的 checksum，服务端 `proto_checksum_enable = true` 时会校验，不一致返回 `code = 103`（PROTO_CHECKSUM）。凡是跑过 `make -C example proto`（协议有变更），都要重新执行上面的 `cp` 并重新 build。
+**协议文件必须与服务端一致**：客户端登录时 SDK 自动带上 `sproto.spb` 的 checksum，服务端 `proto_checksum_enable = true` 时会校验，不一致返回 `code = 103`（`PROTO_CHECKSUM`）。凡是跑过 `make -C example proto`（等价于 `./bin/skyext generate proto`），都要重新执行上面的 `cp` 并重新 build。
 
 浏览器打开 `http://localhost:3000`：
 
@@ -88,9 +78,22 @@ SDK 依赖是 `file:../../../sdk/ts`（skyext 仓库内的 `sdk/ts`），`bun in
 2. 登录成功自动带 token 跳回游戏页；
 3. 选服（`/servers` 拉取，未开放的服置灰）→ 建角或选择已有角色（`/roles`、`/create_role`）；
 4. SDK 经 `/gates` 拿到在线网关的 `ws_url`，WebSocket 直连（连不上自动换下一台），`login.login` 完成登录，进入游戏场景；
-5. 之后断网/切网都不用管：会话层自动续接（凭据轮换、在途请求按原 id 重发）——业务无感，不会重新登录。验证断线续接时注意：**Chrome 的 offline 模拟（含 DevTools Network 面板的 Offline）不会断开已建立的 WebSocket**（实测 Chrome 150，DevTools 与 CDP `Network.emulateNetworkConditions` 同机制），用它「断网」看不出任何现象；要用操作系统级断网/切网（拔网线、关 Wi-Fi），或跑自动化脚本 `example/tools/browser_e2e.mjs`（`npm i playwright-core` 后 `node browser_e2e.mjs [服序号]`，需全链已起）。脚本用两种方式切线并断言续接：实例级 `close()`（对应 close 事件驱动的重连）与 `send` 黑洞（无 close 事件，逼心跳 15s×2 超时自检，即规范义务 4）；两条路径都验证「offline → online 状态序列中无 relogin、在途请求按原 id 完成、nonce 轮换」。控制台里对未启动的 account host（如只起 account1 时 8081 的 `ERR_CONNECTION_REFUSED`）是 SDK 按设计在轮换下一台，不是故障。
+5. 之后断网/切网都不用管：会话层自动续接（凭据轮换、在途请求按原 id 重发）——业务无感，不会重新登录。
 
-客户端在浏览器侧跑，`serverlist.json` 里的 `localhost`/`127.0.0.1` 指的是**浏览器所在机器**；`ws_url` 则是**服务端注册进 realm 的地址**（`gate_public_host` / `ws_public_url`，默认取 `cluster_host`）。服务端在远程开发机时，要么做端口转发（3000/3180/8080/8081/7013/7023），要么把 `gate_public_host`/account 地址配成浏览器可达的实际地址后重启节点、重新 build。
+控制台里对未启动的 account host（如只起 account1 时 8081 的 `ERR_CONNECTION_REFUSED`）是 SDK 按设计在轮换下一台，不是故障。
+
+客户端在浏览器侧跑，`serverlist.json` 里的 `127.0.0.1` 指的是**浏览器所在机器**；`ws_url` 则是**服务端注册进 realm 的地址**（`gate_public_host` / `ws_public_url`，默认取 `cluster_host`）。服务端在远程开发机时，要么做端口转发（3000/3180/8080/8081/7013/7023），要么把 `gate_public_host`/account 地址配成浏览器可达的实际地址后重启节点、重新 build。
+
+## 4. 验证断线续接
+
+**Chrome 的 offline 模拟（含 DevTools Network 面板的 Offline）不会断开已建立的 WebSocket**（DevTools 与 CDP `Network.emulateNetworkConditions` 同机制），用它「断网」看不出任何现象。要么用操作系统级断网/切网（拔网线、关 Wi-Fi），要么跑自动化脚本 `example/tools/browser_e2e.mjs`：
+
+```bash
+cd example/tools && npm i playwright-core
+node browser_e2e.mjs        # 可带服序号：0=s1 1=s2 2=s3，默认 s3
+```
+
+需要全链已起、本机有 Chrome（默认 `/usr/bin/google-chrome-stable`，可用 `CHROME_PATH` 指定），且 gamepass 里已注册测试账号（默认 `e2e@test.local` / `pass1234`，可用 `E2E_EMAIL` / `E2E_PASSWORD` 指定）；截图与控制台日志写到当前目录的 `browser_e2e_shots/`。脚本用两种方式切线并断言续接：实例级 `close()`（对应 close 事件驱动的重连）与 `send` 黑洞（无 close 事件，逼心跳 15s×2 超时自检，即规范义务 4）；两条路径都验证「offline → online 状态序列中无 relogin、在途请求按原 id 完成、nonce 轮换」。
 
 ## 无浏览器验证（headless E2E）
 
@@ -126,26 +129,20 @@ console.log(await client.request("role.login_info"));
 client.close();
 ```
 
-`role.login_info` 返回 `{"code":0,"info":{...}}` 即全链路通过。没有 gamepass 时把 token 来源换成 `client.account.devLogin("e2e")`（仅开发环境开放）。
+`role.login_info` 返回 `{"code":0,"info":{...}}` 即全链路通过。没有 gamepass 时把 token 来源换成 `client.account.devLogin("e2e")`（仅开发环境开放）。`role.rid` 是 snowflake ID（`lualib/skyext/snowflake.lua`），超过 JS 安全整数时 SDK 解成 `bigint`，原样传回即可，不要 `Number()` 它——细节见[客户端 SDK](client_sdk.md) 的 int64 约定。
 
 > 断线续接的验证不需要浏览器：机器人（`./bin/skyext serve robot`）在 tcp 和 ws 两种传输上各跑一遍断线续接用例；SDK 自己的全链路测试在 `sdk/ts`（`SKYEXT_E2E=1 bun test test/e2e`），含「在途请求跨重连按原 id 完成」。
-
-## rid 与 JS 安全整数
-
-rid 是 snowflake ID（`lualib/skyext/snowflake.lua`）。SDK 对超过 2^53 的整数全程用 `bigint`（JSON 侧 `parseJson`、sproto 侧 int64 补丁，见[客户端 SDK](client_sdk.md) 的 int64 约定），**rid 无损往返，浏览器客户端不再受 `Number.MAX_SAFE_INTEGER` 限制**。业务代码注意一条：拿到 `RoleInfo.rid` 后原样传回（`enterGame`、协议参数都接受 `bigint | number`），不要 `Number()` 它。
-
-历史背景：迁移前的 phaser-game 用 double 传 rid，为此雪花位宽被压到 `MACHINE_BIT + SEQUENCE_BIT <= 21`（最大 rid = 2^53-1，代码里有 assert）。这个 assert 保留不动——放宽位宽是服务端决策，与客户端无关。位宽调整（2026-10）之前生成的超大 rid 旧角色，现在 SDK 客户端也能直接登录，不再需要删库重建。
 
 ## 常见问题
 
 | 现象 | 原因与处理 |
 |------|-----------|
-| 登录返回 `code=22`（internal error），role 节点日志有 `dest address type (nil)` | 节点冷启动后立刻登录，服务发现/cluster sender 还没就绪的竞态。等几秒重试即可；持续出现才需要排查 etcd |
+| 登录返回 `code=22`（`ENTITY_LOAD_FAILED`，`sproto_api` 拿它当内部错误码），role 节点日志有 `dest address type (nil)` | 节点冷启动后立刻登录，服务发现/cluster sender 还没就绪的竞态。等几秒重试即可；持续出现才需要排查 etcd |
 | 登录返回 `code=100`（ROLE_NOT_EXIST） | 角色不属于该账号，或 `login.login` 报的 server 不是角色的出生服 |
 | 登录返回 `code=103`（PROTO_CHECKSUM） | `sproto.spb` 没同步，重做第 3 步的 `cp` + build |
 | 登录返回 `code=24`（RESUME_UNAVAILABLE） | 续接不了（重放缓冲溢出/计数越界），SDK 会自动清凭据走完整登录，无需处理；频繁出现才需要查服务端会话配置 |
 | gamepass 启动即退出，日志有 `dial tcp 127.0.0.1:3181 ... refused` | `OPENID_CONNECT_KEY` 没留空，启动时在连 OIDC discovery 地址 |
-| gamepass 返回 `Provided callback_url is not allowed` | `CALLBACK_WHITELIST` 正则没匹配上客户端页面地址（默认回调是 `http://localhost:3000/`） |
+| gamepass 返回 `Provided client_callback_url is not allowed`（走 `/auth/local` 入口）或 `Provided callback_url is not allowed`（直接 POST `/auth/local/login`、`/auth/local/register`） | `CALLBACK_WHITELIST` 正则没匹配上客户端页面地址（phaser-game 的回调是 `http://localhost:3000/`） |
 | skyext 侧日志 `invalid issuer` / `invalid audience` | gamepass 的 `JWT_ISSUER`/`JWT_AUDIENCE` 与 `login_jwt_issuer`/`login_jwt_audience` 不一致（或没配） |
 | 客户端连 `ws_url` 收到乱码或直接断开 | 连错端口了：`ws_port` 上是裸 WebSocket 二进制帧，`gate_port` 上是 2 字节大端长度前缀的 TCP 流，两者不能混 |
 | `/gates` 返回空 | 没有在线的游戏节点（网关键挂在节点租约上），先起 role1/role2 |

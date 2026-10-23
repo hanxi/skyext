@@ -68,7 +68,7 @@ export class SkyextClient {
     }
 
     /** 当前续接凭据（number[] 字节数组），null = 下次重连只能走完整登录。
-     *  暴露它是为了可观测性：续接成功后凭据必须轮换（docs/design/session_resume.md） */
+     *  暴露它是为了可观测性：续接成功后凭据必须轮换（docs/archive/session_resume.md） */
     get nonce(): unknown {
         return this.session?.nonce ?? null;
     }

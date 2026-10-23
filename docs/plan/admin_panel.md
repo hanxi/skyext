@@ -1,18 +1,25 @@
 # 管理后台
 
-> **状态：规划草案。** 完整独立运营后台未实现；目前仅有轻量 GM Web 页面（`public/gm.html`）和 GM HTTP 服务（`service/gm.lua`、`service/gm_sys.lua`）。etcd 服务发现组件（`lualib/skyext/cluster_discovery.lua`）已实现，但游戏节点尚未向 etcd 注册 GM Web 地址——后台通过 etcd 自动发现节点属于规划目标。
+> **状态：规划草案。** 独立的运营后台没有实现。目前只有轻量 GM 能力：GM HTTP 服务（`service/gm.lua`）、skynet 调试命令包装（`service/gm_sys.lua`）、业务侧的命令注册接口（`lualib/skyext/gm_api.lua`）和一个单页命令面板（`public/gm.html`）。本文描述的多用户权限、节点自动发现和功能模块都还是目标。
+
+## 现状
+
+- **GM HTTP 服务**：`service/gm.lua` 起一个独立的 `skyext.http_server` 实例（路由 `skyext.gm_router`，默认监听 `127.0.0.1`，端口 `gm_http_port`，示例里是 9090–9094），对外只有列命令和执行命令两个接口，鉴权是配置里的单个 `gm_auth_token`。命令由各服务用 `gm_api.register` 注册到进程内的 `.gm`，一条命令可以对应多个服务。
+- **命令面板**：`public/gm.html` 是一个单页，填 token 后列出当前节点注册的命令、搜索、按参数表单执行。
+- **操作记录**：`gm.lua` 把每次执行记成一行日志（调用方、命令、成败），没有结构化的审计存储。
+- **节点发现**：没有。每个节点的 GM 端口要人工知道；面板只能连一个节点。
 
 ## 架构
 
 采用前后端分离开发模式。后端技术栈待定（不限于 skynet）。后台与游戏节点之间通过 GM HTTP 接口交互，不使用 skynet cluster 直连（区别于 [skynet-admin](https://github.com/hanxi/skynet-admin) 的 cluster 方案）。
 
-- **节点发现（规划）**：游戏节点启动时向 etcd 注册 GM Web 服务的 IP 和端口，后台通过 etcd 自动发现节点。当前 `cluster_discovery` 已实现通用服务注册，但 GM 服务尚未调用注册接口，需补充接入。
-- **权限模型**：多用户登录，基于角色的权限控制（如只读用户仅能查询）。
+- **节点发现**：游戏节点启动时把 GM HTTP 的地址注册到 etcd，后台从 etcd 发现在线节点。服务注册与发现的通用组件 `lualib/skyext/cluster_discovery.lua` 已经有了（注册/注销挂在节点租约上，进程没了键跟着消失），GM 服务还没调用它；网关把自己的接入地址上报进区服目录（`service/realm.lua` 的 `register_gate`）是现成的参照实现。
+- **权限模型**：多用户登录，基于角色的权限控制（如只读用户仅能查询）。当前只有一个共享 token，分不出人也分不出权限。
 - **GM 接口文档**：[GM 命令接口](../guide/gm_api.md)
 
 ## 功能模块
 
-以下为预期功能范围，按优先级分为三个阶段。
+以下为预期功能范围，按优先级分为三个阶段。现有的 GM 命令已经覆盖其中一部分动作——热更新（`hotfix`）、停服（`shutdown`）、开服与调战区（`realm_open` / `realm_set_zone`）、发邮件（`send_mail`）、死信队列、配置与资源重载、性能采样——其余都要新写。完整命令表见 [GM 命令接口](../guide/gm_api.md)。
 
 ### 第一阶段：核心运维
 
