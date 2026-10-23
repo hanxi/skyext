@@ -19,6 +19,3 @@
 [submodule "example/tools/phaser-game"]
 	path = example/tools/phaser-game
 	url = https://github.com/hanxi/phaser-game.git
-[submodule "example/tools/goscon"]
-	path = example/tools/goscon
-	url = https://github.com/hanxi/goscon.git

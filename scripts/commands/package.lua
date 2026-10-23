@@ -156,9 +156,9 @@ local function package_game(ctx, args)
                 if first == "dist" or first == "3rd" or relative == "skyext.zip" then
                     return false
                 end
-                -- 本地联调用的配套仓库（OAuth 服务 / WS 网关 / 浏览器客户端），不进游戏部署包
+                -- 本地联调用的配套仓库（OAuth 服务 / 浏览器客户端），不进游戏部署包
                 local tool = relative:match("^tools/([^/]+)")
-                if tool == "gamepass" or tool == "goscon" or tool == "phaser-game" then
+                if tool == "gamepass" or tool == "phaser-game" then
                     return false
                 end
                 for _, volume in ipairs({
@@ -198,6 +198,11 @@ local function package_game(ctx, args)
             end
         end
         local excluded = {
+            -- 本地联调用的配套仓库与浏览器验收脚本，不进游戏部署包（phaser-game 的
+            -- node_modules 里还有跨目录符号链接，fs.walk 遇到会直接断言失败）
+            ["example/tools/gamepass"] = true,
+            ["example/tools/phaser-game"] = true,
+            ["example/tools/browser_e2e.mjs"] = true,
             ["example/tools/mongodb/db"] = true,
             ["example/tools/etcd/etcd1_data"] = true,
             ["example/tools/etcd/etcd2_data"] = true,
@@ -215,11 +220,6 @@ local function package_game(ctx, args)
         }) do
             add_tree(fs.join(root, directory), directory, function(relative)
                 local path = directory .. "/" .. relative
-                if relative:match("[^/]+$") == "node_modules" then
-                    -- 配套工具仓库的依赖树：不进部署包，且 .bin 里有跨目录符号链接，
-                    -- fs.walk 遇到会直接断言失败
-                    return false
-                end
                 if path:match("%.test%.lua$") or path:match("^example/etc/%.skytest_.*%.conf%.lua$") then
                     return false
                 end
