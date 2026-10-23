@@ -429,6 +429,14 @@ LUAMOD_API int
 luaopen_crypto(lua_State* L) {
     luaL_checkversion(L);
 
+    /* skynet 静态链接并导出 jemalloc（-Wl,-E），进程里所有 DSO 的 malloc/free
+     * 都被它接管。OpenSSL 3.5.x 的 OPENSSL_cleanup（atexit 注册）会 free 一个
+     * 未对齐的内部指针，glibc 能容忍，jemalloc 直接 SIGSEGV——表现为测试子进程
+     * 在 os.exit 阶段偶发段错误，输出截断、gcda 丢失。进程反正要退出，全局状态
+     * 交给内核回收即可：首次初始化时声明不注册 atexit 清理。必须在任何 OpenSSL
+     * 调用之前执行（NO_ATEXIT 只对第一次 init 生效）。 */
+    OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT, NULL);
+
     luaL_Reg l[] = {
         {"hmac_sha256", lhmac_sha256},
         {"hmac_sha512", lhmac_sha512},
