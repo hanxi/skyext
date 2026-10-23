@@ -190,18 +190,21 @@ jobs:
         echo $! > /tmp/account1.pid
         nohup ./bin/skyext serve role1 > /tmp/role1.out 2>&1 &
         echo $! > /tmp/role1.pid
+        # 覆盖率插桩构建 + 2 核 runner 启动偏慢，探测窗口给足 90 秒
         account_ready=false
-        for i in $(seq 1 60); do
+        for i in $(seq 1 90); do
           if curl -fsS http://127.0.0.1:8080/servers > /dev/null 2>&1; then
             account_ready=true
+            echo "account ready after ${i}s"
             break
           fi
           sleep 1
         done
         gate_ready=false
-        for i in $(seq 1 60); do
+        for i in $(seq 1 90); do
           if (echo > /dev/tcp/127.0.0.1/7013) 2>/dev/null; then
             gate_ready=true
+            echo "gate ready after ${i}s"
             break
           fi
           sleep 1
@@ -209,6 +212,17 @@ jobs:
         if [ "$account_ready" != true ] || [ "$gate_ready" != true ]; then
           echo 'example servers failed to start' >&2
           tail -n 100 /tmp/account1.out /tmp/role1.out >&2 || true
+          # 网页日志需要登录才能看；把关键错误发成 annotation，公开 API 即可读到。
+          # 去掉 ANSI 色码，% 直接删除（annotation 转义太繁琐，诊断信息足够）
+          echo "::error title=readiness::account_ready=$account_ready gate_ready=$gate_ready"
+          for f in /tmp/account1.out /tmp/role1.out; do
+            sed -e 's/\x1b\[[0-9;]*m//g' "$f" \
+              | grep -E ' E\]| F\]|assert|traceback|bootfail' \
+              | tail -n 12 \
+              | while IFS= read -r line; do
+                  printf '::error title=%s::%s\n' "$(basename "$f")" "${line//%/}"
+                done
+          done
           exit 1
         fi
 
