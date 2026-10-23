@@ -29,3 +29,6 @@ coverage/
 .vscode/
 .aone_copilot/
 .claude/
+
+# sdk/ts 的 bun 依赖（bun.lock 提交，node_modules 不提交）
+node_modules/

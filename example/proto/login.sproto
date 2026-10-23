@@ -9,7 +9,7 @@ login 100 {
     response {
         code 0 : integer
         rid 1 : integer
-        nonce 2 : string # 续接凭据，断线后拿它走 resume
+        nonce 2 : binary # 续接凭据（16 字节原始随机字节），断线后拿它走 resume
     }
 }
 
@@ -18,12 +18,12 @@ login 100 {
 resume 101 {
     request {
         rid 0 : integer # 仅用于路由
-        nonce 1 : string # 16 字节续接凭据
+        nonce 1 : binary # 16 字节续接凭据（原始随机字节）
         recv 2 : integer # 客户端已收到的包数（Tier 2）
     }
     response {
         code 0 : integer
-        nonce 1 : string # 轮换后的新凭据
+        nonce 1 : binary # 轮换后的新凭据（原始随机字节）
         sent 2 : integer # 服务端已发出的包数，供客户端自检（Tier 2）
     }
 }

@@ -1,0 +1,17 @@
+{
+  "name": "skyext-client",
+  "version": "0.1.0",
+  "description": "skyext 客户端 SDK：Account HTTP + sproto 会话层。浏览器/小程序 WebSocket 直连网关，规范见 docs/guide/client_protocol.md",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}

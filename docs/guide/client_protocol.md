@@ -2,7 +2,7 @@
 
 这份文档是写给**客户端 SDK 作者**的：按它实现，客户端就能连上 skyext、在断网后把会话接回来，而不丢请求、不重复扣费。
 
-服务端的设计背景不在这里，在 `docs/design/session_resume.md`。可执行的参考实现是 `example/lualib/client_session.lua`（Lua，robot 在用），协议语义的回归测试是 `example/lualib/client_session.test.lua`。**新平台的 SDK 请照这份文档实现，不要逐行翻译参考实现**——参考实现里混了 skynet 协程的细节，那些是 Lua 侧的事。
+服务端的设计背景不在这里，在 `docs/design/session_resume.md`。官方 SDK 位于 `sdk/lua/`（`skyext.client.session`，robot 在用）和 `sdk/ts/`（TypeScript，浏览器/小程序）；Lua 侧协议语义的回归测试是 `sdk/lua/skyext/client/session.test.lua`。**新平台的 SDK 请照这份文档实现，不要逐行翻译现有实现**——Lua 实现里混了 skynet 协程的细节，那些是 Lua 侧的事。
 
 ## 1. 传输
 
@@ -122,6 +122,8 @@ response { code, rid, nonce }
 `token` 是 JWT（签发方式见[登录流程](login.md)），`rid` / `server` 是客户端自报的角色和出生服——服务端会查库确认这个角色确实属于 token 里的账号、且在那个服。
 
 成功后拿到 **`nonce`：16 字节续接凭据**。它只代表一条会话，权限比代表整个账号的 token 小得多，最长活到角色实体卸载。
+
+`nonce` 在 schema 里声明为 **`binary`** 而不是 `string`（线上格式相同，`binary` 只是给各语言绑定的元信息）：它是原始随机字节，不是文本。字节不透明的绑定（Lua/C）里两者没有区别；会做文本转换的绑定（JS 的 UTF-8）必须按字节数组处理，否则往返一次凭据就坏了、且平时看不出来。
 
 登录成功即**会话开始**：下行计数从 0 起算。登录阶段（绑定成功之前）的包两边都不计。
 
